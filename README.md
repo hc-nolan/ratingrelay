@@ -1,0 +1,2 @@
+- Sync Plex track ratings to Last.fm or ListenBrainz
+- Allow user to define star/rating threshold for a Last.fm/ListenBrainz like

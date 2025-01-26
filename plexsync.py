@@ -22,7 +22,7 @@ def generate_uuid():
     updated = False
     for i, line in enumerate(lines):
         if line.startswith("CID"):
-            lines[i] = "CID=" + uuid
+            lines[i] = "CID=" + uuid + "\n"
             updated = True
 
     if not updated:

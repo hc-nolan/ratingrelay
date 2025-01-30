@@ -2,6 +2,7 @@
 ratingrelay - a script to sync Plex tracks rated above a certain threshold
 to external services like Last.fm and ListenBrainz
 """
+import time
 import json
 import logging
 import sys
@@ -85,6 +86,9 @@ if RATING_THRESHOLD is None or RATING_THRESHOLD == "":
 if MISSING:
     sys.exit(1)
 
+# Globals to store count of newly loved tracks
+NEW_LOVES_LFM = 0
+NEW_LOVES_LBZ = 0
 
 class LibraryNotFoundError(Exception):
     """
@@ -94,6 +98,8 @@ class LibraryNotFoundError(Exception):
 
 
 def main():
+    start = time.time()
+
     logging.basicConfig(
         level=logging.INFO,
         # format="%(asctime)s - %(levelname)s - %(message)s"
@@ -101,14 +107,17 @@ def main():
     logging.getLogger("musicbrainzngs").setLevel(logging.WARNING)
     logging.getLogger("pylast").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
+
     plex = Plex()
     token = plex.auth()
     log.info("Querying Plex for tracks meeting the rating threshold.")
+
     try:
         library = plex.get_music_library(token)
     except LibraryNotFoundError as e:
         log.fatal(str(e))
         sys.exit(1)
+
     tracks = plex.get_tracks(library, token)
     tracks = trim_tracks(tracks)
     log.info("Found %s tracks meeting rating threshold.", len(tracks))
@@ -119,8 +128,16 @@ def main():
 
     lbz = lbz_connect()
     if lbz:
-        # TODO: new_loves just like lastfm, once i have some loves
         lbz_love(lb=lbz, tracks_to_love=tracks)
+
+    exec_time = time.time() - start
+    log.info(
+        "SUMMARY:\tExecution took %s seconds\n"
+        "- Plex tracks meeting rating threshold: %s\n"
+        "- Last.fm newly loved tracks: %s\n"
+        "- ListenBrainz newly loved tracks: %s",
+        exec_time, len(tracks), NEW_LOVES_LFM, NEW_LOVES_LBZ
+    )
 
 
 
@@ -128,7 +145,6 @@ def trim_tracks(track_list: list) -> list:
     """"
     Filters list of track dictionaries returned by Plex; retains only artist, title, label, and year
     """
-    print(len(track_list))
     # Convert each item to frozenset for hashability so we can get unique tracks
     unique_tracks = set()
     for track in track_list:
@@ -363,6 +379,8 @@ class LastFM:
         :param tracks_to_love: List of tracks meeting the defined
                                 RATING_THRESHOLD returned by get_tracks()
         """
+        global NEW_LOVES_LFM
+
         if not cls.connected:
             log.warning("Not connected to Last.fm - no tracks will be loved.")
             return
@@ -373,6 +391,7 @@ class LastFM:
             lastfm_track = network.get_track(track_artist, track_title)
             lastfm_track.love()
             log.info("Last.FM -- Loved: %s - %s", track_artist, track_title)
+            NEW_LOVES_LFM += 1
 
     @staticmethod
     def new_loves(track_list: list[dict], client: pylast.LastFMNetwork) -> list[dict]:
@@ -442,20 +461,97 @@ def lbz_love(lb: liblbz.ListenBrainz, tracks_to_love: list[dict]):
     :param tracks_to_love:
     :return:
     """
+    global NEW_LOVES_LBZ
+
+    user_loves = lbz_get_loves(lb)
+
     for track in tracks_to_love:
-        query = " ".join(str(val) for val in track.values())
-        log.info("Querying MusicBrainz: %s", query)
-        mbz.set_useragent('RatingRelay', 'v0.1', contact='https://github.com/chunned/ratingrelay')
-        track_search = mbz.search_recordings(query=query)
+        mbid = get_mbid(track)
+        if not mbid:
+            log.warning(
+                "No MBID found for %s - %s",
+                track['title'], track['artist']
+            )
+            continue
+        if not lbz_already_loved(user_loves, mbid):
+            lb.submit_user_feedback(1, mbid)
+            log.info(
+                "ListenBrainz - Loved %s by %s - MBID: %s",
+                track['title'], track['artist'], mbid
+            )
+            NEW_LOVES_LBZ += 1
+
+
+def lbz_get_loves(lb: liblbz.ListenBrainz) -> set[str]:
+    """
+    Retrieve all tracks the user has already loved
+    :param lb:
+    :return:
+    """
+    all_loves = []
+    offset = 0
+    count = 100
+    while True:
+        user_loves = lb.get_user_feedback(
+            username=LBZ_USERNAME,
+            score=1,
+            count=count,
+            offset=offset,
+            metadata=None
+        )
+        mbids = {track['recording_mbid'] for track in user_loves['feedback']}
+        all_loves.extend(mbids)
+        if len(user_loves['feedback']) < count:
+            break   # No more feedback to fetch
+        offset += count
+    return all_loves
+
+
+def get_mbid(track: dict) -> str | None:
+    """
+    Queries MusicBrainz and retrieves the first result with a matching Title and Artist
+    :param track: Track dictionary containing keys: title, artist, label, year
+    :return: MBID if found; NOne otherwise
+    """
+    # query = " ".join(str(val) for val in track.values())
+    query = track["title"] + " " + track["artist"]
+    log.info("Querying MusicBrainz: %s", query)
+    mbz.set_useragent('RatingRelay', 'v0.1', contact='https://github.com/chunned/ratingrelay')
+    track_search = mbz.search_recordings(
+        query=query,
+        artist=track["artist"],
+        recording=track["title"]
+    )
+    for result in track_search['recording-list']:
+        # find matching title+artist pair
         try:
-            mbid = track_search['recording-list'][0]['id']
-        except IndexError:
-            pass
+            track_title = track['title'].lower()
+            candidate_title = result['title'].lower()
 
-    x = 5 + 1
+            track_artist = track['artist'].lower()
+            candidate_artist = result['artist-credit'][0]['name'].lower()
+            if track_title == candidate_title and track_artist == candidate_artist:
+                mbid = track_search['recording-list'][0]['id']
+                return mbid
+        except (IndexError, KeyError):
+            return None
+    return None
 
 
-
+def lbz_already_loved(loved_mbids: set[str], mbid: str) -> bool:
+    """
+    Check if a given MBID is already present in the set of MBIDs the user has loved
+    :param loved_mbids: Set of the MBIDs that the user has already loved
+    :param mbid: Candidate MBID to check
+    :return: Bool
+    """
+    if mbid in loved_mbids:
+        log.info(
+            "ListenBrainz - %s is already loved.",
+            mbid
+        )
+        return True
+    return False
 
 if __name__ == "__main__":
     main()

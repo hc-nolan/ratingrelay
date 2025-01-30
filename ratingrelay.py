@@ -1,16 +1,17 @@
+"""
+ratingrelay - a script to sync Plex tracks rated above a certain threshold
+to external services like Last.fm and ListenBrainz
+"""
 import logging
 import sys
 import time
-import pathlib
-from enum import unique
-
-import requests
-from os import getenv
-from dotenv import load_dotenv
 import json
-from urllib.parse import urlencode
-import xmltodict
 from uuid import uuid4
+from os import getenv
+from urllib.parse import urlencode
+import requests
+from dotenv import load_dotenv
+import xmltodict
 import pylast
 
 
@@ -21,7 +22,7 @@ def generate_uuid():
     """
     uuid = str(uuid4())
 
-    with open(".env", "r") as f:
+    with open(".env", "r", encoding="utf-8") as f:
         lines = f.readlines()
 
     updated = False
@@ -38,11 +39,14 @@ def generate_uuid():
         updated = True
 
     if updated:
-        with open(".env", "w") as f:
+        with open(".env", "w", encoding="utf-8") as f:
             f.writelines(lines)
         log.info("Saved new CID to .env file.")
     else:
-        log.error("Unable to write a new CID to .env file. Please generate a random uuid4 and add it manually.")
+        log.error(
+            "Unable to write a new CID to .env file. "
+            "Please generate a random uuid4 and add it manually."
+        )
         sys.exit(1)
 
 
@@ -50,7 +54,7 @@ log = logging.getLogger(__name__)
 
 load_dotenv()
 CID = getenv("CID")
-missing = False
+MISSING = False
 if CID is None or CID == "":
     log.warning("No CID found in .env file; generating and writing a new one.")
     generate_uuid()
@@ -60,20 +64,27 @@ if SERVER_URL is None or SERVER_URL == "":
     log.error(
         "Server URL not found. Please add it to .env. Format: http(s)://ip.or.domain:port"
     )
-    missing = True
+    MISSING = True
 
 MUSIC_LIBRARY = getenv("MUSIC_LIBRARY")
 if MUSIC_LIBRARY is None or MUSIC_LIBRARY == "":
     log.error("Music library name not found. Please add it to .env")
-    missing = True
+    MISSING = True
 
 RATING_THRESHOLD = getenv("RATING_THRESHOLD")
 if RATING_THRESHOLD is None or RATING_THRESHOLD == "":
     log.error("Rating threshold not found. Please add it to .env")
-    missing = True
+    MISSING = True
 
-if missing:
+if MISSING:
     sys.exit(1)
+
+
+class LibraryNotFoundError(Exception):
+    """
+    Exception class for cases where no matching
+    music library is found on the Plex server
+    """
 
 
 def main():
@@ -84,7 +95,11 @@ def main():
     plex = Plex()
     token = plex.auth()
     log.info("Querying Plex for tracks meeting the rating threshold.")
-    library = plex.get_music_library(token)
+    try:
+        library = plex.get_music_library(token)
+    except LibraryNotFoundError as e:
+        log.fatal(str(e))
+        sys.exit(1)
     tracks = plex.get_tracks(library, token)
     tracks = trim_tracks(tracks)
     log.info("Found %s tracks meeting rating threshold.", len(tracks))
@@ -121,8 +136,11 @@ def trim_tracks(track_list: list) -> list:
 
 
 class Plex:
+    """
+    Class for all Plex-related operations
+    """
     def __init__(self):
-        self.APP_NAME = "PlexLists"
+        self.app_name = "ratingrelay"
 
     def auth(self) -> str:
         """
@@ -136,12 +154,12 @@ class Plex:
             if not valid:
                 log.warning("Stored Plex API token has expired. Please reauthenticate.")
                 return self.new_auth()
-            else:
-                log.info("Stored Plex API token is still valid.\n")
-                return existing_token
-        else:
-            log.warning("No stored Plex API token found.")
-            return self.new_auth()
+
+            log.info("Stored Plex API token is still valid.\n")
+            return existing_token
+
+        log.warning("No stored Plex API token found.")
+        return self.new_auth()
 
     def new_auth(self) -> str:
         """
@@ -153,10 +171,11 @@ class Plex:
             url="https://plex.tv/api/v2/pins",
             data={
                 "strong": "true",
-                "X-Plex-Product": self.APP_NAME,
+                "X-Plex-Product": self.app_name,
                 "X-Plex-Client-Identifier": CID,
             },
             headers={"accept": "application/json"},
+            timeout=30
         )
         content = json.loads(resp.content)
         # Grab PIN ID and code
@@ -167,7 +186,7 @@ class Plex:
         params = {
             "clientID": CID,
             "code": pin_code,
-            "context[device][product]": self.APP_NAME,
+            "context[device][product]": self.app_name,
         }
         url = "https://app.plex.tv/auth#?" + urlencode(params)
         log.info("To sign in, please open the below URL in a web browser:")
@@ -180,6 +199,7 @@ class Plex:
                 url=f"https://plex.tv/api/v2/pins/{pin_id}",
                 headers={"accept": "application/json"},
                 data={"code": pin_code, "X-Plex-Client-Identifier": CID},
+                timeout=30
             )
             content = json.loads(resp.content)
             if content["authToken"] is not None:
@@ -198,10 +218,12 @@ class Plex:
             url="https://plex.tv/api/v2/user",
             headers={"accept": "application/json"},
             data={
-                "X-Plex-Product": self.APP_NAME,
+
+                "X-Plex-Product": self.app_name,
                 "X-Plex-Client-Identifier": CID,
                 "X-Plex-Token": token_to_check,
             },
+            timeout=30
         )
         if resp.status_code == 200:
             return True
@@ -212,7 +234,7 @@ class Plex:
         """
         Writes a valid Plex API token to .env file's PLEX_TOKEN variable
         """
-        with open(".env", "r") as f:
+        with open(".env", "r", encoding="utf-8") as f:
             lines = f.readlines()
 
         updated = False
@@ -227,7 +249,7 @@ class Plex:
             updated = True
 
         if updated:
-            with open(".env", "w") as f:
+            with open(".env", "w", encoding="utf-8") as f:
                 f.writelines(lines)
             log.info("Token saved to .env file.")
         else:
@@ -239,25 +261,28 @@ class Plex:
 
     @staticmethod
     def get_music_library(auth_token: str) -> str:
-        # Searches for music library matching value of MUSIC_LIBRARY .env variable
+        """
+        Searches for music library matching value of MUSIC_LIBRARY .env variable
+        :param auth_token: Plex API token
+        :return: The Plex music library, if found
+        """
         libraries_resp = requests.get(
             url=f"{SERVER_URL}/library/sections",
-            params={"X-Plex-Token": auth_token}
+            params={"X-Plex-Token": auth_token},
+            timeout=30
         )
         libraries_resp = xmltodict.parse(libraries_resp.content)
         libraries = libraries_resp["MediaContainer"]["Directory"]
-        plex_music_lib = None
         for lib in libraries:
             if lib["@title"] == MUSIC_LIBRARY:
-                plex_music_lib = lib
-                return plex_music_lib["@key"]
-        if plex_music_lib is None:
-            log.fatal(
-                "No library names %s found on Plex Server. Please ensure this matches the library name exactly.\n"
-                "Libraries found: %s",
-                MUSIC_LIBRARY, [lib.title for lib in libraries]
-            )
-            sys.exit(1)
+                return lib["@key"]
+
+        libraries_found = [lib["@title"] for lib in libraries]
+        raise LibraryNotFoundError(
+            f"No library named '{MUSIC_LIBRARY}' found on Plex Server. "
+            f"Please ensure this matches the library name exactly. "
+            f"Libraries found: {libraries_found}"
+        )
 
     @staticmethod
     def get_tracks(library_key, auth_token) -> list:
@@ -273,12 +298,19 @@ class Plex:
             "type": 10,
             "userRating>": RATING_THRESHOLD
         }
-        r = requests.get(url=url, params=params)
+        r = requests.get(
+            url=url,
+            params=params,
+            timeout=30
+        )
         response_dict = xmltodict.parse(r.content)
         return response_dict["MediaContainer"]["Track"]
 
 
 class LastFM:
+    """
+    Class for all LastFM-related operations
+    """
     connected = False
 
     @classmethod
@@ -297,7 +329,7 @@ class LastFM:
                 "SKIPPING LAST.FM: One or more Last.fm environment variables are missing.\n"
                 "If you intended to use Last.fm, make sure all environment variables are set."
             )
-            return
+            return None
 
         cls.connected = True
         return pylast.LastFMNetwork(
@@ -312,7 +344,8 @@ class LastFM:
         """
         Iterates through tracks returned from Plex and submits them as Loved Tracks to Last.fm
         :param network: LastFMNetwork returned from lastfm_connect()
-        :param tracks_to_love: List of tracks meeting the defined RATING_THRESHOLD returned by get_tracks()
+        :param tracks_to_love: List of tracks meeting the defined
+                                RATING_THRESHOLD returned by get_tracks()
         """
         if not cls.connected:
             log.warning("Not connected to Last.fm - no tracks will be loved.")

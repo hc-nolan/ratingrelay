@@ -2,17 +2,20 @@
 ratingrelay - a script to sync Plex tracks rated above a certain threshold
 to external services like Last.fm and ListenBrainz
 """
+import json
 import logging
 import sys
 import time
-import json
-from uuid import uuid4
 from os import getenv
 from urllib.parse import urlencode
-import requests
-from dotenv import load_dotenv
-import xmltodict
+from uuid import uuid4
+import musicbrainzngs as mbz
+import liblistenbrainz as liblbz
+import liblistenbrainz.errors as lbz_errors
 import pylast
+import requests
+import xmltodict
+from dotenv import load_dotenv
 
 
 def generate_uuid():
@@ -59,6 +62,9 @@ if CID is None or CID == "":
     log.warning("No CID found in .env file; generating and writing a new one.")
     generate_uuid()
 
+
+LBZ_USERNAME = getenv("LISTENBRAINZ_USERNAME")
+
 SERVER_URL = getenv("SERVER_URL")
 if SERVER_URL is None or SERVER_URL == "":
     log.error(
@@ -90,8 +96,11 @@ class LibraryNotFoundError(Exception):
 def main():
     logging.basicConfig(
         level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(message)s"
+        # format="%(asctime)s - %(levelname)s - %(message)s"
     )
+    logging.getLogger("musicbrainzngs").setLevel(logging.WARNING)
+    logging.getLogger("pylast").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     plex = Plex()
     token = plex.auth()
     log.info("Querying Plex for tracks meeting the rating threshold.")
@@ -105,7 +114,14 @@ def main():
     log.info("Found %s tracks meeting rating threshold.", len(tracks))
 
     lastfm = LastFM.connect()
-    LastFM.love(network=lastfm, tracks_to_love=tracks)
+    new_loves = LastFM.new_loves(track_list=tracks, client=lastfm)
+    LastFM.love(network=lastfm, tracks_to_love=new_loves)
+
+    lbz = lbz_connect()
+    if lbz:
+        # TODO: new_loves just like lastfm, once i have some loves
+        lbz_love(lb=lbz, tracks_to_love=tracks)
+
 
 
 def trim_tracks(track_list: list) -> list:
@@ -357,6 +373,88 @@ class LastFM:
             lastfm_track = network.get_track(track_artist, track_title)
             lastfm_track.love()
             log.info("Last.FM -- Loved: %s - %s", track_artist, track_title)
+
+    @staticmethod
+    def new_loves(track_list: list[dict], client: pylast.LastFMNetwork) -> list[dict]:
+        """
+        Compares the list of tracks from Plex above the rating threshold to
+        the user's already loved Last.fm tracks
+        :param track_list: List of tracks returned from Plex that meet the rating threshold
+        :param client: LastFMNetwork instance
+        :return: List of tracks the user has not yet loved
+        """
+        log.info("Comparing track list to existing Last.fm loved tracks.")
+        track_list.sort(key=lambda track: track["title"])
+        # grab tracks user has already loved
+        old_loves = client.get_user(client.username).get_loved_tracks(limit=None)
+        # parse into more usable list to match track_list
+        old_loves = {
+            (
+                t.track.title.lower(),
+                t.track.artist.name.lower()
+            )
+            for t in old_loves
+        }
+        new_loves = [
+            track for track in track_list
+            if (track["title"].lower(), track["artist"].lower())  not in old_loves
+        ]
+        log.info(
+            "Found %s tracks from Plex; Found %s loved tracks from Last.fm; Found %s new tracks to love",
+            len(track_list), len(old_loves), len(new_loves)
+        )
+        return new_loves
+
+
+
+def lbz_connect() -> liblbz.ListenBrainz | None:
+    """
+    Creates a connection to ListenBrainz
+    :return None if any environment variables are missing,
+    the ListenBrainz client otherwise
+    """
+    token = getenv("LISTENBRAINZ_TOKEN")
+    username = LBZ_USERNAME
+    if not all(val is not None and val != "" for val in (token, LBZ_USERNAME)):
+        log.warning(
+            "SKIPPING LISTENBRAINZ: One or more ListenBrainz variables are missing.\n"
+            "If you intended to use ListenBrainz, make sure all environment variables are set."
+        )
+        return None
+
+    client = liblbz.ListenBrainz()
+    client.set_auth_token(token)
+    try:
+        client.is_token_valid(token)
+    except lbz_errors.ListenBrainzAPIException as e:
+        log.critical(
+            "SKIPPING LISTENBRAINZ: API exception occurred: %s", e
+        )
+        return None
+    log.info("ListenBrainz connection succeeded.")
+    return client
+
+
+def lbz_love(lb: liblbz.ListenBrainz, tracks_to_love: list[dict]):
+    """
+
+    :param lb:
+    :param tracks_to_love:
+    :return:
+    """
+    for track in tracks_to_love:
+        query = " ".join(str(val) for val in track.values())
+        log.info("Querying MusicBrainz: %s", query)
+        mbz.set_useragent('RatingRelay', 'v0.1', contact='https://github.com/chunned/ratingrelay')
+        track_search = mbz.search_recordings(query=query)
+        try:
+            mbid = track_search['recording-list'][0]['id']
+        except IndexError:
+            pass
+
+    x = 5 + 1
+
+
 
 
 if __name__ == "__main__":

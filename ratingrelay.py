@@ -64,14 +64,17 @@ def main():
     log.info("Found %s tracks meeting rating threshold.", len(tracks))
 
     lfm = LastFM(LFM_USERNAME, LFM_PASSWORD, LFM_TOKEN, LFM_SECRET)
-    new_loves = lfm.new_loves(track_list=tracks)
-    log.info("Found %s track(s) to submit to LastFM.", len(new_loves))
-    for track in new_loves:
+    lfm_new_loves = lfm.new_loves(track_list=tracks)
+    log.info("Found %s track(s) to submit to LastFM.", len(lfm_new_loves))
+    for track in lfm_new_loves:
         log.info("LastFM: Loving %s by %s", track['title'], track['artist'])
         lfm.love(artist=track['artist'], title=track['title'])
 
     lbz = ListenBrainz(username=LBZ_USERNAME, token=LBZ_TOKEN)
-    for track in tracks:
+    lbz_new_loves = lbz.new_loves(track_list=tracks)
+    log.info("Found %s track(s) to submit to ListenBrainz.", len(lbz_new_loves))
+    for track in lbz_new_loves:
+        log.info("ListenBrainz: Loving %s by %s", track['title'], track['artist'])
         lbz.love(track)
 
     exec_time = time.time() - start

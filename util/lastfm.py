@@ -57,7 +57,8 @@ class LastFM:
         """
         track_list.sort(key=lambda track: track["title"])
         # grab tracks user has already loved
-        old_loves = self.client.get_user(self.username).get_loved_tracks(limit=None)
+        user = self.client.get_user(self.username)
+        old_loves = user.get_loved_tracks(limit=None)
         # parse into more usable list to match track_list
         old_loves = {
             (

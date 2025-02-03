@@ -44,11 +44,11 @@ class Plex:
         if token is None:
             return self._new_auth()
         # Check for existing token
-        valid = self._check_token_validity(self.token)
+        valid = self._check_token_validity(token)
         if not valid:
             return self._new_auth()
 
-        return self.token
+        return token
 
     def _new_auth(self) -> str:
         """

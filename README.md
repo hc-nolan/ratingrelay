@@ -10,6 +10,7 @@ As of v0.2.0, Last.fm and ListenBrainz are supported. Other services such as Lib
 
 ## TL;DR:
 
+- Clone repository: `git clone https://codeberg.org/hnolan/ratingrelay.git`
 - Set environment variables
 - Build the Docker image: `docker build . -t ratingrelay:latest`
 - Run the script container: `docker run -v $(pwd)/.env:/app/.env --rm ratingrelay:latest`

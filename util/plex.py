@@ -95,7 +95,7 @@ class Plex:
             content = json.loads(resp.content)
             if content["authToken"] is not None:
                 auth = content["authToken"]
-                self._write_env_var("TOKEN", auth)
+                self._write_env_var("PLEX_TOKEN", auth)
             # User has not completed auth flow; Sleep for 1s and retry
             time.sleep(1)
         return auth

@@ -62,7 +62,7 @@ If you would like to contribute to the project it's easiest to run the script lo
 
 - [Install uv](https://docs.astral.sh/uv/#installation)
 - Clone the repository: `git clone https://codeberg.org/hnolan/ratingrelay`
-- Enter the directory and install dependencies: `cd ratingrelay && uv sync`
+- Enter the directory and install dependencies: `cd ratingrelay && uv sync --frozen`
 
 If you don't want to use uv, a `requirements.txt` file is included for usage with pip.
 

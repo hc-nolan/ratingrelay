@@ -34,7 +34,7 @@ class Plex:
         self.url = url
         if not cid:
             cid = str(uuid4())
-            self._write_env_var("CID", cid)
+            self._write_env_var("PLEX_CID", cid)
         self.cid = cid
         self.token = self._auth(token)
         self.library = self._get_music_library(library)
@@ -132,12 +132,12 @@ class Plex:
         updated = False
         for i, line in enumerate(lines):
             if line.startswith(name):
-                lines[i] = name + "=" + value
+                lines[i] =  name + "=" + value
                 updated = True
 
         if not updated:
-            # If above did not produce an update, it means no line 'TOKEN=' was found; append it
-            lines.append(name + "=" + value)
+            # If above did not produce an update, it means no line '<NAME>=' was found; append it
+            lines.append("\n" + name + "=" + value)
             updated = True
 
         if updated:

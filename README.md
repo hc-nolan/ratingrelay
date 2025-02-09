@@ -8,13 +8,16 @@ As of v0.2.0, Last.fm and ListenBrainz are supported. Other services such as Lib
 
 # Usage
 
-TL;DR:
+## TL;DR:
+
 - Set environment variables
 - Build the Docker image: `docker build . -t ratingrelay:latest`
 - Run the script container: `docker run -v $(pwd)/.env:/app/.env --rm ratingrelay:latest`
 - If everything works, set up a cron job to run `run.sh` however often you like
 
 **Note:** the first time you run the script you will need to check the logs for the Plex URL to authenticate with. 
+
+## Required environment variables
 
 Start by renaming the file `.env.example` to `.env` and filling out the required values:
 - `SERVER_URL`: the URL to reach your Plex server

@@ -3,7 +3,9 @@ ratingrelay - a script to sync Plex tracks rated above a certain threshold
 to external services like Last.fm and ListenBrainz
 """
 import time
+import sys
 import logging
+from logging.handlers import TimedRotatingFileHandler
 import time
 from os import getenv
 from typing import Optional
@@ -45,12 +47,22 @@ def main():
 
     logging.basicConfig(
         level=logging.INFO,
-        filename="log.txt"
-        # format="%(asctime)s - %(levelname)s - %(message)s"
+        format="%(asctime)s:%(levelname)s:%(module)s:%(message)s",
+        handlers=[
+            logging.StreamHandler(sys.stdout),
+            TimedRotatingFileHandler(
+                "ratingrelay.log",
+                when="midnight",
+                interval=30,
+                backupCount=6
+            )
+        ]
     )
     logging.getLogger("musicbrainzngs").setLevel(logging.WARNING)
     logging.getLogger("pylast").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
+
+    log.info("Starting RatingRelay")
 
     plex = Plex(
         library=PLEX_LIBRARY,
@@ -63,12 +75,20 @@ def main():
     tracks = plex.get_tracks()
     log.info("Found %s tracks meeting rating threshold.", len(tracks))
 
-    lfm = LastFM(LFM_USERNAME, LFM_PASSWORD, LFM_TOKEN, LFM_SECRET)
+    lfm = LastFM(
+        username=LFM_USERNAME,
+        password=LFM_PASSWORD,
+        token=LFM_TOKEN,
+        secret=LFM_SECRET
+    )
     new_loves = lfm.new_loves(track_list=tracks)
     for track in new_loves:
         lfm.love(track['artist'], track['title'])
 
-    lbz = ListenBrainz(LBZ_USERNAME, LBZ_TOKEN)
+    lbz = ListenBrainz(
+        username=LBZ_USERNAME,
+        token=LBZ_TOKEN
+    )
     for track in tracks:
         lbz.love(track)
 

@@ -1,4 +1,7 @@
 import pylast
+import logging
+
+log = logging.getLogger(__name__)
 
 class LastFM:
     """
@@ -6,14 +9,14 @@ class LastFM:
     """
     def __init__(
         self, 
-        username: str,
-        password: str,
-        key: str,
-        secret: str
+        username: str | None,
+        password: str | None,
+        token: str | None,
+        secret: str | None
     ):
         self.username = username
         self.password = password
-        self.key = key
+        self.token = token
         self.secret = secret
         self.client = self._connect()
         self.new_count = 0
@@ -26,7 +29,7 @@ class LastFM:
             val is not None or 
             val != ""
             for val in (
-                self.key, self.secret, 
+                self.token, self.secret, 
                 self.username, self.password
             )
         ):
@@ -35,7 +38,7 @@ class LastFM:
                 "If you intended to use Last.fm, make sure all environment variables are set."
             )
         return pylast.LastFMNetwork(
-            api_key=self.key,
+            api_key=self.token,
             api_secret=self.secret,
             username=self.username,
             password_hash=pylast.md5(self.password)
@@ -45,6 +48,7 @@ class LastFM:
         """
         Loves a single track
         """
+        log.info("Loving: %s by %s", title, artist)
         lastfm_track = self.client.get_track(artist, title)
         lastfm_track.love()
         self.new_count += 1
@@ -57,6 +61,7 @@ class LastFM:
         """
         track_list.sort(key=lambda track: track["title"])
         # grab tracks user has already loved
+        log.info("Grabbing all currently loved tracks from Last.fm.")
         old_loves = self.client.get_user(self.username).get_loved_tracks(limit=None)
         # parse into more usable list to match track_list
         old_loves = {
@@ -66,8 +71,10 @@ class LastFM:
             )
             for t in old_loves
         }
-        return [
+        new = [
             track for track in track_list
             if (track["title"].lower(), track["artist"].lower())  not in old_loves
         ]
+        log.info("Found %s new tracks to submit to Last.fm.", len(new))
+        return new
 

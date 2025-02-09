@@ -1,4 +1,5 @@
 import time
+import logging
 import json
 import pathlib
 from urllib.parse import urlencode
@@ -7,6 +8,7 @@ import xmltodict
 from typing import Optional
 from uuid import uuid4
 
+log = logging.getLogger(__name__)
 
 class LibraryNotFoundError(Exception):
     """
@@ -44,11 +46,11 @@ class Plex:
         if token is None:
             return self._new_auth()
         # Check for existing token
-        valid = self._check_token_validity(self.token)
+        valid = self._check_token_validity(token)
         if not valid:
             return self._new_auth()
 
-        return self.token
+        return token
 
     def _new_auth(self) -> str:
         """
@@ -78,6 +80,8 @@ class Plex:
             "context[device][product]": self.app_name,
         }
         url = "https://app.plex.tv/auth#?" + urlencode(params)
+        log.info("Please open the below URL in a web browser to authenticate to Plex.")
+        log.info("Plex auth URL: %s", url)
 
         # Poll the ID each second to determine if user has authed
         auth = None
@@ -120,7 +124,8 @@ class Plex:
         """
         Writes or updates an environment variable
         """
-        env_file = pathlib.Path(__file__).parent / ".env"
+        env_file = pathlib.Path(__file__).parent.parent / ".env"
+        log.info("%s", env_file)
         with open(env_file, "r", encoding="utf-8") as f:
             lines = f.readlines()
 

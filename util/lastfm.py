@@ -29,7 +29,7 @@ class LastFM:
             val is not None or 
             val != ""
             for val in (
-                self.token, self.secret, 
+                self.token, self.secret,
                 self.username, self.password
             )
         ):

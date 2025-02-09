@@ -62,6 +62,19 @@ class ListenBrainz:
         else:
             log.info("No MBID found. Unable to submit to ListenBrainz.")
 
+    def new_loves(self, track_list: list[dict]) -> list[dict]:
+        """
+        Compares the list of tracks from Plex to already loved
+        ListenBrainz tracks; returns the tracks that have not yet been loved
+        """
+        # Tracks from Plex don't have the MBID, so create a new set without the MBID
+        old_loves = {(title.lower(), artist.lower()) for mbid, title, artist in self.loves}
+        new = [
+            track for track in track_list
+            if (track["title"].lower(), track["artist"].lower())  not in old_loves
+        ]
+        return new
+
     def _get_loves(self) -> set[tuple]:
         """
         Retrieve all tracks the user has already loved
@@ -87,6 +100,12 @@ class ListenBrainz:
                 for track in user_loves
             }
             all_loves.update(user_love_data)
+            for track in user_loves:
+                mbid = track['recording_mbid']
+                title = track['track_metadata']['track_name']
+                artist = track['track_metadata']['artist_name']
+                track_tuple = (mbid, title, artist)
+                all_loves.add(track_tuple)
             if len(user_loves) < count:
                 break   # No more feedback to fetch
             offset += count
@@ -100,7 +119,7 @@ class ListenBrainz:
         mbz.set_useragent(
             'RatingRelay',
             'v0.1',
-            contact='https://github.com/chunned/ratingrelay'
+            contact='https://codeberg.org/hnolan/ratingrelay'
         )
         track_search = mbz.search_recordings(
             query=query,
@@ -109,8 +128,8 @@ class ListenBrainz:
         )
         return self._find_mbid_match(track, track_search['recording-list'])
 
+    @staticmethod
     def _find_mbid_match(
-            self,
             track: dict,
             track_search: list[dict]
         ) -> str | None:
@@ -127,7 +146,7 @@ class ListenBrainz:
                 track_artist = track['artist'].lower()
                 candidate_artist = result['artist-credit'][0]['name'].lower()
                 if track_title == candidate_title and track_artist == candidate_artist:
-                    mbid = result[0]['id']
+                    mbid = result['id']
                     return mbid
             except (IndexError, KeyError):
                 return None

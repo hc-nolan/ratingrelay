@@ -27,12 +27,12 @@ log = logging.getLogger(__name__)
 
 load_dotenv()
 
-PLEX_CID = getenv("CID")
-PLEX_TOKEN = getenv("TOKEN")
+PLEX_CID = getenv("PLEX_CID")
+PLEX_TOKEN = getenv("PLEX_TOKEN")
 
 LFM_USERNAME = getenv("LASTFM_USERNAME")
 LFM_PASSWORD = getenv("LASTFM_PASSWORD")
-LFM_TOKEN = getenv("LASTFM_TOKEN")
+LFM_TOKEN = getenv("LASTFM_API_KEY")
 LFM_SECRET = getenv("LASTFM_SECRET")
 
 LBZ_USERNAME = getenv("LISTENBRAINZ_USERNAME")
@@ -81,15 +81,20 @@ def main():
         token=LFM_TOKEN,
         secret=LFM_SECRET
     )
-    new_loves = lfm.new_loves(track_list=tracks)
-    for track in new_loves:
-        lfm.love(track['artist'], track['title'])
+    lfm_new_loves = lfm.new_loves(track_list=tracks)
+    log.info("Found %s track(s) to submit to LastFM.", len(lfm_new_loves))
+    for track in lfm_new_loves:
+        log.info("LastFM: Loving %s by %s", track['title'], track['artist'])
+        lfm.love(artist=track['artist'], title=track['title'])
 
     lbz = ListenBrainz(
         username=LBZ_USERNAME,
         token=LBZ_TOKEN
     )
-    for track in tracks:
+    lbz_new_loves = lbz.new_loves(track_list=tracks)
+    log.info("Found %s track(s) to submit to ListenBrainz.", len(lbz_new_loves))
+    for track in lbz_new_loves:
+        log.info("ListenBrainz: Loving %s by %s", track['title'], track['artist'])
         lbz.love(track)
 
     exec_time = time.time() - start

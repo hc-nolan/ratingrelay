@@ -11,6 +11,7 @@ from os import getenv
 from typing import Optional
 from dotenv import load_dotenv
 from util import ListenBrainz, LastFM, Plex
+from rich.print import print
 
 
 def getenv_required(var_name: str) -> str:
@@ -42,28 +43,7 @@ PLEX_URL = getenv_required("SERVER_URL")
 PLEX_LIBRARY = getenv_required("MUSIC_LIBRARY")
 PLEX_THRESHOLD = getenv_required("RATING_THRESHOLD")
 
-def main():
-    start = time.time()
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s:%(levelname)s:%(module)s:%(message)s",
-        handlers=[
-            logging.StreamHandler(sys.stdout),
-            TimedRotatingFileHandler(
-                "ratingrelay.log",
-                when="midnight",
-                interval=30,
-                backupCount=6
-            )
-        ]
-    )
-    logging.getLogger("musicbrainzngs").setLevel(logging.WARNING)
-    logging.getLogger("pylast").setLevel(logging.WARNING)
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-
-    log.info("Starting RatingRelay")
-
+def sync_from_plex() -> dict:
     plex = Plex(
         library=PLEX_LIBRARY,
         threshold=PLEX_THRESHOLD,
@@ -96,6 +76,39 @@ def main():
     for track in lbz_new_loves:
         log.info("ListenBrainz: Loving %s by %s", track['title'], track['artist'])
         lbz.love(track)
+    return {
+        "tracks": len(tracks),
+        "lfm_new_count": lfm.new_count,
+        "lbz_new_count": lbz.new_count
+    }
+
+def sync_to_plex() -> dict:
+
+    return {}
+
+def main():
+    start = time.time()
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s:%(levelname)s:%(module)s:%(message)s",
+        handlers=[
+            logging.StreamHandler(sys.stdout),
+            TimedRotatingFileHandler(
+                "ratingrelay.log",
+                when="midnight",
+                interval=30,
+                backupCount=6
+            )
+        ]
+    )
+    logging.getLogger("musicbrainzngs").setLevel(logging.WARNING)
+    logging.getLogger("pylast").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+
+    log.info("Starting RatingRelay")
+    from_plex_stats = sync_from_plex()
+    to_plex_stats = sync_to_plex()
 
     exec_time = time.time() - start
     log.info(
@@ -103,7 +116,10 @@ def main():
         "- Plex tracks meeting rating threshold: %s\n"
         "- Last.fm newly loved tracks: %s\n"
         "- ListenBrainz newly loved tracks: %s",
-        exec_time, len(tracks), lfm.new_count, lbz.new_count
+        exec_time, 
+        from_plex_stats["tracks"], 
+        from_plex_stats["lfm_new_count"],
+        from_plex_stats["lbz_new_count"]
     )
 
 

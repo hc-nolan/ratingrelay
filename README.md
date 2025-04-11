@@ -8,4 +8,4 @@ As of v0.2.0, Last.fm and ListenBrainz are supported. Other services such as Lib
 
 # Usage
 
-Please see the [usage guide](https://codeberg.org/hnolan/ratingrelay/wiki/Usage-guide) to learn how to use RatingRelay.
+Please see the [usage guide](./usage.md) to learn how to use RatingRelay.

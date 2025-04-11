@@ -36,7 +36,7 @@ docker build . -t ratingrelay:latest
 docker run -v $(pwd)/.env:/app/.env --rm ratingrelay:latest
 ```
 
-The `run.sh` script is included to conveniently launch such containers via cron.
+The scripts in `./run_scripts/` are included to conveniently launch such containers via cron.
 
 ## Option 2: Local python
 

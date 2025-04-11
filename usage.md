@@ -54,7 +54,7 @@ You can now run the script with either of the below:
 
 ### With pip
 
-If you insist on running via a local Python installation, I strongly recommend using uv, which provides easier ways to manage Python projects. If, for whatever reason, you do not wish to use uv, you canset up a Python environment with pip.
+If you insist on running via a local Python installation, I strongly recommend using uv, which provides easier ways to manage Python projects. If, for whatever reason, you do not wish to use uv, you can set up a Python environment with pip.
 
 - Clone the repository: `git clone https://codeberg.org/hnolan/ratingrelay`
 - Enter the directory: `cd ratingrelay`

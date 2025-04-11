@@ -49,8 +49,22 @@ This method will run the script directly on your host machine using a Python vir
 - Enter the directory and install dependencies: `cd ratingrelay && uv sync --frozen`
 
 You can now run the script with either of the below:
-- `uv run ratingrelay.py` 
+- `uv run /path/to/repo/ratingrelay.py` 
 - `/path/to/repo/.venv/bin/python /path/to/repo/ratingrelay.py`
+
+### With pip
+
+If you insist on running via a local Python installation, I strongly recommend using uv, which provides easier ways to manage Python projects. If, for whatever reason, you do not wish to use uv, you canset up a Python environment with pip.
+
+- Clone the repository: `git clone https://codeberg.org/hnolan/ratingrelay`
+- Enter the directory: `cd ratingrelay`
+- Create a virtual environment: `python -m venv .venv`
+- Activate the virtual environment: `source .venv/bin/activate`
+- Install dependencies: `pip install -r requirements.txt`
+
+To run the script, either
+- Activate the virtual environment before executing: `source /path/to/repo/.venv/bin/activate && python /path/to/repo/ratingrelay.py`
+- Use the virtual environment's interpreter to execute: `/path/to/repo/.venv/bin/python /path/to/repo/ratingrelay.py`
 
 
 # 3. First run
@@ -67,6 +81,8 @@ The first time you run the script, you will need to check the logs for a Plex au
 Opening this URL will ask you to sign into your Plex account and authorize RatingRelay to access your server.
 
 # 4. Run at regular intervals
+
+Make sure you run the script manually once before setting up any of these methods. Otherwise, you will not be authenticated with your Plex server, and the script will hang and do nothing. 
  
 ## Linux - cron
 
@@ -76,9 +92,18 @@ On Linux, you can set up a cronjob to run the script regularly. A complete expla
 
 Example: if you cloned the repository to `/home/user1/ratingrelay` and want to run the script once every 24 hours at midnight:
 ```bash
-0 0 * * * /home/user1/ratingrelay/run.sh
+0 0 * * * /home/user1/ratingrelay/run_scripts/run_docker_linux.sh
 ```
+
+If you do not wish to use docker, replace `run_docker_linux.sh` with `run_python_linux.sh`.
+
+**Note:** if you want to move the scripts, you need to modify line 3: `cd "$( dirname "${BASH_SOURCE[0]}" )../" || exit 1
+`
+
+This command changes the directory to the repo's base directory. If you want to copy the script somewhere else and run it, change this line to `cd /path/to/repo || exit 1`.
+
+**Note:** if using `run_python_linux.sh`, the script assumes you followed the instructions above for setting up the Python environment and have a virtual environment placed at `/path/to/repo/.venv`. If you would like to use a different name for your virtual environment or place it in some other directory, change the path on line 8.
 
 ## Windows - scheduled task
 
-TBD
+Open the Start Menu and search for `Task Scheduler`. Then, click `Create Task`. Name the task whatever you like, then click the `Triggers` menu and click `New`. This will open a GUI menu in which you can configure the interval for executing the task. Then, click the `Actions` menu and click `New`. Provide the path to the run script you wish to use, which can be found in the `run_scripts` directory - `run_docker_windows.bat` for Docker, `run_python_windows.bat` otherwise.

@@ -1,7 +1,6 @@
 import logging
 import musicbrainzngs as mbz
 import liblistenbrainz as liblbz
-import liblistenbrainz.errors as lbz_errors
 
 log = logging.getLogger(__name__)
 
@@ -11,7 +10,7 @@ class ListenBrainz:
         self.username = username
         if not all(
             val is not None and
-            val != "" 
+            val != ""
             for val in (self.token, self.username)
         ):
             raise RuntimeError(
@@ -20,7 +19,7 @@ class ListenBrainz:
                 "make sure all environment variables are set."
             )
         self.client = self._connect()
-        self.loves = self._get_loves()
+        self.loves = self.all_loves()
         self.new_count = 0
 
     def _connect(self) -> liblbz.ListenBrainz:
@@ -47,7 +46,7 @@ class ListenBrainz:
             log.info("%s by %s is already loved.", track["title"], track["artist"])
             return
         log.info(
-            "Loving: %s by %s\nChecking for track MBID",
+            "Loving: %s by %s - Checking for track MBID",
             track["title"],
             track["artist"]
         )
@@ -75,7 +74,7 @@ class ListenBrainz:
         ]
         return new
 
-    def _get_loves(self) -> set[tuple]:
+    def all_loves(self) -> set[tuple]:
         """
         Retrieve all tracks the user has already loved
         """
@@ -91,21 +90,20 @@ class ListenBrainz:
                 metadata=True
             )
             user_loves = user_loves['feedback']
-            user_love_data = {
-                (
-                    track['recording_mbid'],
-                    track['track_metadata']['track_name'],
-                    track['track_metadata']['artist_name']
-                )
-                for track in user_loves
-            }
-            all_loves.update(user_love_data)
             for track in user_loves:
-                mbid = track['recording_mbid']
-                title = track['track_metadata']['track_name']
-                artist = track['track_metadata']['artist_name']
-                track_tuple = (mbid, title, artist)
-                all_loves.add(track_tuple)
+                try:
+                    mbid = track['recording_mbid']
+                    title = track['track_metadata']['track_name']
+                    artist = track['track_metadata']['artist_name']
+                    track_tuple = (mbid, title, artist)
+                    all_loves.add(track_tuple)
+                except TypeError:
+                    log.warning(
+                        "Malformed data in response from MusicBrainz; "
+                        "track title and/or artist unavailable for %s",
+                        track["recording_mbid"]
+                    )
+
             if len(user_loves) < count:
                 break   # No more feedback to fetch
             offset += count
@@ -157,12 +155,11 @@ class ListenBrainz:
         Check if user has already loved this MBID
         """
         loved_mbids = {mbid for (mbid, title, artist) in self.loves}
-        return True if mbid in loved_mbids else False
+        return mbid in loved_mbids
 
     def _already_loved_track_artist(self, track: str, artist: str) -> bool:
         """
         Makes an attempt to check if user has already loved this track
         """
         loved_tracks = {(track, artist) for (mbid, track, artist) in self.loves}
-        return True if (track, artist) in loved_tracks else False
-
+        return (track, artist) in loved_tracks

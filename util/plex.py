@@ -7,6 +7,7 @@ import requests
 import xmltodict
 from typing import Optional
 from uuid import uuid4
+from .types import TrackTuple
 
 log = logging.getLogger(__name__)
 
@@ -194,6 +195,81 @@ class Plex:
         response_dict = xmltodict.parse(r.content)
         return trim_tracks(response_dict["MediaContainer"]["Track"])
 
+    def get_track(self, track) -> list[dict]:
+        """
+        Queries a specific track from the Plex library
+        :param track: TrackTuple with attributes `track` and `artist`
+        :return: Dictionary response returned from Plex API
+        """
+        url = f"{self.url}/hubs/search/"
+        params = {
+            "X-Plex-Token": self.token,
+            "query": f"{track.artist} {track.title}"
+        }
+        r = requests.get(
+            url=url,
+            params=params,
+            timeout=30
+        )
+        response_dict = xmltodict.parse(r.content)
+        track_response = []
+        # response contains many different 'hubs' (libraries/other sources)
+        # find the one for music tracks
+        try:
+            for hub in response_dict["MediaContainer"]["Hub"]:
+                if hub["@title"] == "Tracks":
+                    try:
+                        track_layer = hub["Track"]
+                        if isinstance(track_layer, list):
+                            # may have more than 1 matching track in the library
+                            for plex_track in track_layer:
+                                if plex_track["@title"] == track.title:
+                                    track_response.append(plex_track)
+                        elif isinstance(track_layer, dict):
+                            if track_layer["@title"] == track.title:
+                                track_response.append(track_layer)
+                    except KeyError:
+                        # KeyError means we found no match from Plex
+                        # Check if the external service gave us the track as "X feat. Y"
+                        # Drop the featuring artist and re-search
+                        feature_strings = ["feat", "ft."]
+                        for f in feature_strings:
+                            if f in track.artist:
+                                artist = track.artist.split(f)[0]
+                                return self.get_track(TrackTuple(
+                                    title=track.title,
+                                    artist=artist
+                                ))
+                        log.warning(
+                            "No matching track found in Plex Library for %s - %s",
+                            track.artist, track.title
+                        )
+            return track_response
+        except KeyError:
+            log.warning(
+                "No matching track found in Plex Library for %s - %s",
+                track.artist, track.title
+            )
+
+    def submit_rating(self, track_key, rating):
+        """
+        Submit a new track rating to the Plex server.
+        :param track_key: The database key for the track item
+        :param rating: Defined by the global PLEX_THRESHOLD variable
+        """
+        # url = f"{self.url}/library/sections/{self.library}/all"
+        url = f"{self.url}/:/rate"
+        params = {
+            "X-Plex-Token": self.token,
+            "key": track_key,
+            "identifier": "com.plexapp.plugins.library",
+            "rating": rating
+        }
+        requests.put(
+            url=url,
+            params=params,
+            timeout=30
+        )
 
 
 def trim_tracks(track_list: list) -> list:

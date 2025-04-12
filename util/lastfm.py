@@ -1,5 +1,6 @@
-import pylast
 import logging
+import pylast
+from pylast import LovedTrack
 
 log = logging.getLogger(__name__)
 
@@ -62,7 +63,7 @@ class LastFM:
         track_list.sort(key=lambda track: track["title"])
         # grab tracks user has already loved
         log.info("Grabbing all currently loved tracks from Last.fm.")
-        old_loves = self.client.get_user(self.username).get_loved_tracks(limit=None)
+        old_loves = self.all_loves()
         # parse into more usable list to match track_list
         old_loves = {
             (
@@ -78,3 +79,10 @@ class LastFM:
         log.info("Found %s new tracks to submit to Last.fm.", len(new))
         return new
 
+    def all_loves(self) -> list[LovedTrack]:
+        """
+        Return all currently loved tracks
+        """
+        track_generator = self.client.get_user(self.username).get_loved_tracks(limit=None)
+        loves = [t for t in track_generator]
+        return loves

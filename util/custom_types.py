@@ -1,11 +1,15 @@
+from typing import Optional
+
+
 class Track:
     """
     Tuple class to represent tracks as (track_title, artist_name) tuples
     """
 
-    def __init__(self, title: str, artist: str):
+    def __init__(self, title: str, artist: str, mbid: Optional[str] = None):
         self.title = title
         self.artist = artist
+        self.mbid = mbid
 
     def __iter__(self):
         return iter((self.title, self.artist))

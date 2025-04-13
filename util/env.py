@@ -83,6 +83,14 @@ def get_required_int(var_name: str) -> int:
     return int(value)
 
 
+def get_required_bool(var_name: str) -> bool:
+    """
+    Wraps get_required() - raises an exception if a boolean value is not present
+    """  # noqa:E501
+    value = get_required(var_name)
+    return bool(value)
+
+
 def get(var_name: str) -> Optional[str]:
     """
     Simple wrapper for os.getenv()

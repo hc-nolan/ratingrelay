@@ -9,3 +9,4 @@ As of v0.2.0, Last.fm and ListenBrainz are supported. Other services such as Lib
 # Usage
 
 Please see the [usage guide](./usage.md) to learn how to use RatingRelay.
+PLEX_TOKEN=GmjikgvGFbgir8wgjsBQ

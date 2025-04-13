@@ -13,8 +13,9 @@ Start by renaming the file `.env.example` to `.env` and filling out the required
 - `SERVER_URL`: the URL to reach your Plex server
 - `MUSIC_LIBRARY`: the title of your music library
 - `RATING_THRESHOLD`: a number between 0.0 and 10.0; any tracks with a rating equal to or greater than this number will be submitted as Loved Tracks
+- `BIDIRECTIONAL`: set to `true` to enable the application to write new ratings to Plex tracks if a track has been loved on an external service but has no rating on Plex
 
-**Important note:** you do not need to modify `PLEX_CID` or `PLEX_TOKEN`. They are set automatically during the authentication process. If you don't see these values in your `.env` file, don't worry, they are added during the authentication process. 
+**Note:** you do not need to modify `PLEX_CID` or `PLEX_TOKEN`. They are set automatically during the authentication process. If you don't see these values in your `.env` file, don't worry, they are added during the authentication process.
 
 For Last.fm usage:
 - `LASTFM_API_KEY` and `LASTFM_SECRET`: obtain these at https://www.last.fm/api/account/create
@@ -40,7 +41,7 @@ The scripts in `./run_scripts/` are included to conveniently launch such contain
 
 ## Option 2: Local python
 
-This method will run the script directly on your host machine using a Python virtual environment. 
+This method will run the script directly on your host machine using a Python virtual environment.
 
 ### With uv
 
@@ -49,7 +50,7 @@ This method will run the script directly on your host machine using a Python vir
 - Enter the directory and install dependencies: `cd ratingrelay && uv sync --frozen`
 
 You can now run the script with either of the below:
-- `uv run /path/to/repo/ratingrelay.py` 
+- `uv run /path/to/repo/ratingrelay.py`
 - `/path/to/repo/.venv/bin/python /path/to/repo/ratingrelay.py`
 
 ### With pip
@@ -82,8 +83,8 @@ Opening this URL will ask you to sign into your Plex account and authorize Ratin
 
 # 4. Run at regular intervals
 
-Make sure you run the script manually once before setting up any of these methods. Otherwise, you will not be authenticated with your Plex server, and the script will hang and do nothing. 
- 
+Make sure you run the script manually once before setting up any of these methods. Otherwise, you will not be authenticated with your Plex server, and the script will hang and do nothing.
+
 ## Linux - cron
 
 On Linux, you can set up a cronjob to run the script regularly. A complete explanation of Cron is outside the scope of this project - see [this](https://linuxhandbook.com/crontab/) tutorial instead.

@@ -22,7 +22,10 @@ class LibraryNotFoundError(Exception):
 class Plex:
     """
     Handles all interaction with Plex server
-    """
+    :param `url`: URL for the Plex server
+    :param `music_library`: Name of the music library
+    :param `rating_threshold`: Integer representing the rating to consider tracks as 'loved'
+    """  # noqa
 
     def __init__(self, url: str, music_library: str, rating_threshold: int):
         self.url = url
@@ -92,9 +95,9 @@ class Plex:
         """
         return self.server.library.section(library_name)
 
-    def get_tracks(self) -> list:
+    def get_tracks(self) -> list[PlexTrack]:
         """
-        Queries a given library for all tracks meeting the RATING_THRESHOLD defined in .env
+        Queries a given library for all tracks meeting the `RATING_THRESHOLD` defined in `.env`
         """  # noqa: E501
         return self.music_library.search(
             libtype="track", userRating=self.rating_threshold

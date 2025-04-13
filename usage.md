@@ -12,7 +12,7 @@ The general steps are:
 Start by renaming the file `.env.example` to `.env` and filling out the required values:
 - `SERVER_URL`: the URL to reach your Plex server
 - `MUSIC_LIBRARY`: the title of your music library
-- `RATING_THRESHOLD`: a number between 0.0 and 10.0; any tracks with a rating equal to or greater than this number will be submitted as Loved Tracks
+- `RATING_THRESHOLD`: a number between 0 and 10; any tracks with a rating equal to or greater than this number will be submitted as Loved Tracks
 - `BIDIRECTIONAL`: set to `true` to enable the application to write new ratings to Plex tracks if a track has been loved on an external service but has no rating on Plex
 
 **Note:** you do not need to modify `PLEX_CID` or `PLEX_TOKEN`. They are set automatically during the authentication process. If you don't see these values in your `.env` file, don't worry, they are added during the authentication process.

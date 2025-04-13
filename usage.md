@@ -17,14 +17,14 @@ Start by renaming the file `.env.example` to `.env` and filling out the required
 
 **Note:** you do not need to modify `PLEX_CID` or `PLEX_TOKEN`. They are set automatically during the authentication process. If you don't see these values in your `.env` file, don't worry, they are added during the authentication process.
 
+For ListenBrainz usage:
+- `LISTENBRAINZ_TOKEN`: obtain at https://listenbrainz.org/settings/
+- `LISTENBRAINZ_USERNAME`: your ListenBrainz username
+
 For Last.fm usage:
 - `LASTFM_API_KEY` and `LASTFM_SECRET`: obtain these at https://www.last.fm/api/account/create
 - `LASTFM_USERNAME` and `LASTFM_PASSWORD`: your Last.fm username and password.
   - These are required to automate the authentication process. Without them, you would need to open a web browser and authorize the application every time the script is run.
-
-For ListenBrainz usage:
-- `LISTENBRAINZ_TOKEN`: obtain at https://listenbrainz.org/settings/
-- `LISTENBRAINZ_USERNAME`: your ListenBrainz username
 
 # 2. Set up project environment
 

@@ -5,7 +5,7 @@ from .custom_types import Track, Service
 log = logging.getLogger(__name__)
 
 
-class LastFM(Service):
+class LibreFM(Service):
     """
     Class for all LastFM-related operations
     """
@@ -25,21 +25,23 @@ class LastFM(Service):
         self.new_count = 0
 
     def __str__(self):
-        return "LastFM"
+        return "LibreFM"
 
-    def _connect(self) -> pylast.LastFMNetwork:
+    def _connect(self) -> pylast.LibreFMNetwork:
         """
         Creates a connection to Last.fm using pylast
         """
-        if not all(
+        # Make sure all variables are set
+        if all(
             val is not None or val != ""
             for val in (self.token, self.secret, self.username, self.password)
         ):
             raise RuntimeError(
                 "One or more Last.fm environment variables are missing.\n"
-                "If you intended to use Last.fm, make sure all environment variables are set."
+                "If you intended to use Last.fm, make sure all "
+                "environment variables are set."
             )
-        return pylast.LastFMNetwork(
+        return pylast.LibreFMNetwork(
             api_key=self.token,
             api_secret=self.secret,
             username=self.username,

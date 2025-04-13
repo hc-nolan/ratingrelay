@@ -1,4 +1,5 @@
-from typing import Optional
+from typing import Optional, Any
+from abc import ABC, abstractmethod
 
 
 class Track:
@@ -27,3 +28,47 @@ class Track:
 
     def __str__(self):
         return f"{self.artist} {self.title}"
+
+
+class Service(ABC):
+    """
+    Abstract base class for any classes that interact with external services
+    """
+
+    def __init__(self, user: Optional[str], token: Optional[str]):
+        self.username = user
+        self.token = token
+        self.client = self._connect()
+        self.new_count = 0
+
+    @abstractmethod
+    def _connect(self) -> Any:
+        """
+        Connect to the external service and return a client.
+        Must be implemented by subclasses.
+        """
+        pass
+
+    @abstractmethod
+    def love(self, track: Track):
+        """
+        Submit the provided Track as a Loved Track to the external service.
+        Must be implemented by subclasses.
+        """
+        pass
+
+    @abstractmethod
+    def new_loves(self, track_list: list[Track]) -> list[Track]:
+        """
+        Compare track_list to the tracks currently loved on the external service.
+        Return only the tracks from track_list which are not present on the external service.
+        Must be implemented by subclasses.
+        """  # noqa:E501
+        pass
+
+    @abstractmethod
+    def all_loves(self) -> set[Track]:
+        """
+        Returns a set containing all the currently loved tracks on the external service.
+        Must be implemented by subclasses.
+        """  # noqa:E501

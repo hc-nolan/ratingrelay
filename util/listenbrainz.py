@@ -1,12 +1,12 @@
 import logging
 import musicbrainzngs as mbz
-import liblistenbrainz as liblbz
-from .custom_types import Track
+from liblistenbrainz import ListenBrainz as LbzClient
+from .custom_types import Track, Service
 
 log = logging.getLogger(__name__)
 
 
-class ListenBrainz:
+class ListenBrainz(Service):
     """
     Handles all ListenBrainz operations
     """
@@ -29,13 +29,13 @@ class ListenBrainz:
     def __str__(self):
         return "ListenBrainz"
 
-    def _connect(self) -> liblbz.ListenBrainz:
+    def _connect(self) -> LbzClient:
         """
         Creates a connection to ListenBrainz
         :return None if any environment variables are missing,
         the ListenBrainz client otherwise
         """
-        client = liblbz.ListenBrainz()
+        client = LbzClient()
         client.set_auth_token(self.token)
         log.info("Checking API token validity.")
         client.is_token_valid(self.token)

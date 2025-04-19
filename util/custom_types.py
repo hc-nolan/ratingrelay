@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -9,3 +10,4 @@ class TrackTuple:
 
     title: str
     artist: str
+    mbid: Optional[str] = None

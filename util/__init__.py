@@ -1,6 +1,6 @@
 from .listenbrainz import ListenBrainz
 from .lastfm import LastFM
 from .plex import Plex
-from .types import TrackTuple
+from .custom_types import Track
 
-__all__ = ["ListenBrainz", "LastFM", "Plex", "TrackTuple"]
+__all__ = ["ListenBrainz", "LastFM", "Plex", "Track"]

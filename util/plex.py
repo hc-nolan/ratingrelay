@@ -1,15 +1,16 @@
-import time
 import logging
-import json
-import pathlib
-from urllib.parse import urlencode
-import requests
-import xmltodict
-from typing import Optional
-from uuid import uuid4
-from .types import TrackTuple
+from plexapi.myplex import MyPlexAccount
+from plexapi.server import PlexServer
+from plexapi.library import LibrarySection
+from plexapi.audio import Track as PlexTrack
+from rich import print
+from rich.prompt import IntPrompt, Prompt
+from rapidfuzz import fuzz
+from . import env
+from .custom_types import Track
 
 log = logging.getLogger(__name__)
+
 
 class LibraryNotFoundError(Exception):
     """
@@ -20,281 +21,118 @@ class LibraryNotFoundError(Exception):
 
 class Plex:
     """
-    Class for all Plex-related operations
-    """
-    def __init__(
-        self,
-        threshold: str,
-        library: str,
-        url: str,
-        cid: Optional[str],
-        token: Optional[str],
-    ):
-        self.app_name = "ratingrelay"
-        self.threshold = threshold
+    Handles all interaction with Plex server
+    :param `url`: URL for the Plex server
+    :param `music_library`: Name of the music library
+    :param `rating_threshold`: Integer representing the rating to consider tracks as 'loved'
+    """  # noqa
+
+    def __init__(self, url: str, music_library: str, rating_threshold: int):
         self.url = url
-        if not cid:
-            cid = str(uuid4())
-            self._write_env_var("PLEX_CID", cid)
-        self.cid = cid
-        self.token = self._auth(token)
-        self.library = self._get_music_library(library)
+        self.rating_threshold = rating_threshold
+        self.token = env.get_required("PLEX_TOKEN")
+        self._verify_auth()
+        self.music_library = self._get_music_library(music_library)
 
-    def _auth(self, token: str | None) -> str:
+    def _verify_auth(self):
         """
-        Handles full authentication process
-        """
-        if token is None:
-            return self._new_auth()
-        # Check for existing token
-        valid = self._check_token_validity(token)
-        if not valid:
-            return self._new_auth()
-
-        return token
-
-    def _new_auth(self) -> str:
-        """
-        Initial auth process
-        Ref: https://forums.plex.tv/t/authenticating-with-plex/609370
-        """
-        # Generate PIN
-        resp = requests.post(
-            url="https://plex.tv/api/v2/pins",
-            data={
-                "strong": "true",
-                "X-Plex-Product": self.app_name,
-                "X-Plex-Client-Identifier": self.cid,
-            },
-            headers={"accept": "application/json"},
-            timeout=30
-        )
-        content = json.loads(resp.content)
-        # Grab PIN ID and code
-        pin_id = content["id"]
-        pin_code = content["code"]
-
-        # Construct auth URL; user has to open in browser
-        params = {
-            "clientID": self.cid,
-            "code": pin_code,
-            "context[device][product]": self.app_name,
-        }
-        url = "https://app.plex.tv/auth#?" + urlencode(params)
-        log.info("Please open the below URL in a web browser to authenticate to Plex.")
-        log.info("Plex auth URL: %s", url)
-
-        # Poll the ID each second to determine if user has authed
-        auth = None
-        while auth is None:
-            resp = requests.get(
-                url=f"https://plex.tv/api/v2/pins/{pin_id}",
-                headers={"accept": "application/json"},
-                data={"code": pin_code, "X-Plex-Client-Identifier": self.cid},
-                timeout=30
+        Checks if self.token is valid for authenticating to Plex. If token is not valid,
+        proceeds with interactive authentication to retrieve a new token.
+        """  # noqa: E501
+        if not self.token:
+            log.info(
+                "No saved PLEX_TOKEN found. Proceeding with manual authentication."
             )
-            content = json.loads(resp.content)
-            if content["authToken"] is not None:
-                auth = content["authToken"]
-                self._write_env_var("PLEX_TOKEN", auth)
-            # User has not completed auth flow; Sleep for 1s and retry
-            time.sleep(1)
-        return auth
-
-    def _check_token_validity(self, token_to_check: str) -> bool:
-        """
-        Check if Plex API token is still valid
-        """
-        resp = requests.get(
-            url="https://plex.tv/api/v2/user",
-            headers={"accept": "application/json"},
-            data={
-
-                "X-Plex-Product": self.app_name,
-                "X-Plex-Client-Identifier": self.cid,
-                "X-Plex-Token": token_to_check,
-            },
-            timeout=30
-        )
-        if resp.status_code == 200:
-            return True
-        return False
-
-    @staticmethod
-    def _write_env_var(name: str, value: str) -> None:
-        """
-        Writes or updates an environment variable
-        """
-        env_file = pathlib.Path(__file__).parent.parent / ".env"
-        log.info("%s", env_file)
-        with open(env_file, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-
-        updated = False
-        for i, line in enumerate(lines):
-            if line.startswith(name):
-                lines[i] =  name + "=" + value
-                updated = True
-
-        if not updated:
-            # If above did not produce an update, it means no line '<NAME>=' was found; append it
-            lines.append("\n" + name + "=" + value)
-            updated = True
-
-        if updated:
-            with open(env_file, "w", encoding="utf-8") as f:
-                f.writelines(lines)
+            self._manual_auth()
+        if self._is_token_valid():
+            log.info("Token is valid. Authenticated with Plex.")
         else:
-            raise IOError(
-                f"Unable to write to env file. Cannot continue without {name}.\n"
-                f"Please manually add it: {value}"
-            )
+            log.info("Saved PLEX_TOKEN is no longer valid. Please re-authenticate.")
+            self._manual_auth()
 
-
-    def _get_music_library(self, library_name: str) -> str:
+    def _manual_auth(self):
         """
-        Searches for music library matching value of MUSIC_LIBRARY .env variable
-        :return: The Plex music library key, if found
-        """
-        libraries_resp = requests.get(
-            url=f"{self.url}/library/sections",
-            params={"X-Plex-Token": self.token},
-            timeout=30
-        )
-        libraries_resp = xmltodict.parse(libraries_resp.content)
-        libraries = libraries_resp["MediaContainer"]["Directory"]
-        for lib in libraries:
-            if lib["@title"] == library_name:
-                return lib["@key"]
-
-        libraries_found = [lib["@title"] for lib in libraries]
-        raise LibraryNotFoundError(
-            f"No library named '{library_name}' found on Plex Server. "
-            f"Please ensure this matches the library name exactly. "
-            f"Libraries found: {libraries_found}"
+        Handles the manual authentication process. Retrieves the valid token after
+        authentication for future use.
+        """  # noqa: E501
+        print(
+            "Please enter your Plex authentication details. "
+            "This should only be required the first time the program is run."
         )
 
-    def get_tracks(self) -> list:
-        """
-        Queries a given library for all tracks meeting the RATING_THRESHOLD defined in .env
-        :param library_key: Key for the Music library to query; returned by get_music_library()
-        :param auth_token: X-Plex-Token; returned by Plex.auth()
-        :return: List of all tracks meeting the rating threshold
-        """
-        url = f"{self.url}/library/sections/{self.library}/all"
-        params = {
-            "X-Plex-Token": self.token,
-            "type": 10,
-            "userRating>": self.threshold
-        }
-        r = requests.get(
-            url=url,
-            params=params,
-            timeout=30
+        plex_username = Prompt.ask("Plex username")
+        plex_password = Prompt.ask("Plex password (input hidden)", password=True)
+        plex_server = Prompt.ask("Plex server name")
+        plex_code = IntPrompt.ask(
+            "Plex MFA code (leave blank if not using MFA)", default=0
         )
-        response_dict = xmltodict.parse(r.content)
-        return trim_tracks(response_dict["MediaContainer"]["Track"])
 
-    def get_track(self, track) -> list[dict]:
-        """
-        Queries a specific track from the Plex library
-        :param track: TrackTuple with attributes `track` and `artist`
-        :return: Dictionary response returned from Plex API
-        """
-        url = f"{self.url}/hubs/search/"
-        params = {
-            "X-Plex-Token": self.token,
-            "query": f"{track.artist} {track.title}"
-        }
-        r = requests.get(
-            url=url,
-            params=params,
-            timeout=30
+        account = MyPlexAccount(
+            username=plex_username, password=plex_password, code=plex_code
         )
-        response_dict = xmltodict.parse(r.content)
-        track_response = []
-        # response contains many different 'hubs' (libraries/other sources)
-        # find the one for music tracks
+        plex = account.resource(plex_server).connect()
+        self.server = plex
+
+        self.token = plex._token
+        env.write_var("PLEX_TOKEN", self.token)
+
+    def _is_token_valid(self) -> bool:
+        """
+        Checks if self.token is valid for authenticating to the Plex server
+        """
+        log.info("Checking if PLEX_TOKEN is still valid for authentication.")
         try:
-            for hub in response_dict["MediaContainer"]["Hub"]:
-                if hub["@title"] == "Tracks":
-                    try:
-                        track_layer = hub["Track"]
-                        if isinstance(track_layer, list):
-                            # may have more than 1 matching track in the library
-                            for plex_track in track_layer:
-                                if plex_track["@title"] == track.title:
-                                    track_response.append(plex_track)
-                        elif isinstance(track_layer, dict):
-                            if track_layer["@title"] == track.title:
-                                track_response.append(track_layer)
-                    except KeyError:
-                        # KeyError means we found no match from Plex
-                        # Check if the external service gave us the track as "X feat. Y"
-                        # Drop the featuring artist and re-search
-                        feature_strings = ["feat", "ft."]
-                        for f in feature_strings:
-                            if f in track.artist:
-                                artist = track.artist.split(f)[0]
-                                return self.get_track(TrackTuple(
-                                    title=track.title,
-                                    artist=artist
-                                ))
-                        log.warning(
-                            "No matching track found in Plex Library for %s - %s",
-                            track.artist, track.title
-                        )
-            return track_response
-        except KeyError:
-            log.warning(
-                "No matching track found in Plex Library for %s - %s",
-                track.artist, track.title
-            )
+            self.server = PlexServer(self.url, self.token)
+            return True
+        except Exception as e:
+            log.error(e)
+            return False
 
-    def submit_rating(self, track_key, rating):
+    def _get_music_library(self, library_name: str) -> LibrarySection:
+        """
+        Returns the LibrarySection matching the given library_name.
+        Raises plexapi.exceptions.NotFound if no matching library exists.
+        """
+        return self.server.library.section(library_name)
+
+    def get_tracks(self) -> list[PlexTrack]:
+        """
+        Queries a given library for all tracks meeting the `RATING_THRESHOLD` defined in `.env`
+        """  # noqa: E501
+        return self.music_library.search(
+            libtype="track", userRating=self.rating_threshold
+        )
+
+    def get_track(self, track: Track) -> list[PlexTrack]:
+        """
+        Queries the Plex library for a track that matches the provided
+        Track, which has attributes `artist` and `title`
+        :param track: A Track tuple with attributes `artist` and `title`
+        :
+        """
+        search = self.music_library.search(title=track.title, libtype="track")
+        matches = []
+        if search:
+            for result in search:
+                # make sure title is an exact match, because
+                # the Plex search returns partial matches
+                if result.title == track.title:
+                    plex_artist = result.artist().title
+                    if similar_enough(plex_artist, track.artist):
+                        matches.append(result)
+        return matches
+
+    def submit_rating(self, track: PlexTrack, rating: int):
         """
         Submit a new track rating to the Plex server.
-        :param track_key: The database key for the track item
-        :param rating: Defined by the global PLEX_THRESHOLD variable
         """
-        # url = f"{self.url}/library/sections/{self.library}/all"
-        url = f"{self.url}/:/rate"
-        params = {
-            "X-Plex-Token": self.token,
-            "key": track_key,
-            "identifier": "com.plexapp.plugins.library",
-            "rating": rating
-        }
-        requests.put(
-            url=url,
-            params=params,
-            timeout=30
-        )
+        return track.rate(rating=rating)
 
 
-def trim_tracks(track_list: list) -> list:
-    """"
-    Filters list of track dictionaries returned by Plex; retains only artist, title, label, and year
+def similar_enough(a: str, b: str) -> bool:
     """
-    # Convert each item to frozenset for hashability so we can get unique tracks
-    unique_tracks = set()
-    for track in track_list:
-        try:
-            label = track["@parentStudio"]
-        except KeyError:
-            label = None
-        try:
-            year = track["@parentYear"]
-        except KeyError:
-            year = None
-        track_items = frozenset({
-            "title": track["@title"],
-            "artist": track["@grandparentTitle"],
-            "label": label,
-            "year": year
-        }.items())
-        unique_tracks.add(track_items)
-    # Convert back to list
-    return [dict(track) for track in unique_tracks]
-
-
+    Uses rapidfuzz.fuzz to compare strings `a` and `b`. If their similarity is
+    above a 0.7 ratio, they are 'similar enough'
+    :returns `True` if the similarity ratio between `a` and `b` is >= 0.7
+    """
+    return fuzz.ratio(a, b) >= 0.7

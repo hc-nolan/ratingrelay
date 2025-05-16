@@ -103,8 +103,12 @@ class Plex:
         """
         Queries a given library for all tracks meeting the `LOVE_THRESHOLD` defined in `.env`
         """  # noqa: E501
+
+        # The Plex >>= filter is "greater than", so we subtract from the defined
+        # threshold value to effectively make it "greater than or equal to"
+        thresh = float(self.love_threshold) - 0.1
         return self.music_library.search(
-            libtype="track", userRating=self.love_threshold
+            libtype="track", filters={"userRating>>=": thresh}
         )
 
     def get_track(self, track: Track) -> list[PlexTrack]:

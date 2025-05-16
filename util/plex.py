@@ -111,6 +111,18 @@ class Plex:
             libtype="track", filters={"userRating>>=": thresh}
         )
 
+    def get_hated_tracks(self) -> list[PlexTrack]:
+        """
+        Queries a given library for all tracks meeting the `HATE_THRESHOLD` defined in `.env`
+        """  # noqa: E501
+
+        # The Plex <<= filter is "less than", so we add too the defined
+        # threshold value to effectively make it "less than or equal to"
+        thresh = float(self.hate_threshold) + 0.1
+        return self.music_library.search(
+            libtype="track", filters={"userRating<<=": thresh}
+        )
+
     def get_track(self, track: Track) -> list[PlexTrack]:
         """
         Queries the Plex library for a track that matches the provided

@@ -3,7 +3,7 @@ from typing import Optional
 
 
 @dataclass(frozen=True)
-class TrackTuple:
+class Track:
     """
     Tuple class to represent tracks as (track_title, artist_name) tuples
     """

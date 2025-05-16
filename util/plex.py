@@ -24,12 +24,16 @@ class Plex:
     Handles all interaction with Plex server
     :param `url`: URL for the Plex server
     :param `music_library`: Name of the music library
-    :param `rating_threshold`: Integer representing the rating to consider tracks as 'loved'
+    :param `love_threshold`: Integer representing the rating to consider tracks as 'loved'
+    :param `hate_threshold`: (Optional) Integer representing the rating to consider tracks as 'hated'
     """  # noqa
 
-    def __init__(self, url: str, music_library: str, rating_threshold: int):
+    def __init__(
+        self, url: str, music_library: str, love_threshold: int, hate_threshold: int = 0
+    ):
         self.url = url
-        self.rating_threshold = rating_threshold
+        self.love_threshold = love_threshold
+        self.hate_threshold = hate_threshold
         self.token = env.get_required("PLEX_TOKEN")
         self._verify_auth()
         self.music_library = self._get_music_library(music_library)
@@ -68,7 +72,7 @@ class Plex:
         )
 
         account = MyPlexAccount(
-            username=plex_username, password=plex_password, code=plex_code
+            username=plex_username, password=plex_password, code=str(plex_code)
         )
         plex = account.resource(plex_server).connect()
         self.server = plex
@@ -95,12 +99,12 @@ class Plex:
         """
         return self.server.library.section(library_name)
 
-    def get_tracks(self) -> list[PlexTrack]:
+    def get_loved_tracks(self) -> list[PlexTrack]:
         """
-        Queries a given library for all tracks meeting the `RATING_THRESHOLD` defined in `.env`
+        Queries a given library for all tracks meeting the `LOVE_THRESHOLD` defined in `.env`
         """  # noqa: E501
         return self.music_library.search(
-            libtype="track", userRating=self.rating_threshold
+            libtype="track", userRating=self.love_threshold
         )
 
     def get_track(self, track: Track) -> list[PlexTrack]:

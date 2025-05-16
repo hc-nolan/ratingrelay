@@ -57,7 +57,7 @@ class LastFM:
 
     def new_loves(self, track_list: list[Track]) -> list[Track]:
         """
-        Compares the list of tracks from Plex above the rating threshold to
+        Compares the list of tracks from Plex above the love threshold to
         the user's already loved Last.fm tracks
         Returns the tracks that have not been loved yet
         """

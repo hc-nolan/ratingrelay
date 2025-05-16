@@ -39,7 +39,7 @@ LBZ_TOKEN = env.get("LISTENBRAINZ_TOKEN")
 
 PLEX_URL = env.get_required("SERVER_URL")
 PLEX_LIBRARY = env.get_required("MUSIC_LIBRARY")
-PLEX_THRESHOLD = env.get_required_int("RATING_THRESHOLD")
+PLEX_LOVE_THRESHOLD = env.get_required_int("LOVE_THRESHOLD")
 
 BIDIRECTIONAL = env.get_required_bool("BIDIRECTIONAL")
 
@@ -83,7 +83,7 @@ class Relay:
         exec_time = time.time() - self.start_time
         log.info(
             "SUMMARY:\tExecution took %s seconds\n"
-            "- Plex tracks meeting rating threshold: %s\n"
+            "- Plex tracks meeting love threshold: %s\n"
             "- Last.fm newly loved tracks: %s\n"
             "- ListenBrainz newly loved tracks: %s\n"
             "- Tracks that were Loved on external services but not on Plex: %s",
@@ -100,9 +100,9 @@ class Relay:
         """
         log.info("Starting sync from Plex to external services.")
 
-        log.info("Querying Plex for tracks meeting the rating threshold.")
-        tracks = to_Track_list(self.plex.get_tracks())
-        log.info("Found %s tracks meeting rating threshold.", len(tracks))
+        log.info("Querying Plex for tracks meeting the love threshold.")
+        tracks = to_Track_list(self.plex.get_loved_tracks())
+        log.info("Found %s tracks meeting love threshold.", len(tracks))
 
         service_new_counts = []
         for service in self.services:
@@ -135,7 +135,7 @@ class Relay:
             # so, iterate through the response
             for match in matches:
                 if match.userRating is None:
-                    self.plex.submit_rating(match, self.plex.rating_threshold)
+                    self.plex.submit_rating(match, self.plex.love_threshold)
                     plex_new_loves += 1
 
         return {"plex_new_loves": plex_new_loves}
@@ -145,7 +145,7 @@ def setup_services() -> tuple[Plex, Optional[LastFM], Optional[ListenBrainz]]:
     """ """
     plex = Plex(
         music_library=PLEX_LIBRARY,
-        rating_threshold=PLEX_THRESHOLD,
+        rating_threshold=PLEX_LOVE_THRESHOLD,
         url=PLEX_URL,
     )
     try:

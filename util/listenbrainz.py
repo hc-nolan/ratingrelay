@@ -24,7 +24,9 @@ class ListenBrainz:
             )
         self.client = self._connect()
         self.loves = self.all_loves()
-        self.new_count = 0
+        self.hates = self.all_hates()
+        self.new_love_count = 0
+        self.new_hate_count = 0
 
     def __str__(self):
         return "ListenBrainz"
@@ -42,54 +44,148 @@ class ListenBrainz:
         log.info("Token is valid; successfully connected to ListenBrainz.")
         return client
 
-    def love(self, track: Track):
+    def _handle_feedback(self, feedback: str, track: Track):
         """
-        Track should have keys `title` and `artist`
+        Handler method for `love()` and `hate()`. Submits track feedback to
+        Listenbrainz.
+
+        Args:
+            `feedback`: `love` or `hate`
         """
-        if self._already_loved_track_artist(track=track):
-            log.info("%s by %s is already loved.", track.title, track.artist)
+        if feedback == "love":
+            existing_track_val = self.loves
+            log_str = "Loving"
+            feedback_value = 1
+            counter = self.new_love_count
+        elif feedback == "hate":
+            existing_track_val = self.hates
+            log_str = "Hating"
+            feedback_value = -1
+            counter = self.new_hate_count
+        else:
+            raise ValueError(f"Feedback value must be 'love' or 'hate', got {feedback}")
+        if track in existing_track_val:
+            log.info(
+                "%s by %s has already been %sd.", track.title, track.artist, feedback
+            )
             return
+
         log.info(
-            "Loving: %s by %s - Checking for track MBID",
+            "%s: %s by %s - Checking for track MBID",
+            log_str,
             track.title,
             track.artist,
         )
         mbid = self._get_track_mbid(track)
         if mbid:
-            if self._already_loved_mbid(mbid):
+            existing_mbids = {t.mbid for t in existing_track_val}
+            if mbid in existing_mbids:
                 log.info("Track already loved.")
             else:
                 log.info("MBID found. Submitting %s to ListenBrainz.", mbid)
-                self.client.submit_user_feedback(1, mbid)
-                self.new_count += 1
+                self.client.submit_user_feedback(feedback_value, mbid)
+                counter += 1
         else:
             log.info("No MBID found. Unable to submit to ListenBrainz.")
 
-    def new_loves(self, track_list: list[Track]) -> list[Track]:
+    def love(self, track: Track):
         """
-        Compares the list of tracks from Plex to already loved
-        ListenBrainz tracks; returns the tracks that have not yet been loved
+        Love a track on ListenBrainz.
+        """
+        self._handle_feedback(feedback="love", track=track)
+
+    def hate(self, track: Track):
+        """
+        Hate a track on ListenBrainz.
+        """
+        self._handle_feedback(feedback="hate", track=track)
+
+    def _new(self, rating: str, track_list: list[Track]) -> list[Track]:
+        """
+        Compares the list of tracks from Plex to already loved/hated
+        ListenBrainz tracks; returns the tracks that have not yet been loved/hated
+
+        Args:
+            `rating`: "love" or "hate"
+            `track_list`: List of tracks found from Plex
+
+        Returns:
+            Subset of `track_list` containing items not in `self.loves`/`self.hates`
         """
         # Tracks from Plex don't have the MBID, so create a new set without the MBID
-        old_loves = {(t.title.lower(), t.artist.lower()) for t in self.loves}
+        if rating == "love":
+            lbz_tracks = self.loves
+        elif rating == "hate":
+            lbz_tracks = self.hates
+        else:
+            raise ValueError(
+                f"Invalid rating type '{rating}' - valid types are 'love' and 'hate'"
+            )
+
+        old = {(t.title.lower(), t.artist.lower()) for t in lbz_tracks}
         new = [
             track
             for track in track_list
-            if (track.title.lower(), track.artist.lower()) not in old_loves
+            if (track.title.lower(), track.artist.lower()) not in old
         ]
         return new
+
+    def new_loves(self, track_list: list[Track]) -> list[Track]:
+        """
+        Compares the list of tracks from Plex to already loved ListenBrainz
+        tracks; returns the tracks that have not yet been loved
+
+        Args:
+            `track_list`: List of tracks found from Plex
+
+        Returns:
+            Subset of `track_list` containing items not in `self.loves`
+        """
+        return self._new(rating="love", track_list=track_list)
+
+    def new_hates(self, track_list: list[Track]) -> list[Track]:
+        """
+        Compares the list of tracks from Plex to already hated ListenBrainz
+        tracks; returns the tracks that have not yet been hated
+
+        Args:
+            `track_list`: List of tracks found from Plex
+
+        Returns:
+            Subset of `track_list` containing items not in `self.hates`
+        """
+        return self._new(rating="hate", track_list=track_list)
+
+    def all_hates(self) -> set[Track]:
+        """
+        Retrieve all tracks the user has already hated
+        """
+        return self._all(score=-1)
 
     def all_loves(self) -> set[Track]:
         """
         Retrieve all tracks the user has already loved
         """
+        return self._all(score=1)
+
+    def _all(self, score: int):
+        """
+        Retrieve all tracks the user has submitted feedback for
+
+        Args:
+            `score`: Integer representing the user feedback; `1` for love, `-1` for hate.
+
+        Returns:
+            `set` of all tracks found on ListenBrainz account
+        """
         all_loves = set()
         offset = 0
         count = 100
+
         while True:
             user_loves = self.client.get_user_feedback(
                 username=self.username,
-                score=1,
+                score=score,
                 count=count,
                 offset=offset,
                 metadata=True,
@@ -147,16 +243,3 @@ class ListenBrainz:
             except (IndexError, KeyError):
                 return None
         return None
-
-    def _already_loved_mbid(self, mbid: str) -> bool:
-        """
-        Check if user has already loved this MBID
-        """
-        loved_mbids = {t.mbid for t in self.loves}
-        return mbid in loved_mbids
-
-    def _already_loved_track_artist(self, track: Track) -> bool:
-        """
-        Makes an attempt to check if user has already loved this track
-        """
-        return track in self.loves

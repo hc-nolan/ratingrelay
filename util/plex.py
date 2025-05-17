@@ -32,8 +32,8 @@ class Plex:
         self, url: str, music_library: str, love_threshold: int, hate_threshold: int = 0
     ):
         self.url = url
-        self.love_threshold = love_threshold
-        self.hate_threshold = hate_threshold
+        self.love_threshold = float(love_threshold)
+        self.hate_threshold = float(hate_threshold)
         self.token = env.get_required("PLEX_TOKEN")
         self._verify_auth()
         self.music_library = self._get_music_library(music_library)

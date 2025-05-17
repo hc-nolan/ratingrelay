@@ -22,7 +22,7 @@ class LastFM:
         self.token = token
         self.secret = secret
         self.client = self._connect()
-        self.new_count = 0
+        self.new_love_count = 0
 
     def __str__(self):
         return "LastFM"
@@ -53,11 +53,11 @@ class LastFM:
         log.info("Loving: %s by %s", track.title, track.artist)
         lastfm_track = self.client.get_track(track.artist, track.title)
         lastfm_track.love()
-        self.new_count += 1
+        self.new_love_count += 1
 
     def new_loves(self, track_list: list[Track]) -> list[Track]:
         """
-        Compares the list of tracks from Plex above the rating threshold to
+        Compares the list of tracks from Plex above the love threshold to
         the user's already loved Last.fm tracks
         Returns the tracks that have not been loved yet
         """

@@ -50,7 +50,7 @@ def get_env_file() -> Path:
     """
     Retrieve the path of the application's .env file
     """
-    env_file = Path(__file__).parent.parent / ".env"
+    env_file = Path(__file__).parent.parent.parent / ".env"
     if env_file.exists():
         log.info("Found .env file at: %s", env_file)
         return env_file

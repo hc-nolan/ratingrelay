@@ -77,13 +77,21 @@ class Relay:
         self.services = {"lfm": lfm, "lbz": lbz}
 
     def sync(self):
-        from_stats = self.sync_from_plex()
-        from_stats_love = from_stats.get("love_info")
-        from_stats_hate = from_stats.get("hate_info")
+        try:
+            from_stats = self.sync_from_plex()
+            from_stats_love = from_stats.get("love_info")
+            from_stats_hate = from_stats.get("hate_info")
+        except Exception as e:
+            log.warning("Exception raised while trying to sync from Plex: %s", e)
+            from_stats_love = {"newly_loved_counts": 0}
+            from_stats_hate = {}
 
         stats_to = {}
         if self.bidirectional:
-            stats_to = self.sync_to_plex()
+            try:
+                stats_to = self.sync_to_plex()
+            except Exception as e:
+                log.warning("Exception raised while trying to sync to Plex: %s", s)
         exec_time = time.time() - self.start_time
         # TODO: nicer summary printout
         log.info(

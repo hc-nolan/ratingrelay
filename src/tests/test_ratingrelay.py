@@ -1,5 +1,5 @@
 import pytest
-from ratingrelay import to_Track_list
+from ratingrelay import to_Track_list, Relay
 from util import Track
 from plexapi.audio import Track as PlexTrack
 
@@ -20,3 +20,12 @@ class TestToTrackList:
         plex_track_list = [mock_track(mocker, "1", "2"), mock_track(mocker, "3", "4")]
         expected = [Track(title="1", artist="2"), Track(title="3", artist="4")]
         assert to_Track_list(plex_track_list) == expected
+
+
+class TestRelay:
+    """Tests for Relay"""
+
+    def test_init_requires_service(self, mocker):
+        plex = mocker.MagicMock()
+        with pytest.raises(RuntimeError):
+            relay = Relay(plex=plex, bidirectional=False, lfm=None, lbz=None)

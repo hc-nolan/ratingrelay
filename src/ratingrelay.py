@@ -48,10 +48,21 @@ BIDIRECTIONAL = env.get_required_bool("BIDIRECTIONAL")
 def to_Track_list(t: list[PlexTrack]) -> list[Track]:
     """
     Converts a list of tracks from Plex into a list of `Track` types
-    :param `t`: List containing one or more `plexapi.audio.Track` aka `PlexTrack`
-    :returns List of `Track` items corresponding to the `PlexTrack` items
+
+    Args:
+        `t`: List containing one or more `plexapi.audio.Track` aka `PlexTrack`
+
+    Returns:
+        List of `Track` items corresponding to the `PlexTrack` items
     """  # noqa
-    return [Track(title=tr.title, artist=tr.artist().title) for tr in t]
+    return [try_to_make_Track(tr) for tr in t]
+
+
+def try_to_make_Track(plex_track: PlexTrack) -> Track:
+    try:
+        return Track(title=plex_track.title, artist=plex_track.artist().title)
+    except Exception as e:
+        pass
 
 
 class Relay:

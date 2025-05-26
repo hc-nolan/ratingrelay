@@ -21,6 +21,11 @@ class TestToTrackList:
         expected = [Track(title="1", artist="2"), Track(title="3", artist="4")]
         assert to_Track_list(plex_track_list) == expected
 
+    def test_malformed_data(self, mocker):
+        plex_track_list = ["", mock_track(mocker, "1", "2")]
+        expected = [None, Track(title="1", artist="2")]
+        assert to_Track_list(plex_track_list) == expected
+
 
 class TestRelay:
     """Tests for Relay"""

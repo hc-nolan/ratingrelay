@@ -18,6 +18,17 @@ def mock_lbz(mocker):
     return lbz
 
 
+class TestNew:
+    """Tests for _new()"""
+
+    def test_success(self, mock_lbz):
+        track1 = Track(title="1", artist="1")
+        track2 = Track(title="2", artist="2")
+        mock_lbz.loves = [track1]
+        result = mock_lbz._new(rating="love", track_list=[track1, track2])
+        assert result == [track2]
+
+
 class TestFindMbidMatch:
     """Tests for _find_mbid_match()"""
 

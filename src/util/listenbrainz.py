@@ -56,12 +56,10 @@ class ListenBrainz:
             existing_track_val = self.loves
             log_str = "Loving"
             feedback_value = 1
-            counter = self.new_love_count
         elif feedback == "hate":
             existing_track_val = self.hates
             log_str = "Hating"
             feedback_value = -1
-            counter = self.new_hate_count
         else:
             raise ValueError(f"Feedback value must be 'love' or 'hate', got {feedback}")
         if track in existing_track_val:
@@ -84,7 +82,10 @@ class ListenBrainz:
             else:
                 log.info("MBID found. Submitting %s to ListenBrainz.", mbid)
                 self.client.submit_user_feedback(feedback_value, mbid)
-                counter += 1
+                if feedback == "love":
+                    self.new_love_count += 1
+                elif feedback == "hate":
+                    self.new_hate_count += 1
         else:
             log.info("No MBID found. Unable to submit to ListenBrainz.")
 

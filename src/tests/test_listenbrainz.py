@@ -54,6 +54,19 @@ class TestHandleFeedback:
 
         mock_lbz._get_track_mbid.assert_not_called()
         mock_lbz.client.submit_user_feedback.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "feedback,expected_counter_attr",
+        [("love", "new_love_count"), ("hate", "new_hate_count")],
+    )
+    def test_counter_increment(self, mock_lbz, feedback, expected_counter_attr):
+        track = Track(title="Test Song", artist="Test Artist")
+        setattr(mock_lbz, expected_counter_attr, 2)
+
+        mock_lbz._handle_feedback(feedback, track)
+        assert getattr(mock_lbz, expected_counter_attr) == 3
+
+
 class TestNew:
     """Tests for _new()"""
 

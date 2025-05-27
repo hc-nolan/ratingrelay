@@ -16,3 +16,34 @@ def mock_lbz(mocker):
     ListenBrainz.all_loves.reset_mock()
     ListenBrainz.all_hates.reset_mock()
     return lbz
+
+
+class TestFindMbidMatch:
+    """Tests for _find_mbid_match()"""
+
+    def test_success(self, mock_lbz):
+        """
+        Test that function correctly matches a track to the result dictionary
+        """
+        track = Track(title="Title", artist="Artist")
+        track_search = [
+            {"id": "1", "title": "Title", "artist-credit": [{"name": "Artist"}]}
+        ]
+        result = mock_lbz._find_mbid_match(track=track, track_search=track_search)
+        assert result == "1"
+
+    @pytest.mark.parametrize(
+        "track_search",
+        [
+            [{"id": "1", "title": "Title", "artist-credit": None}],
+            [{"title": "Title", "artist-credit": None}],
+            [{"title": "Title"}],
+        ],
+    )
+    def test_malformed_data(self, mock_lbz, track_search):
+        """
+        Test that malformed data doesn't raise an exception
+        """
+        track = Track(title="Title", artist="Artist")
+        result = mock_lbz._find_mbid_match(track=track, track_search=track_search)
+        assert result == None

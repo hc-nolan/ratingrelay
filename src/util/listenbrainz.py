@@ -229,17 +229,17 @@ class ListenBrainz:
         Attempts to find a matching MBID given a track dict
         and MusicBrainz search results
         """
+        track_artist = track.artist.lower()
+        track_title = track.title.lower()
         for result in track_search:
             # find matching title+artist pair
             try:
-                track_title = track.title.lower()
-                candidate_title = result["title"].lower()
+                candidate_title = result.get("title").lower()
 
-                track_artist = track.artist.lower()
-                candidate_artist = result["artist-credit"][0]["name"].lower()
+                candidate_artist = result["artist-credit"][0].get("name").lower()
                 if track_title == candidate_title and track_artist == candidate_artist:
                     mbid = result["id"]
                     return mbid
-            except (IndexError, KeyError):
+            except (IndexError, KeyError, TypeError):
                 return None
         return None

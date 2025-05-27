@@ -19,7 +19,7 @@ class TestHandleFeedback:
     """Tests for _handle_feedback()"""
 
     @pytest.fixture
-    def mock_lbz_feedback(self, mocker):
+    def mock_lbz(self, mocker):
         mocker.patch.object(ListenBrainz, "_connect", return_value=MagicMock())
         mocker.patch.object(ListenBrainz, "all_loves", return_value=[])
         mocker.patch.object(ListenBrainz, "all_hates", return_value=[])
@@ -37,15 +37,23 @@ class TestHandleFeedback:
         return lbz
 
     @pytest.mark.parametrize("feedback", ["love", "hate"])
-    def test_success(self, mock_lbz_feedback, feedback):
+    def test_success(self, mock_lbz, feedback):
         track = Track(title="3", artist="3")
-        mock_lbz_feedback._handle_feedback(feedback, track)
+        mock_lbz._handle_feedback(feedback, track)
 
-        mock_lbz_feedback._get_track_mbid.assert_called_once_with(track)
+        mock_lbz._get_track_mbid.assert_called_once_with(track)
         expected_feedback_value = 1 if feedback == "love" else -1
-        mock_lbz_feedback.client.submit_user_feedback.assert_called_once_with(
+        mock_lbz.client.submit_user_feedback.assert_called_once_with(
             expected_feedback_value, "test-mbid-1234"
         )
+
+    @pytest.mark.parametrize("feedback", ["love", "hate"])
+    def test_track_already_in_existing_list(self, mock_lbz, feedback):
+        track = Track(title="1", artist="1")
+        mock_lbz._handle_feedback(feedback, track)
+
+        mock_lbz._get_track_mbid.assert_not_called()
+        mock_lbz.client.submit_user_feedback.assert_not_called()
 class TestNew:
     """Tests for _new()"""
 

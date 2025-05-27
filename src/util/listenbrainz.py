@@ -190,12 +190,13 @@ class ListenBrainz:
                 offset=offset,
                 metadata=True,
             )
-            user_loves = user_loves["feedback"]
+            user_loves = user_loves.get("feedback")
             for track in user_loves:
                 try:
-                    mbid = track["recording_mbid"]
-                    title = track["track_metadata"]["track_name"]
-                    artist = track["track_metadata"]["artist_name"]
+                    mbid = track.get("recording_mbid")
+                    metadata = track.get("metadata")
+                    title = metadata.get("track_name")
+                    artist = metadata.get("artist_name")
                     track_tuple = Track(title=title, artist=artist, mbid=mbid)
                     all_loves.add(track_tuple)
                 except TypeError:

@@ -222,10 +222,23 @@ class Relay:
     def sync_to_plex(self) -> dict:
         """
         Sync from external services to Plex track ratings
+
+        Returns:
+            dict: Dictionary of the form `{"plex_new_loves": int, "plex_new_hates": int}`
         """
         log.info("Starting sync from external services to Plex.")
-        new_loves = self._loves_to_plex()
-        new_hates = self._hates_to_plex()
+
+        try:
+            new_loves = self._loves_to_plex()
+        except Exception as e:
+            log.warning("Exception thrown when trying to sync loves to Plex: %s", e)
+            new_loves = 0
+
+        try:
+            new_hates = self._hates_to_plex()
+        except Exception as e:
+            log.warning("Exception thrown when trying to sync hates to Plex: %s", e)
+            new_hates = 0
         return {"plex_new_loves": new_loves, "plex_new_hates": new_hates}
 
     def _loves_to_plex(self) -> int:
@@ -235,23 +248,29 @@ class Relay:
         Returns:
             - `int` representing Plex's newly loved tracks
         """
-        # query external services for loved tracks
+        log.info("Syncing external service loves to Plex")
+
         loved_tracks = set()  # should hold Track objects
         plex_new_loves = 0  # counter to track how many were missing from Plex
 
-        for service in self.services.values():
+        services = (self.services.get("lfm"), self.services.get("lbz"))
+
+        for service in services:
             service_loves = service.all_loves()
             for track in service_loves:
                 loved_tracks.add(track)
 
-        # TODO: logging
+        log.info(
+            "Found %s loved tracks on external services. Checking Plex.",
+            len(loved_tracks),
+        )
 
         for track in loved_tracks:
             matches = self.plex.get_track(track)
-            # plex might match multiple tracks for the search
-            # so, iterate through the response
+            # plex might match multiple tracks for a single search
             for match in matches:
                 if match.userRating is None:
+                    log.info("Updating Plex rating for %s", match.title)
                     self.plex.submit_rating(match, self.plex.love_threshold)
                     plex_new_loves += 1
 
@@ -264,21 +283,21 @@ class Relay:
         Returns:
             - `int` representing Plex's newly hated tracks
         """
+        log.info("Syncing hates from ListenBrainz to Plex.")
         lbz = self.services.get("lbz")
         if lbz is None:
-            log.info(
-                "ListenBrainz service not configured. Skipping hated tracks (not supported by other services)."
-            )
-            return {"plex_new_hates": 0}
+            log.warning("ListenBrainz not configured. Skipping hated tracks.")
+            return 0
 
         plex_new_hates = 0
 
         lbz_hates = lbz.all_hates()
-        # TODO: logging
+        log.info("Found %s hated tracks on ListenBrainz.", len(lbz_hates))
         for track in lbz_hates:
             matches = self.plex.get_track(track)
             for match in matches:
                 if match.userRating is None:
+                    log.info("Updating Plex rating for %s", match.title)
                     self.plex.submit_rating(match, self.plex.hate_threshold)
                     plex_new_hates += 1
 

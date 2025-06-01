@@ -161,4 +161,4 @@ def similar_enough(a: str, b: str) -> bool:
     Returns:
         `bool`: `True` if the similarity ratio between `a` and `b` is >= 0.7
     """
-    return fuzz.ratio(a, b) >= 0.7
+    return fuzz.ratio(a, b) >= 70.0

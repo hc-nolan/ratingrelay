@@ -161,15 +161,15 @@ class ListenBrainz:
         """
         Retrieve all tracks the user has already hated
         """
-        return self._all(score=-1)
+        return self._get_all_feedback(score=-1)
 
     def all_loves(self) -> set[Track]:
         """
         Retrieve all tracks the user has already loved
         """
-        return self._all(score=1)
+        return self._get_all_feedback(score=1)
 
-    def _all(self, score: int):
+    def _get_all_feedback(self, score: int):
         """
         Retrieve all tracks the user has submitted feedback for
 

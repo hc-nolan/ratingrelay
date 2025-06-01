@@ -153,6 +153,12 @@ def similar_enough(a: str, b: str) -> bool:
     """
     Uses rapidfuzz.fuzz to compare strings `a` and `b`. If their similarity is
     above a 0.7 ratio, they are 'similar enough'
-    :returns `True` if the similarity ratio between `a` and `b` is >= 0.7
+
+    Args:
+        a: First string to compare
+        b: Second string to compare
+
+    Returns:
+        `bool`: `True` if the similarity ratio between `a` and `b` is >= 0.7
     """
-    return fuzz.ratio(a, b) >= 0.7
+    return fuzz.ratio(a, b) >= 70.0

@@ -48,10 +48,21 @@ BIDIRECTIONAL = env.get_required_bool("BIDIRECTIONAL")
 def to_Track_list(t: list[PlexTrack]) -> list[Track]:
     """
     Converts a list of tracks from Plex into a list of `Track` types
-    :param `t`: List containing one or more `plexapi.audio.Track` aka `PlexTrack`
-    :returns List of `Track` items corresponding to the `PlexTrack` items
+
+    Args:
+        `t`: List containing one or more `plexapi.audio.Track` aka `PlexTrack`
+
+    Returns:
+        List of `Track` items corresponding to the `PlexTrack` items
     """  # noqa
-    return [Track(title=tr.title, artist=tr.artist().title) for tr in t]
+    return [try_to_make_Track(tr) for tr in t]
+
+
+def try_to_make_Track(plex_track: PlexTrack) -> Track:
+    try:
+        return Track(title=plex_track.title, artist=plex_track.artist().title)
+    except Exception as e:
+        pass
 
 
 class Relay:
@@ -76,70 +87,127 @@ class Relay:
             )
         self.services = {"lfm": lfm, "lbz": lbz}
 
+    def _print_summary(self, exec_time: float, stats_from: dict, stats_to: dict):
+        """
+        Prints execution summary.
+
+        Args:
+            exec_time: Executiom time
+            stats_from: Stats dictionary returned by Relay.sync_from_plex()
+            stats_to: Stats dictionary returned by Relay.sync_to_plex()
+        """
+        log.info("EXECUTION SUMMARY:\t%s seconds", exec_time)
+        log.info(
+            "Plex returned:\t%s loved tracks\t%s hated tracks",
+            stats_from["love"].get("plex_tracks"),
+            stats_from["hate"].get("plex_tracks"),
+        )
+        log.info(
+            "ListenBrainz:\t%s new loves\t%s new hates",
+            stats_from["love"].get("ListenBrainz_new"),
+            stats_from["hate"].get("ListenBrainz_new"),
+        )
+        log.info("LastFM:\t%s new loves", stats_from["love"].get("LastFM_new"))
+        log.info(
+            "Plex:\t%s new loves\t%s new hates",
+            stats_to.get("plex_new_loves"),
+            stats_to.get("plex_new_hates"),
+        )
+
     def sync(self):
-        from_stats = self.sync_from_plex()
-        from_stats_love = from_stats.get("love_info")
-        from_stats_hate = from_stats.get("hate_info")
+        """
+        Performs synchronization between Plex and external services
+        """
+        try:
+            stats_from = self.sync_from_plex()
+        except Exception as e:
+            log.warning("Exception raised while trying to sync from Plex: %s", e)
+            stats_from = {"love": None, "hate": None}
 
         stats_to = {}
         if self.bidirectional:
-            stats_to = self.sync_to_plex()
+            try:
+                stats_to = self.sync_to_plex()
+            except Exception as e:
+                log.warning("Exception raised while trying to sync to Plex: %s", e)
+
         exec_time = time.time() - self.start_time
-        # TODO: nicer summary printout
-        log.info(
-            "SUMMARY:\tExecution took %s seconds\n"
-            "- Plex tracks meeting love threshold: %s\n"
-            "- Last.fm newly loved tracks: %s\n"
-            "- ListenBrainz newly loved tracks: %s\n"
-            "- Tracks that were Loved on external services but not on Plex: %s\n"
-            "- Plex tracks meeting hate threshold: %s\n"
-            "- ListenBrainz newly hated tracks: %s\n",
-            exec_time,
-            from_stats_love.get("tracks"),
-            from_stats_love["newly_loved_counts"].get("LastFM"),
-            from_stats_love["newly_loved_counts"].get("ListenBrainz"),
-            stats_to["plex_new_loves"],
-            from_stats_hate.get("tracks"),
-            from_stats_hate.get("newly_hated"),
-        )
+        self._print_summary(exec_time, stats_from, stats_to)
 
     def sync_from_plex(self) -> dict:
         """
         Sync Plex track ratings to external services
+
+        Returns:
+            dict: Dictionary of the following form:
+                {
+                    "love": {
+                        "plex_tracks": int,
+                        "LastFM_new": int,
+                        "ListenBrainz_new": int
+                    },
+                    "hate": {
+                        "plex_tracks": int,
+                        "ListenBrainz_new": int
+                    }
+                }
         """
         log.info("Starting sync from Plex to external services.")
-        love_info = self._loves_from_plex()
-        hate_info = self._hates_from_plex()
-        return {"love_info": love_info, "hate_info": hate_info}
+        try:
+            love_info = self._loves_from_plex()
+        except Exception as e:
+            love_info = {}
+            log.warning("Exception raised while trying to sync loves from Plex: %s", e)
+        try:
+            hate_info = self._hates_from_plex()
+        except Exception as e:
+            hate_info = {}
+            log.warning("Exception raised while trying to sync hates from Plex: %s", e)
+        return {"love": love_info, "hate": hate_info}
 
     def _loves_from_plex(self) -> dict:
         """
         Sync loved tracks from Plex to external services
-        """
+
+        Returns:
+            dict: Dictionary of the following form:
+                {
+                    'plex_tracks': int,
+                    'LastFM_new': int,
+                    'ListenBrainz_new': int
+                }
+        """  # noqa
         log.info("Querying Plex for tracks meeting the love threshold.")
         tracks = to_Track_list(self.plex.get_loved_tracks())
         log.info("Found %s tracks meeting love threshold.", len(tracks))
 
-        service_new_counts = {}
+        info = {"plex_tracks": len(tracks)}
         for service in self.services.values():
             new_loves = service.new_loves(track_list=tracks)
             log.info("Found %s track(s) to submit to %s", len(new_loves), str(service))
             for track in new_loves:
                 log.info("%s: Loving %s by %s", str(service), track.title, track.artist)
                 service.love(track)
-            service_new_counts[str(service)] = service.new_love_count
-        return {"tracks": len(tracks), "newly_loved_counts": service_new_counts}
+            info[str(service) + "_new"] = service.new_love_count
+        return info
 
     def _hates_from_plex(self) -> dict:
         """
         Sync hated tracks from Plex to external services (Last.fm not supported)
+
+        Returns:
+            dict: Dictionary of the following form:
+                {
+                    "plex_tracks": int,
+                    "ListenBrainz_new": int
+                }
         """
         lbz = self.services.get("lbz")
         if lbz is None:
             log.info(
                 "ListenBrainz service not configured. Skipping hated tracks (not supported by other services)."
             )
-            return {"tracks": 0}
+            return {"plex_tracks": 0, "ListenBrainz_new": None}
         log.info("Querying Plex for tracks meeting the hate threshold.")
         tracks = to_Track_list(self.plex.get_hated_tracks())
         log.info("Found %s tracks metting love threshold.", len(tracks))
@@ -149,18 +217,30 @@ class Relay:
         for track in new_hates:
             log.info("ListenBrainz: Hating %s by %s", track.title, track.artist)
             lbz.hate(track)
-        return {"tracks": len(tracks), "newly_hated": lbz.new_hate_count}
+        return {"plex_tracks": len(tracks), "ListenBrainz_new": lbz.new_hate_count}
 
     def sync_to_plex(self) -> dict:
         """
         Sync from external services to Plex track ratings
+
+        Returns:
+            dict: Dictionary of the form `{"plex_new_loves": int, "plex_new_hates": int}`
         """
         log.info("Starting sync from external services to Plex.")
-        new_loves = self._loves_to_plex()
-        new_hates = self._hates_to_plex()
+
+        try:
+            new_loves = self._loves_to_plex()
+        except Exception as e:
+            log.warning("Exception thrown when trying to sync loves to Plex: %s", e)
+            new_loves = 0
+
+        try:
+            new_hates = self._hates_to_plex()
+        except Exception as e:
+            log.warning("Exception thrown when trying to sync hates to Plex: %s", e)
+            new_hates = 0
         return {"plex_new_loves": new_loves, "plex_new_hates": new_hates}
 
-    # TODO: see if loves_to and hates_to can be consolidated
     def _loves_to_plex(self) -> int:
         """
         Sync external service loved tracks to Plex track ratings
@@ -168,23 +248,29 @@ class Relay:
         Returns:
             - `int` representing Plex's newly loved tracks
         """
-        # query external services for loved tracks
+        log.info("Syncing external service loves to Plex")
+
         loved_tracks = set()  # should hold Track objects
         plex_new_loves = 0  # counter to track how many were missing from Plex
 
-        for service in self.services.values():
+        services = (self.services.get("lfm"), self.services.get("lbz"))
+
+        for service in services:
             service_loves = service.all_loves()
             for track in service_loves:
                 loved_tracks.add(track)
 
-        # TODO: logging
+        log.info(
+            "Found %s loved tracks on external services. Checking Plex.",
+            len(loved_tracks),
+        )
 
         for track in loved_tracks:
             matches = self.plex.get_track(track)
-            # plex might match multiple tracks for the search
-            # so, iterate through the response
+            # plex might match multiple tracks for a single search
             for match in matches:
                 if match.userRating is None:
+                    log.info("Updating Plex rating for %s", match.title)
                     self.plex.submit_rating(match, self.plex.love_threshold)
                     plex_new_loves += 1
 
@@ -197,21 +283,21 @@ class Relay:
         Returns:
             - `int` representing Plex's newly hated tracks
         """
+        log.info("Syncing hates from ListenBrainz to Plex.")
         lbz = self.services.get("lbz")
         if lbz is None:
-            log.info(
-                "ListenBrainz service not configured. Skipping hated tracks (not supported by other services)."
-            )
-            return {"plex_new_hates": 0}
+            log.warning("ListenBrainz not configured. Skipping hated tracks.")
+            return 0
 
         plex_new_hates = 0
 
         lbz_hates = lbz.all_hates()
-        # TODO: logging
+        log.info("Found %s hated tracks on ListenBrainz.", len(lbz_hates))
         for track in lbz_hates:
             matches = self.plex.get_track(track)
             for match in matches:
                 if match.userRating is None:
+                    log.info("Updating Plex rating for %s", match.title)
                     self.plex.submit_rating(match, self.plex.hate_threshold)
                     plex_new_hates += 1
 

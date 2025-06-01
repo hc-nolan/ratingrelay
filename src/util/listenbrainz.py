@@ -56,12 +56,10 @@ class ListenBrainz:
             existing_track_val = self.loves
             log_str = "Loving"
             feedback_value = 1
-            counter = self.new_love_count
         elif feedback == "hate":
             existing_track_val = self.hates
             log_str = "Hating"
             feedback_value = -1
-            counter = self.new_hate_count
         else:
             raise ValueError(f"Feedback value must be 'love' or 'hate', got {feedback}")
         if track in existing_track_val:
@@ -84,7 +82,10 @@ class ListenBrainz:
             else:
                 log.info("MBID found. Submitting %s to ListenBrainz.", mbid)
                 self.client.submit_user_feedback(feedback_value, mbid)
-                counter += 1
+                if feedback == "love":
+                    self.new_love_count += 1
+                elif feedback == "hate":
+                    self.new_hate_count += 1
         else:
             log.info("No MBID found. Unable to submit to ListenBrainz.")
 
@@ -160,15 +161,15 @@ class ListenBrainz:
         """
         Retrieve all tracks the user has already hated
         """
-        return self._all(score=-1)
+        return self._get_all_feedback(score=-1)
 
     def all_loves(self) -> set[Track]:
         """
         Retrieve all tracks the user has already loved
         """
-        return self._all(score=1)
+        return self._get_all_feedback(score=1)
 
-    def _all(self, score: int):
+    def _get_all_feedback(self, score: int):
         """
         Retrieve all tracks the user has submitted feedback for
 
@@ -190,12 +191,13 @@ class ListenBrainz:
                 offset=offset,
                 metadata=True,
             )
-            user_loves = user_loves["feedback"]
+            user_loves = user_loves.get("feedback")
             for track in user_loves:
                 try:
-                    mbid = track["recording_mbid"]
-                    title = track["track_metadata"]["track_name"]
-                    artist = track["track_metadata"]["artist_name"]
+                    mbid = track.get("recording_mbid")
+                    metadata = track.get("metadata")
+                    title = metadata.get("track_name")
+                    artist = metadata.get("artist_name")
                     track_tuple = Track(title=title, artist=artist, mbid=mbid)
                     all_loves.add(track_tuple)
                 except TypeError:
@@ -229,17 +231,17 @@ class ListenBrainz:
         Attempts to find a matching MBID given a track dict
         and MusicBrainz search results
         """
+        track_artist = track.artist.lower()
+        track_title = track.title.lower()
         for result in track_search:
             # find matching title+artist pair
             try:
-                track_title = track.title.lower()
-                candidate_title = result["title"].lower()
+                candidate_title = result.get("title").lower()
 
-                track_artist = track.artist.lower()
-                candidate_artist = result["artist-credit"][0]["name"].lower()
+                candidate_artist = result["artist-credit"][0].get("name").lower()
                 if track_title == candidate_title and track_artist == candidate_artist:
                     mbid = result["id"]
                     return mbid
-            except (IndexError, KeyError):
+            except (IndexError, KeyError, TypeError):
                 return None
         return None

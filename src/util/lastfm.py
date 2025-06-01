@@ -59,7 +59,12 @@ class LastFM:
         """
         Compares the list of tracks from Plex above the love threshold to
         the user's already loved Last.fm tracks
-        Returns the tracks that have not been loved yet
+
+        Args:
+            track_list: List of Tracks from Plex to compare against
+
+        Returns:
+            list[Track]: List of Tracks that have not been loved yet
         """
         track_list.sort(key=lambda track: track.title)
         # grab tracks user has already loved

@@ -5,4 +5,4 @@ ADD . /app
 WORKDIR /app
 
 RUN uv sync --frozen
-CMD ["uv", "run", "ratingrelay.py"]
+CMD ["uv", "run", "src/ratingrelay.py"]

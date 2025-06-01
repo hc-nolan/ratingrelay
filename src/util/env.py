@@ -30,9 +30,11 @@ def write_var(name: str, value: str) -> None:
 
     if not updated:
         log.info("No saved %s found. Adding it now.", name)
-        # If above did not produce an update,
-        # it means no line '<NAME>=' was found; append it
-        lines.append("\n" + name + "=" + value + "\n")
+        # make sure current last line ends with \n, otherwise
+        # would be written to the same line
+        if len(lines) > 0 and not lines[-1].endswith("\n"):
+            lines[-1] = lines[-1] + "\n"
+        lines.append(name + "=" + value + "\n")
         updated = True
 
     if updated:

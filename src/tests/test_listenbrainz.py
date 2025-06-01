@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import MagicMock
-from util import LastFM, ListenBrainz, Track
+from util import ListenBrainz, Track
 
 
 @pytest.fixture

@@ -542,18 +542,34 @@ def to_Track_list(t: list[PlexTrack]) -> list[Track]:
     return [try_to_make_Track(tr) for tr in t]
 
 
-def try_to_make_Track(plex_track: PlexTrack) -> Track:
-    log.info("Trying to turn Plex track into Track object: %s", plex_track)
+def get_plex_track_mbid(track: PlexTrack) -> Optional[str]:
+    """Parses track MBID from a Plex track object"""
     try:
-        mbid = plex_track.guids[0].id
+        mbid = track.guids[0].id
         mbid = mbid.removeprefix("mbid://")  # remove prefix string
         log.info("Found track ID: %s", mbid)
     except IndexError:
         mbid = None
         log.warning("No track MBID found from Plex.")
 
+    return mbid
+
+
+def try_to_make_Track(plex_track: PlexTrack) -> Track:
+    """
+    Parses the track MBID from a Plex track and returns a Track with the
+    matching recording MBID.
+
+    First, queries the database for a match. If no match is found, a query is
+    made to the MusicBrainz API to get the recording MBID.
+    """
+    log.info("Trying to turn Plex track into Track object: %s", plex_track)
+    mbid = get_plex_track_mbid(plex_track)
     # The MBID returned by Plex is the track ID. For use with ListenBrainz,
     # we need the recording ID.
+
+    # log.info("Checking database for existing track.")
+
     log.info("Searching for recording MBID.")
 
     search = mbz.search_recordings(query=f"tid:{mbid}")

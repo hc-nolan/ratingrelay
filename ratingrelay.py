@@ -175,6 +175,24 @@ def lbz_mode():
     pass
 
 
+def reset(plex: Plex, lbz: ListenBrainz, lfm: LastFM):
+    """
+    Reset all ratings submitted to ListenBrainz or Last.fm
+    """
+    if lbz:
+        loves = lbz.all_loves()
+        for track in loves:
+            lbz.client.submit_user_feedback(0, track.mbid)
+        hates = lbz.all_hates()
+        for track in hates:
+            lbz.client.submit_user_feedback(0, track.mbid)
+
+    if lfm:
+        loves = lfm.all_loves()
+        for track in loves:
+            lfm.reset(track)
+
+
 def read_args() -> str:
     """
     Read CLI arguments passed to the script
@@ -185,7 +203,7 @@ def read_args() -> str:
     parser.add_argument(
         "-m",
         "--mode",
-        choices=["plex", "lbz"],
+        choices=["plex", "lbz", "reset"],
         required=True,
         help="Mode to run the script in (plex or lbz)",
     )
@@ -196,6 +214,8 @@ def read_args() -> str:
         return "plex"
     elif args.mode == "lbz":
         return "lbz"
+    elif args.mode == "reset":
+        return "reset"
     else:
         print(f"Unknown mode: {args.mode}", file=sys.stderr)
         sys.exit(1)
@@ -251,6 +271,8 @@ def main():
         plex_mode(plex=plex, lbz=lbz, lfm=lfm)
     if mode == "lbz":
         lbz_mode(plex=plex, lbz=lbz, lfm=lfm)
+    if mode == "reset":
+        reset(plex=plex, lbz=lbz, lfm=lfm)
 
 
 if __name__ == "__main__":

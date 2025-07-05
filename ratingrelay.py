@@ -9,6 +9,8 @@ import logging
 from logging.handlers import TimedRotatingFileHandler
 from typing import Optional
 import env
+import sqlite3
+from dataclasses import dataclass, asdict
 from services import Plex, LastFM, ListenBrainz, try_to_make_Track, Track
 
 
@@ -42,17 +44,36 @@ PLEX_LIBRARY = env.get_required("MUSIC_LIBRARY")
 PLEX_LOVE_THRESHOLD = env.get_required_int("LOVE_THRESHOLD")
 PLEX_HATE_THRESHOLD = env.get("HATE_THRESHOLD")
 
+DATABASE = env.get_required("DATABASE")
 
-def plex_mode(plex: Plex, lbz: ListenBrainz, lfm: LastFM):
+
+@dataclass
+class Services:
     """
-    This function is run when the script is run with `-m plex`, and syncs
-    loved/hated tracks FROM Plex TO LBZ/LFM
+    Dataclass for interacting with services.
+
+    plex: Plex
+    cursor: sqlite3.Cursor
+    lbz: Optional[ListenBrainz]
+    lfm: Optional[LastFM]
     """
-    plex_mode_loves(plex=plex, lbz=lbz, lfm=lfm)
-    plex_mode_hates(plex=plex, lbz=lbz)
+
+    plex: Plex
+    cursor: sqlite3.Cursor
+    lbz: Optional[ListenBrainz]
+    lfm: Optional[LastFM]
 
 
-def plex_mode_loves(plex: Plex, lbz: ListenBrainz, lfm: LastFM):
+def plex_mode(services: Services):
+    """
+    Run when the script is executed with `-m plex`; syncs
+    loved/hated tracks from Plex to LBZ/LFM.
+    """
+    plex_mode_loves(**asdict(services))
+    plex_mode_hates(plex=services.plex, lbz=services.lbz)
+
+
+def plex_mode_loves(plex: Plex, lbz: ListenBrainz, lfm: LastFM, cursor: sqlite3.Cursor):
     """
     Relays loves from Plex to LBZ/LFM
     """
@@ -221,19 +242,27 @@ def read_args() -> str:
         sys.exit(1)
 
 
-def setup() -> tuple[Plex, Optional[LastFM], Optional[ListenBrainz]]:
+def setup_db() -> sqlite3.Cursor:
     """
-    Set up Plex object, attempt to set up LastFM and ListenBrainz objects.
+    Database setup function. Creates the tables used by the script if they don't
+    exist, and returns a cursor for the database.
+    """
+    db_conn = sqlite3.connect(DATABASE)
+    db_cur = db_conn.cursor()
 
-    If the relevant variables are not set in `.env` for LastFM or ListenBrainz
-    usage, that object will be None.
-    """
-    plex = Plex(
-        music_library=PLEX_LIBRARY,
-        love_threshold=PLEX_LOVE_THRESHOLD,
-        hate_threshold=PLEX_HATE_THRESHOLD,
-        url=PLEX_URL,
+    db_cur.execute(
+        "CREATE TABLE IF NOT EXISTS loved(title, artist, trackId, recordingId)"
     )
+    db_cur.execute(
+        "CREATE TABLE IF NOT EXISTS hated(title, artist, trackId, recordingId)"
+    )
+    db_cur.execute(
+        "CREATE TABLE IF NOT EXISTS reset(title, artist, trackId, recordingId)"
+    )
+    return db_cur
+
+
+def setup_lfm() -> Optional[LastFM]:
     try:
         lfm = LastFM(
             username=LFM_USERNAME,
@@ -249,7 +278,10 @@ def setup() -> tuple[Plex, Optional[LastFM], Optional[ListenBrainz]]:
         log.error(e)
         log.error("This can be safely ignored if you do not wish to use Last.fm")
         lfm = None
+    return lfm
 
+
+def setup_lbz() -> Optional[ListenBrainz]:
     try:
         lbz = ListenBrainz(username=LBZ_USERNAME, token=LBZ_TOKEN)
     except RuntimeError as e:
@@ -261,18 +293,36 @@ def setup() -> tuple[Plex, Optional[LastFM], Optional[ListenBrainz]]:
         log.error("This can be safely ignored if you do not wish to use ListenBrainz")
         lbz = None
 
-    return plex, lfm, lbz
+    return lbz
+
+
+def setup() -> Services:
+    """
+    Sets up Plex object, database, and attempts to set up LastFM and ListenBrainz objects.
+    """  # noqa
+    db_cur = setup_db()
+    plex = Plex(
+        music_library=PLEX_LIBRARY,
+        love_threshold=PLEX_LOVE_THRESHOLD,
+        hate_threshold=PLEX_HATE_THRESHOLD,
+        url=PLEX_URL,
+    )
+    lfm = setup_lfm()
+    lbz = setup_lbz()
+    return Services(plex=plex, cursor=db_cur, lfm=lfm, lbz=lbz)
 
 
 def main():
     mode = read_args()
-    plex, lfm, lbz = setup()
-    if mode == "plex":
-        plex_mode(plex=plex, lbz=lbz, lfm=lfm)
-    if mode == "lbz":
-        lbz_mode(plex=plex, lbz=lbz, lfm=lfm)
-    if mode == "reset":
-        reset(plex=plex, lbz=lbz, lfm=lfm)
+    services = setup()
+
+    match mode:
+        case "plex":
+            plex_mode(services)
+        case "lbz":
+            lbz_mode(services)
+        case "reset":
+            reset(services)
 
 
 if __name__ == "__main__":

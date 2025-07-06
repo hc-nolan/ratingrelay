@@ -597,7 +597,7 @@ def get_recording_mbid(
         log.info("Using track MBID: %s", track_mbid)
         search = mbz.search_recordings(query=title, artist=artist)
     else:
-        log.info("No track MBID found. Using title and artist: %s - %s", title, artist)
+        log.info("track_mbid is empty, using title and artist: %s - %s", title, artist)
         search = mbz.search_recordings(query=f"tid:{track_mbid}")
     recording = search.get("recording-list")
 
@@ -605,7 +605,7 @@ def get_recording_mbid(
         log.warning("No recordings found on MusicBrainz.")
         rec_mbid = None
     else:
-        log.info("Recording MBID found.")
+        log.info("Recording MBID found from MusicBrainz search.")
         rec_mbid = recording[0].get("id")
 
     return rec_mbid

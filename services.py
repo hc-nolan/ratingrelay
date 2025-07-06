@@ -589,6 +589,31 @@ def check_db_for_track(
     return None
 
 
+def get_recording_mbid(
+    track_mbid: Optional[str], title: str, artist: str
+) -> Optional[str]:
+    """
+    Queries MusicBrainz API for a track's recording MBID.
+    """
+    log.info("Searching MusicBrainz for recording MBID.")
+    if track_mbid is None:
+        log.info("Using track MBID: %s", track_mbid)
+        search = mbz.search_recordings(query=title, artist=artist)
+    else:
+        log.info("No track MBID found. Using title and artist: %s - %s", title, artist)
+        search = mbz.search_recordings(query=f"tid:{track_mbid}")
+    recording = search.get("recording-list")
+
+    if recording == []:
+        log.warning("No recordings found on MusicBrainz.")
+        rec_mbid = None
+    else:
+        log.info("Recording MBID found.")
+        rec_mbid = recording[0].get("id")
+
+    return rec_mbid
+
+
 def make_Track(plex_track: PlexTrack, cursor: sqlite3.Cursor) -> Track:
     """
     Parses the track MBID from a Plex track and returns a Track with the
@@ -600,28 +625,15 @@ def make_Track(plex_track: PlexTrack, cursor: sqlite3.Cursor) -> Track:
     title = plex_track.title
     artist = plex_track.artist().title
     track_mbid = get_plex_track_mbid(plex_track)
+
     # The MBID returned by Plex is the track ID. For use with ListenBrainz,
     # we need the recording ID.
-
     log.info("Checking database for existing track.")
-    match = check_db_for_track(cursor, track_mbid, title, artist)
-    if match:
+    db_match = check_db_for_track(cursor, track_mbid, title, artist)
+    if db_match:
         log.info("Existing track found in database.")
-        rec_mbid = match[3]
+        rec_mbid = db_match[3]
     else:
-        log.info("Searching MusicBrainz for recording MBID.")
-
-        if track_mbid is None:
-            search = mbz.search_recordings(query=title, artist=artist)
-        else:
-            search = mbz.search_recordings(query=f"tid:{track_mbid}")
-        recording = search.get("recording-list")
-
-        if recording == []:
-            log.warning("No recordings found on MusicBrainz.")
-            rec_mbid = None
-        else:
-            rec_mbid = recording[0].get("id")
-            log.info("Recording MBID found.")
+        rec_mbid = get_recording_mbid(track_mbid=track_mbid, title=title, artist=artist)
 
     return Track(title=title, artist=artist, mbid=rec_mbid, track_mbid=track_mbid)

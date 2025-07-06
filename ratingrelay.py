@@ -83,8 +83,8 @@ def plex_mode(services: Services):
     else:
         hate_stats = {"plex_hates": 0, "lbz_added": 0}
 
-    reset_stats = reset_tracks(
-        lbz=services.lbz, lfm=services.lfm, cursor=services.cursor
+    reset_tracks(
+        lbz=services.lbz, lfm=services.lfm, cursor=services.cursor, conn=services.conn
     )
 
     log.info("STATISTICS:")
@@ -94,20 +94,18 @@ def plex_mode(services: Services):
         love_stats.get("plex_loves"),
         hate_stats.get("plex_hates"),
     )
-    log.info("ADDITIONS/REMOVALS:")
+    log.info("ADDITIONS:")
     log.info(
-        "%-12s\tLoves: %-10s\tHates: %-10s\tReset: %-10s",
+        "%-12s\tLoves: %-10s\tHates: %-10s\t",
         "ListenBrainz:",
         love_stats.get("lbz_added"),
         hate_stats.get("lbz_added"),
-        reset_stats.get("lfm_removed"),
     )
     log.info(
-        "%-12s\tLoves: %-10s\tHates: %-10s\tReset: %-10s",
+        "%-12s\tLoves: %-10s\tHates: %-10s\t",
         "Last.FM:",
         love_stats.get("lfm_added"),
         "N/A",
-        reset_stats.get("lfm_removed"),
     )
 
 
@@ -130,10 +128,13 @@ def plex_mode_loves(
     if lbz:
         log.info("Grabbing all existing loved tracks from ListenBrainz.")
         lbz_loves = lbz.all_loves()
+        log.info("ListenBrainz returned %s loved tracks.", len(lbz_loves))
         lbz_loved_mbids = {t.mbid for t in lbz_loves}
 
-    # if lfm:
-    # lfm_loves = lfm.all_loves()
+    if lfm:
+        lfm_loves = lfm.all_loves()
+        lfm_loves_tuples = [(t.title.lower(), t.artist.lower()) for t in lfm_loves]
+        log.info("Last.FM returned %s loved tracks.", len(lfm_loves))
 
     log.info("Querying Plex for loved tracks")
     plex_loves = plex.get_loved_tracks()
@@ -141,7 +142,7 @@ def plex_mode_loves(
 
     for plex_track in plex_loves:
         log.info("Processing PlexTrack into Track: %s", plex_track.title)
-        track = make_Track(plex_track, cursor)
+        track = make_Track(plex_track=plex_track, cursor=cursor, rating="loved")
         plex_tracks.add(track)
         # insert the track if it's new, or ignore if there is a matching
         # recording MBID in the database
@@ -163,18 +164,18 @@ def plex_mode_loves(
                     track.artist,
                 )
 
-        # if lfm:
-        #     if (track.title, track.artist) not in lfm_loves:
-        #         log.info("Loving %s by %s on Last.FM", track.title, track.artist)
-        #         lfm.love(track)
-        #         lfm_added += 1
-        #     else:
-        #         log.info(
-        #             "Track: %s by %s - already loved on Last.FM",
-        #             track.title,
-        #             track.artist,
-        #         )
-        #
+        if lfm:
+            if (track.title.lower(), track.artist.lower()) not in lfm_loves_tuples:
+                log.info("Last.FM - New love: %s by %s", track.title, track.artist)
+                lfm.love(track)
+                lfm_added += 1
+            else:
+                log.info(
+                    "Last.FM - Track already loved: %s by %s",
+                    track.title,
+                    track.artist,
+                )
+
     log.info(
         "Finished adding loves:     ListenBrainz: %-10s Last.FM: %-10s",
         lbz_added,
@@ -206,14 +207,16 @@ def plex_mode_hates(
     lbz_added = 0
     plex_tracks = set()
 
+    log.info("Grabbing existing ListenBrainz hated tracks.")
     lbz_hates = lbz.all_hates()
+    log.info("ListenBrainz returned %s existing hated tracks", len(lbz_hates))
     lbz_hated_mbids = {t.mbid for t in lbz_hates}
 
     plex_hates = plex.get_hated_tracks()
     log.info("Plex returned %s hated tracks.", len(plex_hates))
 
     for plex_track in plex_hates:
-        track = make_Track(plex_track=plex_track, cursor=cursor)
+        track = make_Track(plex_track=plex_track, cursor=cursor, rating="hated")
         plex_tracks.add(track)
         # insert the track if it's new, or ignore if there is a matching
         # recording MBID in the database
@@ -279,37 +282,54 @@ def find_tracks_to_reset(
                         "DELETE FROM hated WHERE recordingId = ?", (rec_mbid,)
                     )
             cursor.execute(
-                "INSERT INTO reset VALUES(?, ?, ?, ?)",
-                (title, artist, track_mbid, rec_mbid),
+                "INSERT INTO reset (title, artist, trackId, recordingId) VALUES(?, ?, ?, ?)",
+                (
+                    title,
+                    artist,
+                    track_mbid,
+                    rec_mbid,
+                ),
             )
             conn.commit()
 
 
 def reset_tracks(
-    lbz: Optional[ListenBrainz], lfm: Optional[LastFM], cursor: sqlite3.Cursor
+    lbz: Optional[ListenBrainz],
+    lfm: Optional[LastFM],
+    cursor: sqlite3.Cursor,
+    conn: sqlite3.Connection,
 ):
-    lbz_removed = 0
-    lfm_removed = 0
-
-    log.info("Checking for tracks to reset")
-    result = cursor.execute("SELECT * FROM RESET")
+    log.info("Resetting tracks that are no longer loved/hated on Plex.")
+    result = cursor.execute("SELECT id, title, artist, recordingId, trackId FROM RESET")
     to_remove = result.fetchall()
-    if lbz:
-        for title, artist, mbid, track_mbid in to_remove:
-            lbz.reset(
-                Track(title=title, artist=artist, mbid=mbid, track_mbid=track_mbid)
-            )
-            lbz_removed += 1
-    #
-    # if lfm:
-    #     for title, artist, mbid, track_mbid in to_remove:
-    #         lfm.reset(Track(title=title, artist=artist))
-    #         lfm_removed += 1
 
-    log.info(
-        "Removed loves:   ListenBrainz: %-10s Last.FM: %-10s", lbz_removed, lfm_removed
-    )
-    return {"lfm_removed": lfm_removed, "lbz_removed": lbz_removed}
+    if lbz:
+        for dbid, title, artist, rec_mbid, track_mbid in to_remove:
+            track = Track(
+                title=title, artist=artist, mbid=rec_mbid, track_mbid=track_mbid
+            )
+            log.info("Removing %s", track)
+            if rec_mbid is not None:
+                lbz.reset(track)
+            else:
+                log.warning(
+                    "No recording MBID returned, unable to reset track on ListenBrainz: %s",
+                    track,
+                )
+
+    if lfm:
+        for dbid, title, artist, mbid, track_mbid in to_remove:
+            lfm.reset(Track(title=title, artist=artist))
+
+    # Now that tracks have been reset, remove them from the 'reset' table
+    for track in to_remove:
+        cursor.execute(
+            "DELETE FROM reset WHERE id = ?",
+            (track[0],),
+        )
+    conn.commit()
+
+    log.info("Reset %s tracks", len(to_remove))
 
 
 # ListenBrainz mode (sync from LBZ -> Plex) is being deprecated.
@@ -321,22 +341,34 @@ def reset_tracks(
 #     pass
 
 
-def reset_mode(plex: Plex, lbz: ListenBrainz, lfm: LastFM):
+def reset_mode(services: Services):
     """
     Reset all ratings submitted to ListenBrainz or Last.fm
     """
-    if lbz:
-        loves = lbz.all_loves()
+    if services.lbz:
+        loves = services.lbz.all_loves()
+        log.info("ListenBrainz: %s tracks to unlove", len(loves))
+        i = 0
         for track in loves:
-            lbz.client.submit_user_feedback(0, track.mbid)
-        hates = lbz.all_hates()
+            i += 1
+            log.info("%s/%s", i, len(loves))
+            services.lbz.client.submit_user_feedback(0, track.mbid)
+        hates = services.lbz.all_hates()
+        log.info("ListenBrainz: %s tracks to unhate", len(hates))
+        i = 0
         for track in hates:
-            lbz.client.submit_user_feedback(0, track.mbid)
+            i += 1
+            log.info("%s/%s", i, len(hates))
+            services.lbz.client.submit_user_feedback(0, track.mbid)
 
-    if lfm:
-        loves = lfm.all_loves()
+    if services.lfm:
+        loves = services.lfm.all_loves()
+        log.info("Last.FM: %s tracks to unlove", len(loves))
+        i = 0
         for track in loves:
-            lfm.reset(track)
+            i += 1
+            log.info("%s/%s", i, len(loves))
+            services.lfm.reset(track)
 
 
 def read_args() -> str:
@@ -384,7 +416,7 @@ def setup_db() -> (sqlite3.Cursor, sqlite3.Connection):
     db_cur.execute(
         """
 CREATE TABLE IF NOT EXISTS loved(
-    id PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     recordingId TEXT,
     trackId TEXT UNIQUE,
     title TEXT,
@@ -395,7 +427,7 @@ CREATE TABLE IF NOT EXISTS loved(
     db_cur.execute(
         """
 CREATE TABLE IF NOT EXISTS hated(
-    id PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     recordingId TEXT,
     trackId TEXT UNIQUE,
     title TEXT,
@@ -406,7 +438,7 @@ CREATE TABLE IF NOT EXISTS hated(
     db_cur.execute(
         """
 CREATE TABLE IF NOT EXISTS reset(
-    id PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     recordingId TEXT,
     trackId TEXT UNIQUE,
     title TEXT,

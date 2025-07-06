@@ -4,6 +4,7 @@ Usage: python ratingrelay.py -m <mode>
 """
 
 import argparse
+import time
 import sys
 import logging
 from logging.handlers import TimedRotatingFileHandler
@@ -70,6 +71,7 @@ def plex_mode(services: Services):
     Run when the script is executed with `-m plex`; syncs
     loved/hated tracks from Plex to LBZ/LFM.
     """
+    log.info("Relaying loved tracks from Plex.")
     love_stats = plex_mode_loves(**services.__dict__)
     if services.plex.hate_threshold is not None:
         hate_stats = plex_mode_hates(
@@ -79,15 +81,34 @@ def plex_mode(services: Services):
             conn=services.conn,
         )
     else:
-        hate_stats = None
+        hate_stats = {"plex_hates": 0, "lbz_added": 0}
 
     reset_stats = reset_tracks(
         lbz=services.lbz, lfm=services.lfm, cursor=services.cursor
     )
-    log.info(love_stats[0], love_stats[1], love_stats[2])
-    if hate_stats is not None:
-        log.info(hate_stats[0], hate_stats[1], hate_stats[2])
-    log.info(reset_stats[0], reset_stats[1], reset_stats[2])
+
+    log.info("STATISTICS:")
+    log.info(
+        "%-12s\tLoves: %-10s\tHates: %-10s",
+        "Plex:",
+        love_stats.get("plex_loves"),
+        hate_stats.get("plex_hates"),
+    )
+    log.info("ADDITIONS/REMOVALS:")
+    log.info(
+        "%-12s\tLoves: %-10s\tHates: %-10s\tReset: %-10s",
+        "ListenBrainz:",
+        love_stats.get("lbz_added"),
+        hate_stats.get("lbz_added"),
+        reset_stats.get("lfm_removed"),
+    )
+    log.info(
+        "%-12s\tLoves: %-10s\tHates: %-10s\tReset: %-10s",
+        "Last.FM:",
+        love_stats.get("lfm_added"),
+        "N/A",
+        reset_stats.get("lfm_removed"),
+    )
 
 
 def plex_mode_loves(
@@ -132,12 +153,12 @@ def plex_mode_loves(
 
         if lbz:
             if track.mbid not in lbz_loved_mbids:
-                log.info("New ListenBrainz love: %s by %s", track.title, track.artist)
+                log.info("ListenBrainz - New love: %s by %s", track.title, track.artist)
                 lbz.love(track)
                 lbz_added += 1
             else:
                 log.info(
-                    "Track: %s by %s - already loved on ListenBrainz",
+                    "ListenBrainz - Track already loved: %s by %s",
                     track.title,
                     track.artist,
                 )
@@ -162,11 +183,11 @@ def plex_mode_loves(
     find_tracks_to_reset(
         conn=conn, cursor=cursor, plex_tracks=plex_tracks, table="loved"
     )
-    return (
-        "Finished adding loves:     ListenBrainz: %-10s Last.FM: %-10s",
-        lbz_added,
-        lfm_added,
-    )
+    return {
+        "plex_loves": len(plex_loves),
+        "lbz_added": lbz_added,
+        "lfm_added": lfm_added,
+    }
 
 
 def plex_mode_hates(
@@ -177,6 +198,7 @@ def plex_mode_hates(
 
     Note that LFM does not support Hated tracks
     """
+    log.info("Relaying hated tracks from Plex.")
     if not lbz:
         log.warning("ListenBrainz not configured, skipping relaying hated tracks.")
         return
@@ -187,8 +209,6 @@ def plex_mode_hates(
     lbz_hates = lbz.all_hates()
     lbz_hated_mbids = {t.mbid for t in lbz_hates}
 
-    log.info("Relaying tracks from Plex.")
-    # Relay hated tracks first
     plex_hates = plex.get_hated_tracks()
     log.info("Plex returned %s hated tracks.", len(plex_hates))
 
@@ -208,12 +228,13 @@ def plex_mode_hates(
             lbz.hate(track)
             lbz_added += 1
 
-    log.info("Finished adding hates:   %s", lbz_added)
+    log.info("Finished adding hates:   ListenBrainz: %s", lbz_added)
 
     find_tracks_to_reset(
         conn=conn, cursor=cursor, plex_tracks=plex_tracks, table="hated"
     )
-    return ("Finished adding hates:   %s", lbz_added)
+
+    return {"plex_hates": len(plex_hates), "lbz_added": lbz_added}
 
 
 def find_tracks_to_reset(
@@ -288,11 +309,7 @@ def reset_tracks(
     log.info(
         "Removed loves:   ListenBrainz: %-10s Last.FM: %-10s", lbz_removed, lfm_removed
     )
-    return (
-        "Removed loves:   ListenBrainz: %-10s Last.FM: %-10s",
-        lbz_removed,
-        lfm_removed,
-    )
+    return {"lfm_removed": lfm_removed, "lbz_removed": lbz_removed}
 
 
 # ListenBrainz mode (sync from LBZ -> Plex) is being deprecated.
@@ -451,6 +468,7 @@ def setup() -> Services:
 
 
 def main():
+    start_time = time.perf_counter()
     log.info("Starting RatingRelay.")
     mode = read_args()
     services = setup()
@@ -464,7 +482,8 @@ def main():
         case "reset":
             reset(services)
 
-    log.info("RatingRelay finished.")
+    exec_time = time.perf_counter() - start_time
+    log.info("RatingRelay finished in %.2f seconds.", exec_time)
 
 
 if __name__ == "__main__":

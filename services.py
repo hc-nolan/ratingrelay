@@ -565,9 +565,6 @@ def get_plex_track_mbid(track: PlexTrack) -> Optional[str]:
 def check_db_for_track(
     cursor: sqlite3.Cursor, track_mbid: str, title: str, artist: str
 ) -> Optional[str]:
-    if title == "Please Please Please Let Me Get What I Want":
-        print(1)
-
     result = cursor.execute(
         "SELECT title, artist, trackId, recordingId FROM loved WHERE trackId = ?",
         (track_mbid,),

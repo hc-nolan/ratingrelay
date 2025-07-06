@@ -1,3 +1,7 @@
+# About the main-archive branch
+
+This is an old version of the main branch that has undergone major rewrites. It is kept only for archival purposes.
+
 # Introduction
 
 Relay ratings from Plex to ListenBrainz or Last.fm based on a defined Plex rating threshold.

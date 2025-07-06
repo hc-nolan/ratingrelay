@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Optional
 import logging
 import env
+import sqlite3
 from plexapi.myplex import MyPlexAccount
 from plexapi.server import PlexServer
 from plexapi.library import LibrarySection
@@ -21,13 +22,10 @@ mbz.set_useragent(
 
 @dataclass(frozen=True)
 class Track:
-    """
-    Tuple class to represent tracks as (track_title, artist_name) tuples
-    """
-
     title: str
     artist: str
     mbid: Optional[str] = None
+    track_mbid: Optional[str] = None
 
 
 class LibraryNotFoundError(Exception):
@@ -51,7 +49,11 @@ class Plex:
     ):
         self.url = url
         self.love_threshold = float(love_threshold)
-        self.hate_threshold = float(hate_threshold)
+        try:
+            hate = float(hate_threshold)
+        except TypeError:
+            hate = None
+        self.hate_threshold = hate
         self.token = env.get("PLEX_TOKEN")
         self._verify_auth()
         self.music_library = self._get_music_library(music_library)
@@ -67,7 +69,7 @@ class Plex:
             )
             self._manual_auth()
         if self._is_token_valid():
-            log.info("Token is valid. Authenticated with Plex.")
+            log.info("PLEX_TOKEN is valid. Authenticated with Plex.")
         else:
             log.info("Saved PLEX_TOKEN is no longer valid. Please re-authenticate.")
             self._manual_auth()
@@ -177,9 +179,11 @@ class ListenBrainz:
         """
         client = liblbz.ListenBrainz()
         client.set_auth_token(self.token)
-        log.info("Checking API token validity.")
+        log.info("Checking ListenBrainz API token validity.")
         client.is_token_valid(self.token)
-        log.info("Token is valid; successfully connected to ListenBrainz.")
+        log.info(
+            "ListenBrainz API token is valid; successfully connected to ListenBrainz."
+        )
         return client
 
     def _handle_feedback(self, feedback: str, track: Track):
@@ -222,6 +226,7 @@ class ListenBrainz:
         """
         Reset a track's ListenBrainz rating to 0.
         """
+        log.info("ListenBrainz - resetting track: %s", track)
         self.client.submit_user_feedback(0, track.mbid)
 
     def love(self, track: Track):
@@ -486,6 +491,7 @@ class LastFM:
         """
         Un-loves a single track
         """
+        log.info("Last.FM - resetting track: %s", track)
         lastfm_track = self.client.get_track(track.artist, track.title)
         lastfm_track.unlove()
 
@@ -544,18 +550,46 @@ def to_Track_list(t: list[PlexTrack]) -> list[Track]:
 
 def get_plex_track_mbid(track: PlexTrack) -> Optional[str]:
     """Parses track MBID from a Plex track object"""
+    log.info("Trying to grab MBID for %s from PlexTrack.", track.title)
     try:
         mbid = track.guids[0].id
         mbid = mbid.removeprefix("mbid://")  # remove prefix string
-        log.info("Found track ID: %s", mbid)
+        log.info("Found track ID from PlexTrack: %s.", mbid)
     except IndexError:
         mbid = None
-        log.warning("No track MBID found from Plex.")
+        log.warning("No track MBID found in PlexTrack.")
 
     return mbid
 
 
-def try_to_make_Track(plex_track: PlexTrack) -> Track:
+def check_db_for_track(
+    cursor: sqlite3.Cursor, track_mbid: str, title: str, artist: str
+) -> Optional[str]:
+    if title == "Please Please Please Let Me Get What I Want":
+        print(1)
+
+    result = cursor.execute(
+        "SELECT title, artist, trackId, recordingId FROM loved WHERE trackId = ?",
+        (track_mbid,),
+    )
+    match = result.fetchone()
+    if match:
+        return match
+    result = cursor.execute(
+        "SELECT title, artist, trackId, recordingId FROM loved WHERE title = ? AND artist = ?",
+        (
+            title,
+            artist,
+        ),
+    )
+    match = result.fetchone()
+    if match:
+        return match
+
+    return None
+
+
+def make_Track(plex_track: PlexTrack, cursor: sqlite3.Cursor) -> Track:
     """
     Parses the track MBID from a Plex track and returns a Track with the
     matching recording MBID.
@@ -563,27 +597,31 @@ def try_to_make_Track(plex_track: PlexTrack) -> Track:
     First, queries the database for a match. If no match is found, a query is
     made to the MusicBrainz API to get the recording MBID.
     """
-    log.info("Trying to turn Plex track into Track object: %s", plex_track)
-    mbid = get_plex_track_mbid(plex_track)
+    title = plex_track.title
+    artist = plex_track.artist().title
+    track_mbid = get_plex_track_mbid(plex_track)
     # The MBID returned by Plex is the track ID. For use with ListenBrainz,
     # we need the recording ID.
 
-    # log.info("Checking database for existing track.")
-
-    log.info("Searching for recording MBID.")
-
-    search = mbz.search_recordings(query=f"tid:{mbid}")
-    recording = search.get("recording-list")
-
-    if recording == []:
-        log.warning("No recordings found on MusicBrainz.")
-        rec_mbid = None
+    log.info("Checking database for existing track.")
+    match = check_db_for_track(cursor, track_mbid, title, artist)
+    if match:
+        log.info("Existing track found in database.")
+        rec_mbid = match[3]
     else:
-        rec_mbid = recording[0].get("id")
+        log.info("Searching MusicBrainz for recording MBID.")
 
-    try:
-        return Track(
-            title=plex_track.title, artist=plex_track.artist().title, mbid=rec_mbid
-        )
-    except Exception:
-        pass
+        if track_mbid is None:
+            search = mbz.search_recordings(query=title, artist=artist)
+        else:
+            search = mbz.search_recordings(query=f"tid:{track_mbid}")
+        recording = search.get("recording-list")
+
+        if recording == []:
+            log.warning("No recordings found on MusicBrainz.")
+            rec_mbid = None
+        else:
+            rec_mbid = recording[0].get("id")
+            log.info("Recording MBID found.")
+
+    return Track(title=title, artist=artist, mbid=rec_mbid, track_mbid=track_mbid)

@@ -321,7 +321,7 @@ def reset_tracks(
 #     pass
 
 
-def reset(plex: Plex, lbz: ListenBrainz, lfm: LastFM):
+def reset_mode(plex: Plex, lbz: ListenBrainz, lfm: LastFM):
     """
     Reset all ratings submitted to ListenBrainz or Last.fm
     """
@@ -480,7 +480,7 @@ def main():
         # case "lbz":
         #     lbz_mode(services)
         case "reset":
-            reset(services)
+            reset_mode(services)
 
     exec_time = time.perf_counter() - start_time
     log.info("RatingRelay finished in %.2f seconds.", exec_time)

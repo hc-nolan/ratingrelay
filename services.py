@@ -563,27 +563,34 @@ def get_plex_track_mbid(track: PlexTrack) -> Optional[str]:
 
 
 def check_db_for_track(
-    cursor: sqlite3.Cursor, track_mbid: str, title: str, artist: str
+    cursor: sqlite3.Cursor, track_mbid: str, title: str, artist: str, table: str
 ) -> Optional[str]:
+    match table:
+        case "loved":
+            tablename = "loved"
+        case "hated":
+            tablename = "hated"
+        case _:
+            log.fatal("Unrecognized table name: %s", table)
+            raise ValueError(f"Unrecognized table name: {table}")
     result = cursor.execute(
-        "SELECT title, artist, trackId, recordingId FROM loved WHERE trackId = ?",
+        f"SELECT title, artist, trackId, recordingId FROM {tablename} WHERE trackId = ?",
         (track_mbid,),
     )
-    match = result.fetchone()
-    if match:
-        return match
+    matching_entry = result.fetchone()
+    if matching_entry:
+        return matching_entry
     result = cursor.execute(
-        "SELECT title, artist, trackId, recordingId FROM loved WHERE title = ? AND artist = ?",
+        f"SELECT title, artist, trackId, recordingId FROM {tablename} WHERE title = ? AND artist = ?",
         (
             title,
             artist,
         ),
     )
-    match = result.fetchone()
-    if match:
-        return match
-
-    return None
+    matching_entry = result.fetchone()
+    if matching_entry:
+        return matching_entry
+        return None
 
 
 def get_recording_mbid(
@@ -611,13 +618,18 @@ def get_recording_mbid(
     return rec_mbid
 
 
-def make_Track(plex_track: PlexTrack, cursor: sqlite3.Cursor) -> Track:
+def make_Track(plex_track: PlexTrack, cursor: sqlite3.Cursor, rating: str) -> Track:
     """
     Parses the track MBID from a Plex track and returns a Track with the
     matching recording MBID.
 
     First, queries the database for a match. If no match is found, a query is
     made to the MusicBrainz API to get the recording MBID.
+
+    Args:
+        plex_track: A PlexAPI Track object
+        cursor: Database cursor
+        rating: `loved` or `hated`
     """
     title = plex_track.title
     artist = plex_track.artist().title
@@ -626,7 +638,7 @@ def make_Track(plex_track: PlexTrack, cursor: sqlite3.Cursor) -> Track:
     # The MBID returned by Plex is the track ID. For use with ListenBrainz,
     # we need the recording ID.
     log.info("Checking database for existing track.")
-    db_match = check_db_for_track(cursor, track_mbid, title, artist)
+    db_match = check_db_for_track(cursor, track_mbid, title, artist, rating)
     if db_match:
         log.info("Existing track found in database.")
         rec_mbid = db_match[3]

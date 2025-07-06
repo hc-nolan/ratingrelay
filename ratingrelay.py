@@ -295,12 +295,13 @@ def reset_tracks(
     )
 
 
-def lbz_mode():
-    """
-    This function is run when the script is run with `-m lbz`, and syncs
-    loved/hated tracks FROM ListenBrainz TO Plex and LFM
-    """
-    pass
+# ListenBrainz mode (sync from LBZ -> Plex) is being deprecated.
+# def lbz_mode():
+#     """
+#     This function is run when the script is run with `-m lbz`, and syncs
+#     loved/hated tracks FROM ListenBrainz TO Plex and LFM
+#     """
+#     pass
 
 
 def reset(plex: Plex, lbz: ListenBrainz, lfm: LastFM):
@@ -331,22 +332,28 @@ def read_args() -> str:
     parser.add_argument(
         "-m",
         "--mode",
-        choices=["plex", "lbz", "reset"],
+        choices=[
+            "plex",
+            # "lbz",  - ListenBrainz mode is being deprecated.
+            "reset",
+        ],
         required=True,
         help="Mode to run the script in (plex or lbz)",
     )
 
     args = parser.parse_args()
 
-    if args.mode == "plex":
-        return "plex"
-    elif args.mode == "lbz":
-        return "lbz"
-    elif args.mode == "reset":
-        return "reset"
-    else:
-        print(f"Unknown mode: {args.mode}", file=sys.stderr)
-        sys.exit(1)
+    match args.mode:
+        case "plex":
+            return "plex"
+        # ListenBrainz mode is being deprecated.
+        # case "lbz":
+        # return "lbz"
+        case "reset":
+            return "reset"
+        case _:
+            log.fatal(f"Unknown mode: {args.mode}", file=sys.stderr)
+            sys.exit(1)
 
 
 def setup_db() -> (sqlite3.Cursor, sqlite3.Connection):
@@ -451,8 +458,9 @@ def main():
     match mode:
         case "plex":
             plex_mode(services)
-        case "lbz":
-            lbz_mode(services)
+        # Sync from ListenBrainz is being deprecated.
+        # case "lbz":
+        #     lbz_mode(services)
         case "reset":
             reset(services)
 

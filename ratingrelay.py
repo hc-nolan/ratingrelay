@@ -173,6 +173,8 @@ class Track:
     mbid: Optional[str] = None
     track_mbid: Optional[str] = None
 
+
+class TrackMaker:
     @staticmethod
     def from_plex(plex_track: PlexTrack, cursor: sqlite3.Cursor, rating: str):
         """
@@ -189,17 +191,17 @@ class Track:
         """
         title = plex_track.title
         artist = plex_track.artist().title
-        track_mbid = Track.get_plex_track_mbid(plex_track)
+        track_mbid = TrackMaker.get_plex_track_mbid(plex_track)
 
         # The MBID returned by Plex is the track ID. For use with ListenBrainz,
         # we need the recording ID.
         log.info("Checking database for existing track.")
-        db_match = Track.check_db(cursor, track_mbid, title, artist, rating)
+        db_match = TrackMaker.check_db(cursor, track_mbid, title, artist, rating)
         if db_match:
             log.info("Existing track found in database.")
             rec_mbid = db_match[3]
         else:
-            rec_mbid = Track.get_recording_mbid(
+            rec_mbid = TrackMaker.get_recording_mbid(
                 track_mbid=track_mbid, title=title, artist=artist
             )
 
@@ -876,7 +878,7 @@ class Relay:
 
         for plex_track in plex_loves:
             log.info("Processing PlexTrack into Track: %s", plex_track.title)
-            track = Track.from_plex(
+            track = TrackMaker.from_plex(
                 plex_track=plex_track, cursor=cursor, rating="loved"
             )
             plex_tracks.add(track)
@@ -954,7 +956,7 @@ class Relay:
         log.info("Plex returned %s hated tracks.", len(plex_hates))
 
         for plex_track in plex_hates:
-            track = Track.from_plex(
+            track = TrackMaker.from_plex(
                 plex_track=plex_track, cursor=cursor, rating="hated"
             )
             plex_tracks.add(track)

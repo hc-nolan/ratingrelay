@@ -295,44 +295,104 @@ def find_tracks_to_reset(
             )
             conn.commit()
 
+class Reset:
+    @staticmethod
+    def find_tracks(
+        conn: sqlite3.Connection,
+        cursor: sqlite3.Cursor,
+        plex_tracks: list[Track],
+        table: str,
+    ):
+        """
+        Compares tracks in the 'loved' or 'hated' table to tracks that were returned by plex.
+        If a track is in the database but not returned by Plex, it is assumed that
+        this track is no longer loved, thus we should un-love it.
 
-def reset_tracks(
-    lbz: Optional[ListenBrainz],
-    lfm: Optional[LastFM],
-    cursor: sqlite3.Cursor,
-    conn: sqlite3.Connection,
-):
-    log.info("Resetting tracks that are no longer loved/hated on Plex.")
-    result = cursor.execute("SELECT id, title, artist, recordingId, trackId FROM RESET")
-    to_remove = result.fetchall()
-
-    if lbz:
-        for dbid, title, artist, rec_mbid, track_mbid in to_remove:
-            track = Track(
-                title=title, artist=artist, mbid=rec_mbid, track_mbid=track_mbid
-            )
-            log.info("Removing %s", track)
-            if rec_mbid is not None:
-                lbz.reset(track)
-            else:
-                log.warning(
-                    "No recording MBID returned, unable to reset track on ListenBrainz: %s",
-                    track,
+        This function identifies the tracks that should be unloved, removes them
+        from the 'loved' table, and inserts them into the 'reset' table to signify
+        to services that their ratings should be reset to 0.
+        """
+        log.info("Checking for tracks to reset.")
+        match table:
+            case "loved":
+                result = cursor.execute(
+                    "SELECT title, artist, trackId, recordingId FROM loved"
                 )
+            case "hated":
+                result = cursor.execute(
+                    "SELECT title, artist, trackId, recordingId FROM hated"
+                )
+        entries = result.fetchall()
+        plex_ids = [track.mbid for track in plex_tracks]
 
-    if lfm:
-        for dbid, title, artist, mbid, track_mbid in to_remove:
-            lfm.reset(Track(title=title, artist=artist))
+        for title, artist, track_mbid, rec_mbid in entries:
+            if rec_mbid not in plex_ids:
+                match table:
+                    case "loved":
+                        log.info("Track no longer loved on Plex: %s", (title, artist))
+                        cursor.execute(
+                            "DELETE FROM loved WHERE recordingId = ?", (rec_mbid,)
+                        )
+                    case "hated":
+                        log.info("Track no longer hated on Plex: %s", (title, artist))
+                        cursor.execute(
+                            "DELETE FROM hated WHERE recordingId = ?", (rec_mbid,)
+                        )
+                cursor.execute(
+                    "INSERT INTO reset (title, artist, trackId, recordingId) VALUES(?, ?, ?, ?)",
+                    (
+                        title,
+                        artist,
+                        track_mbid,
+                        rec_mbid,
+                    ),
+                )
+                conn.commit()
 
-    # Now that tracks have been reset, remove them from the 'reset' table
-    for track in to_remove:
-        cursor.execute(
-            "DELETE FROM reset WHERE id = ?",
-            (track[0],),
+    @staticmethod
+    def all(
+        lbz: Optional[ListenBrainz],
+        lfm: Optional[LastFM],
+        cursor: sqlite3.Cursor,
+        conn: sqlite3.Connection,
+    ):
+        """
+        Reset all tracks that are present in the reset table, meaning they are
+        no longer loved.
+        """
+        log.info("Resetting tracks that are no longer loved/hated on Plex.")
+        result = cursor.execute(
+            "SELECT id, title, artist, recordingId, trackId FROM RESET"
         )
-    conn.commit()
+        to_remove = result.fetchall()
 
-    log.info("Reset %s tracks", len(to_remove))
+        if lbz:
+            for dbid, title, artist, rec_mbid, track_mbid in to_remove:
+                track = Track(
+                    title=title, artist=artist, mbid=rec_mbid, track_mbid=track_mbid
+                )
+                log.info("Removing %s", track)
+                if rec_mbid is not None:
+                    lbz.reset(track)
+                else:
+                    log.warning(
+                        "No recording MBID returned, unable to reset track on ListenBrainz: %s",
+                        track,
+                    )
+
+        if lfm:
+            for dbid, title, artist, mbid, track_mbid in to_remove:
+                lfm.reset(Track(title=title, artist=artist))
+
+        # Now that tracks have been reset, remove them from the 'reset' table
+        for track in to_remove:
+            cursor.execute(
+                "DELETE FROM reset WHERE id = ?",
+                (track[0],),
+            )
+        conn.commit()
+
+        log.info("Reset %s tracks", len(to_remove))
 
 
 # ListenBrainz mode (sync from LBZ -> Plex) is being deprecated.

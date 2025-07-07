@@ -159,11 +159,12 @@ mbz.set_useragent(
 )
 
 
+class ConfigError(Exception):
+    """Raised when required configuration value is missing or invalid"""
+
+
 class LibraryNotFoundError(Exception):
-    """
-    Exception class for cases where no matching
-    music library is found on the Plex server
-    """
+    """Raised when a matching music library is not found on Plex server"""
 
 
 @dataclass(frozen=True)
@@ -715,7 +716,7 @@ class LastFM:
 class Database:
     def __init__(self):
         self.conn = sqlite3.connect(DATABASE)
-        self.cur = self.conn.cursor()
+        self.cursor = self.conn.cursor()
         self.create_tables()
 
     @staticmethod
@@ -737,7 +738,7 @@ class Database:
         return tablename
 
     def create_tables(self):
-        self.cur.execute(
+        self.cursor.execute(
             """
     CREATE TABLE IF NOT EXISTS loved(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -748,7 +749,7 @@ class Database:
     )
            """
         )
-        self.cur.execute(
+        self.cursor.execute(
             """
     CREATE TABLE IF NOT EXISTS hated(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -759,7 +760,7 @@ class Database:
     )
            """
         )
-        self.cur.execute(
+        self.cursor.execute(
             """
     CREATE TABLE IF NOT EXISTS reset(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -790,20 +791,14 @@ class Database:
         )
         self.conn.commit()
 
-    def delete_track(
+    def delete_by_rec_id(
         self,
-        title: Optional[str],
-        artist: Optional[str],
-        track_mbid: Optional[str],
-        rec_mbid: Optional[str],
+        rec_mbid: str,
         table: str,
     ):
-        """Remove track from database"""
+        """Delete a track by its recording MBID"""
         tablename = self._validate_table_name(table)
-        self.cursor.execute(
-            f"DELETE FROM {tablename} (title, artist, trackId, recordingId) VALUES(?, ?, ?, ?)",
-            (title, artist, track_mbid, rec_mbid),
-        )
+        self.cursor.execute(f"DELETE FROM {tablename} WHERE recordingId = ?", rec_mbid)
         self.conn.commit()
 
     def delete_by_id(
@@ -830,15 +825,15 @@ class Database:
             case _:
                 log.fatal("Unrecognized table name: %s", table)
                 raise ValueError(f"Unrecognized table name: {table}")
-        result = self.cur.execute(
-            f"SELECT title, artist, trackId, recordingId FROM {tablename} WHERE trackId = ?",
+        result = self.cursor.execute(
+            f"SELECT id, title, artist, trackId, recordingId FROM {tablename} WHERE trackId = ?",
             (track_mbid,),
         )
         matching_entry = result.fetchone()
         if matching_entry:
             return self._make_dict(matching_entry)
-        result = self.cur.execute(
-            f"SELECT title, artist, trackId, recordingId FROM {tablename} WHERE title = ? AND artist = ?",
+        result = self.cursor.execute(
+            f"SELECT id, title, artist, trackId, recordingId FROM {tablename} WHERE title = ? AND artist = ?",
             (
                 title,
                 artist,
@@ -861,16 +856,12 @@ class Database:
             "rec_mbid": db_entry[4],
         }
 
-    def get_all_tracks(self, table: str) -> list:
-        match table:
-            case "loved":
-                result = self.cur.execute(
-                    "SELECT id, title, artist, trackId, recordingId FROM loved"
-                )
-            case "hated":
-                result = self.cur.execute(
-                    "SELECT id, title, artist, trackId, recordingId FROM hated"
-                )
+    def get_all_tracks(self, table: str) -> list[dict]:
+        tablename = self._validate_table_name(table)
+        result = self.cursor.execute(
+            f"SELECT id, title, artist, trackId, recordingId FROM {tablename}"
+        )
+
         entries = result.fetchall()
         formatted = [self._make_dict(t) for t in entries]
         return formatted
@@ -1074,6 +1065,7 @@ class Relay:
                 artist=track.artist,
                 track_mbid=track.track_mbid,
                 rec_mbid=track.mbid,
+                table="hated",
             )
 
             if track.mbid not in lbz_hated_mbids:
@@ -1108,16 +1100,20 @@ class Reset:
         entries = db.get_all_tracks(table=table)
         plex_ids = [track.mbid for track in plex_tracks]
 
-        for title, artist, track_mbid, rec_mbid in entries:
-            if rec_mbid not in plex_ids:
-                log.info("Track no longer %sd on Plex: %s", table, (title, artist))
+        for track in entries:
+            if track.get("rec_mbid") not in plex_ids:
+                log.info(
+                    "Track no longer %sd on Plex: %s",
+                    table,
+                    (track.get("title"), track.get("artist")),
+                )
                 # move from current table to reset table
-                db.delete_track(rec_mbid=rec_mbid, table=table)
+                db.delete_by_rec_id(rec_mbid=track.get("rec_mbid"), table=table)
                 db.add_track(
-                    title=title,
-                    artist=artist,
-                    track_mbid=track_mbid,
-                    rec_mbid=rec_mbid,
+                    title=track.get("title"),
+                    artist=track.get("artist"),
+                    track_mbid=track.get("track_mbid"),
+                    rec_mbid=track.get("rec_mbid"),
                     table="reset",
                 )
 
@@ -1158,8 +1154,8 @@ class Reset:
                 )
 
         # Now that tracks have been reset, remove them from the 'reset' table
-        for track in to_remove:
-            db.delete_by_id(db_id=track[0], table="reset")
+        for db_track in to_remove:
+            db.delete_by_id(db_id=db_track.get("id"), table="reset")
 
         log.info("Reset %s tracks", len(to_remove))
 
@@ -1191,12 +1187,12 @@ class Setup:
                 secret=LFM_SECRET,
             )
         except RuntimeError as e:
-            log.error(
+            log.warning(
                 "Got a runtime error when attempting to execute Last.fm - skipping Last.fm"
             )
-            log.error("Error details:")
-            log.error(e)
-            log.error("This can be safely ignored if you do not wish to use Last.fm")
+            log.warning("Error details:")
+            log.warning(e)
+            log.warning("This can be safely ignored if you do not wish to use Last.fm")
             lfm = None
         return lfm
 

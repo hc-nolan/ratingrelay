@@ -25,6 +25,9 @@ import logging
 from logging.handlers import TimedRotatingFileHandler
 from typing import Optional
 
+# Ensure the data directory exists
+os.makedirs("data", exist_ok=True)
+
 load_dotenv()
 log = logging.getLogger(__name__)
 logging.basicConfig(
@@ -150,9 +153,6 @@ PLEX_LOVE_THRESHOLD = Env.get_required_int("LOVE_THRESHOLD")
 PLEX_HATE_THRESHOLD = Env.get("HATE_THRESHOLD")
 
 DATABASE = Env.get_required("DATABASE")
-
-# Ensure the data directory exists
-os.makedirs("data", exist_ok=True)
 
 mbz.set_useragent(
     "RatingRelay", "v0.4", contact="https://github.com/hc-nolan/ratingrelay"

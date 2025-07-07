@@ -828,7 +828,7 @@ class Database:
             FROM {tablename}
             WHERE trackId = ? OR (title = ? AND artist = ?)
         """
-        result = self.cursor.execute(query, (track_mbid,))
+        result = self.cursor.execute(query, (track_mbid, title, artist))
         matching_entry = result.fetchone()
         return self._make_dict(matching_entry) if matching_entry else None
 

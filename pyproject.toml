@@ -1,22 +1,14 @@
 [project]
-name = "ratingrelay"
-version = "0.2.0"
+name = "ratingrelay""
+version = "0.4.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "debugpy>=1.8.12",
-    "dotenv>=0.9.9",
     "liblistenbrainz>=0.5.6",
     "musicbrainzngs>=0.7.1",
-    "plexapi>=4.16.1",
-    "pylast~=5.3.0",
-    "pylint>=3.3.6",
-    "pytest>=8.3.5",
-    "pytest-mock>=3.14.0",
-    "python-dotenv~=1.0.1",
-    "rapidfuzz>=3.13.0",
-    "requests~=2.32.3",
+    "plexapi>=4.17.0",
+    "pylast>=5.5.0",
+    "python-dotenv>=1.1.1",
     "rich>=14.0.0",
-    "xmltodict~=0.14.2",
 ]

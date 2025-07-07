@@ -1,6 +1,7 @@
 """
+Contains functions related to interacting with the .env file.
 
-This file contains all functions related to interacting with the .env file.
+Mostly wrappers around os.getenv()
 """
 
 import logging
@@ -30,11 +31,9 @@ def write_var(name: str, value: str) -> None:
 
     if not updated:
         log.info("No saved %s found. Adding it now.", name)
-        # make sure current last line ends with \n, otherwise
-        # would be written to the same line
-        if len(lines) > 0 and not lines[-1].endswith("\n"):
-            lines[-1] = lines[-1] + "\n"
-        lines.append(name + "=" + value + "\n")
+        # If above did not produce an update,
+        # it means no line '<NAME>=' was found; append it
+        lines.append("\n" + name + "=" + value + "\n")
         updated = True
 
     if updated:
@@ -52,7 +51,7 @@ def get_env_file() -> Path:
     """
     Retrieve the path of the application's .env file
     """
-    env_file = Path(__file__).parent.parent.parent / ".env"
+    env_file = Path(__file__).parent / ".env"
     if env_file.exists():
         log.info("Found .env file at: %s", env_file)
         return env_file
@@ -100,5 +99,4 @@ def get(var_name: str) -> Optional[str]:
     return getenv(var_name)
 
 
-env_file = get_env_file()
-load_dotenv(env_file)
+load_dotenv()

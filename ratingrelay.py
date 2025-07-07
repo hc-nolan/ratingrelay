@@ -586,7 +586,7 @@ class ListenBrainz:
             offset += count
         return all_loves
 
-    def _get_track_mbid(self, track: Track) -> str | None:
+    def _get_track_mbid(self, track: Track) -> Optional[str]:
         """
         Queries MusicBrainz and retrieves matching result
         """
@@ -597,7 +597,7 @@ class ListenBrainz:
         return self._find_mbid_match(track, track_search["recording-list"])
 
     @staticmethod
-    def _find_mbid_match(track: Track, track_search: list[dict]) -> str | None:
+    def _find_mbid_match(track: Track, track_search: list[dict]) -> Optional[str]:
         """
         Attempts to find a matching MBID given a track dict
         and MusicBrainz search results

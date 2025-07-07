@@ -12,7 +12,7 @@ from logging.handlers import TimedRotatingFileHandler
 from typing import Optional
 import env
 import sqlite3
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from services import Plex, LastFM, ListenBrainz, make_Track, Track
 
 # Ensure the data directory exists

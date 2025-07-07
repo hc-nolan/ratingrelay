@@ -3,6 +3,18 @@ RatingRelay
 Usage: python ratingrelay.py -m <mode>
 """
 
+from dataclasses import dataclass
+import env
+import sqlite3
+from plexapi.myplex import MyPlexAccount
+from plexapi.server import PlexServer
+from plexapi.library import LibrarySection
+from plexapi.audio import Track as PlexTrack
+from rich import print
+from rich.prompt import IntPrompt, Prompt
+import musicbrainzngs as mbz
+import liblistenbrainz as liblbz
+import pylast
 import argparse
 import os
 import time
@@ -10,13 +22,6 @@ import sys
 import logging
 from logging.handlers import TimedRotatingFileHandler
 from typing import Optional
-import env
-import sqlite3
-from dataclasses import dataclass
-from services import Plex, LastFM, ListenBrainz, make_Track, Track
-
-# Ensure the data directory exists
-os.makedirs("data", exist_ok=True)
 
 log = logging.getLogger(__name__)
 logging.basicConfig(
@@ -33,12 +38,10 @@ logging.getLogger("musicbrainzngs").setLevel(logging.WARNING)
 logging.getLogger("pylast").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
-
 LFM_USERNAME = env.get("LASTFM_USERNAME")
 LFM_PASSWORD = env.get("LASTFM_PASSWORD")
 LFM_TOKEN = env.get("LASTFM_API_KEY")
 LFM_SECRET = env.get("LASTFM_SECRET")
-
 
 LBZ_USERNAME = env.get("LISTENBRAINZ_USERNAME")
 LBZ_TOKEN = env.get("LISTENBRAINZ_TOKEN")
@@ -49,6 +52,132 @@ PLEX_LOVE_THRESHOLD = env.get_required_int("LOVE_THRESHOLD")
 PLEX_HATE_THRESHOLD = env.get("HATE_THRESHOLD")
 
 DATABASE = env.get_required("DATABASE")
+
+# Ensure the data directory exists
+os.makedirs("data", exist_ok=True)
+
+mbz.set_useragent(
+    "RatingRelay", "v0.4", contact="https://github.com/hc-nolan/ratingrelay"
+)
+
+
+class LibraryNotFoundError(Exception):
+    """
+    Exception class for cases where no matching
+    music library is found on the Plex server
+    """
+
+
+@dataclass(frozen=True)
+class Track:
+    title: str
+    artist: str
+    mbid: Optional[str] = None
+    track_mbid: Optional[str] = None
+
+    @staticmethod
+    def from_plex(plex_track: PlexTrack, cursor: sqlite3.Cursor, rating: str):
+        """
+        Parses the track MBID from a Plex track and returns a Track with the
+        matching recording MBID.
+
+        First, queries the database for a match. If no match is found, a query is
+        made to the MusicBrainz API to get the recording MBID.
+
+        Args:
+            plex_track: A PlexAPI Track object
+            cursor: Database cursor
+            rating: `loved` or `hated`
+        """
+        title = plex_track.title
+        artist = plex_track.artist().title
+        track_mbid = Track.get_plex_track_mbid(plex_track)
+
+        # The MBID returned by Plex is the track ID. For use with ListenBrainz,
+        # we need the recording ID.
+        log.info("Checking database for existing track.")
+        db_match = Track.check_db(cursor, track_mbid, title, artist, rating)
+        if db_match:
+            log.info("Existing track found in database.")
+            rec_mbid = db_match[3]
+        else:
+            rec_mbid = Track.get_recording_mbid(
+                track_mbid=track_mbid, title=title, artist=artist
+            )
+
+        return Track(title=title, artist=artist, mbid=rec_mbid, track_mbid=track_mbid)
+
+    def get_recording_mbid(
+        track_mbid: Optional[str], title: str, artist: str
+    ) -> Optional[str]:
+        """
+        Queries MusicBrainz API for a track's recording MBID.
+        """
+        log.info("Searching MusicBrainz for recording MBID.")
+        if track_mbid is None:
+            log.info("Using track MBID: %s", track_mbid)
+            search = mbz.search_recordings(query=title, artist=artist)
+        else:
+            log.info(
+                "track_mbid is empty, using title and artist: %s - %s", title, artist
+            )
+            search = mbz.search_recordings(query=f"tid:{track_mbid}")
+        recording = search.get("recording-list")
+
+        if recording == []:
+            log.warning("No recordings found on MusicBrainz.")
+            rec_mbid = None
+        else:
+            log.info("Recording MBID found from MusicBrainz search.")
+            rec_mbid = recording[0].get("id")
+
+        return rec_mbid
+
+    def get_plex_track_mbid(track: PlexTrack) -> Optional[str]:
+        """Parses track MBID from a Plex track object"""
+        log.info("Trying to grab MBID from PlexTrack: %s", track.title)
+        try:
+            mbid = track.guids[0].id
+            mbid = mbid.removeprefix("mbid://")
+            log.info("Found track ID from PlexTrack: %s.", mbid)
+        except IndexError:
+            mbid = None
+            log.warning("No track MBID found in PlexTrack.")
+
+        return mbid
+
+    def check_db(
+        cursor: sqlite3.Cursor, track_mbid: str, title: str, artist: str, table: str
+    ) -> Optional[str]:
+        """
+        Check for a matching track in the database table provided
+        """
+        match table:
+            case "loved":
+                tablename = "loved"
+            case "hated":
+                tablename = "hated"
+            case _:
+                log.fatal("Unrecognized table name: %s", table)
+                raise ValueError(f"Unrecognized table name: {table}")
+        result = cursor.execute(
+            f"SELECT title, artist, trackId, recordingId FROM {tablename} WHERE trackId = ?",
+            (track_mbid,),
+        )
+        matching_entry = result.fetchone()
+        if matching_entry:
+            return matching_entry
+        result = cursor.execute(
+            f"SELECT title, artist, trackId, recordingId FROM {tablename} WHERE title = ? AND artist = ?",
+            (
+                title,
+                artist,
+            ),
+        )
+        matching_entry = result.fetchone()
+        if matching_entry:
+            return matching_entry
+            return None
 
 
 @dataclass
@@ -150,7 +279,9 @@ class Relay:
 
         for plex_track in plex_loves:
             log.info("Processing PlexTrack into Track: %s", plex_track.title)
-            track = make_Track(plex_track=plex_track, cursor=cursor, rating="loved")
+            track = Track.from_plex(
+                plex_track=plex_track, cursor=cursor, rating="loved"
+            )
             plex_tracks.add(track)
             # insert the track if it's new, or ignore if there is a matching
             # recording MBID in the database
@@ -226,7 +357,9 @@ class Relay:
         log.info("Plex returned %s hated tracks.", len(plex_hates))
 
         for plex_track in plex_hates:
-            track = make_Track(plex_track=plex_track, cursor=cursor, rating="hated")
+            track = Track.from_plex(
+                plex_track=plex_track, cursor=cursor, rating="hated"
+            )
             plex_tracks.add(track)
             # insert the track if it's new, or ignore if there is a matching
             # recording MBID in the database

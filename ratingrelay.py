@@ -408,105 +408,109 @@ def read_args() -> str:
             sys.exit(1)
 
 
-def setup_db() -> (sqlite3.Cursor, sqlite3.Connection):
-    """
-    Database setup function. Creates the tables used by the script if they don't
-    exist, and returns a cursor for the database.
-    """
-    db_conn = sqlite3.connect(DATABASE)
-    db_cur = db_conn.cursor()
-
-    db_cur.execute(
+class Setup:
+    @staticmethod
+    def services() -> Services:
         """
-CREATE TABLE IF NOT EXISTS loved(
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    recordingId TEXT,
-    trackId TEXT UNIQUE,
-    title TEXT,
-    artist TEXT
-)
-       """
-    )
-    db_cur.execute(
+        Sets up Plex object, database, and attempts to set up LastFM and ListenBrainz objects.
+        """  # noqa
+        cur, conn = Setup.db()
+        plex = Plex(
+            music_library=PLEX_LIBRARY,
+            love_threshold=PLEX_LOVE_THRESHOLD,
+            hate_threshold=PLEX_HATE_THRESHOLD,
+            url=PLEX_URL,
+        )
+        lfm = Setup.lfm()
+        lbz = Setup.lbz()
+        return Services(plex=plex, cursor=cur, conn=conn, lfm=lfm, lbz=lbz)
+
+    @staticmethod
+    def db() -> (sqlite3.Cursor, sqlite3.Connection):
         """
-CREATE TABLE IF NOT EXISTS hated(
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    recordingId TEXT,
-    trackId TEXT UNIQUE,
-    title TEXT,
-    artist TEXT
-)
-       """
-    )
-    db_cur.execute(
+        Database setup function. Creates the tables used by the script if they don't
+        exist, and returns a cursor for the database.
         """
-CREATE TABLE IF NOT EXISTS reset(
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    recordingId TEXT,
-    trackId TEXT UNIQUE,
-    title TEXT,
-    artist TEXT
-)
-       """
+        db_conn = sqlite3.connect(DATABASE)
+        db_cur = db_conn.cursor()
+
+        db_cur.execute(
+            """
+    CREATE TABLE IF NOT EXISTS loved(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        recordingId TEXT,
+        trackId TEXT UNIQUE,
+        title TEXT,
+        artist TEXT
     )
-    return db_cur, db_conn
-
-
-def setup_lfm() -> Optional[LastFM]:
-    try:
-        lfm = LastFM(
-            username=LFM_USERNAME,
-            password=LFM_PASSWORD,
-            token=LFM_TOKEN,
-            secret=LFM_SECRET,
+           """
         )
-    except RuntimeError as e:
-        log.error(
-            "Got a runtime error when attempting to execute Last.fm - skipping Last.fm"
-        )
-        log.error("Error details:")
-        log.error(e)
-        log.error("This can be safely ignored if you do not wish to use Last.fm")
-        lfm = None
-    return lfm
-
-
-def setup_lbz() -> Optional[ListenBrainz]:
-    try:
-        lbz = ListenBrainz(username=LBZ_USERNAME, token=LBZ_TOKEN)
-    except RuntimeError as e:
-        log.error(
-            "Got a runtime error when attempting to execute ListenBrainz - skipping ListenBrainz"
-        )
-        log.error("Error details:")
-        log.error(e)
-        log.error("This can be safely ignored if you do not wish to use ListenBrainz")
-        lbz = None
-
-    return lbz
-
-
-def setup() -> Services:
-    """
-    Sets up Plex object, database, and attempts to set up LastFM and ListenBrainz objects.
-    """  # noqa
-    cur, conn = setup_db()
-    plex = Plex(
-        music_library=PLEX_LIBRARY,
-        love_threshold=PLEX_LOVE_THRESHOLD,
-        hate_threshold=PLEX_HATE_THRESHOLD,
-        url=PLEX_URL,
+        db_cur.execute(
+            """
+    CREATE TABLE IF NOT EXISTS hated(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        recordingId TEXT,
+        trackId TEXT UNIQUE,
+        title TEXT,
+        artist TEXT
     )
-    lfm = setup_lfm()
-    lbz = setup_lbz()
-    return Services(plex=plex, cursor=cur, conn=conn, lfm=lfm, lbz=lbz)
+           """
+        )
+        db_cur.execute(
+            """
+    CREATE TABLE IF NOT EXISTS reset(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        recordingId TEXT,
+        trackId TEXT UNIQUE,
+        title TEXT,
+        artist TEXT
+    )
+           """
+        )
+        return db_cur, db_conn
+
+    @staticmethod
+    def lfm() -> Optional[LastFM]:
+        try:
+            lfm = LastFM(
+                username=LFM_USERNAME,
+                password=LFM_PASSWORD,
+                token=LFM_TOKEN,
+                secret=LFM_SECRET,
+            )
+        except RuntimeError as e:
+            log.error(
+                "Got a runtime error when attempting to execute Last.fm - skipping Last.fm"
+            )
+            log.error("Error details:")
+            log.error(e)
+            log.error("This can be safely ignored if you do not wish to use Last.fm")
+            lfm = None
+        return lfm
+
+    @staticmethod
+    def lbz() -> Optional[ListenBrainz]:
+        try:
+            lbz = ListenBrainz(username=LBZ_USERNAME, token=LBZ_TOKEN)
+        except RuntimeError as e:
+            log.error(
+                "Got a runtime error when attempting to execute ListenBrainz - skipping ListenBrainz"
+            )
+            log.error("Error details:")
+            log.error(e)
+            log.error(
+                "This can be safely ignored if you do not wish to use ListenBrainz"
+            )
+            lbz = None
+
+        return lbz
 
 
 def main():
     start_time = time.perf_counter()
     log.info("Starting RatingRelay.")
     mode = read_args()
-    services = setup()
+    services = Setup.services()
 
     match mode:
         case "plex":

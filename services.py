@@ -16,7 +16,7 @@ import pylast
 
 log = logging.getLogger(__name__)
 mbz.set_useragent(
-    "RatingRelay", "v0.5", contact="https://github.com/hc-nolan/ratingrelay"
+    "RatingRelay", "v0.4", contact="https://github.com/hc-nolan/ratingrelay"
 )
 
 

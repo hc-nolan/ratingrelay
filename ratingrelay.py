@@ -174,110 +174,29 @@ class Track:
     track_mbid: Optional[str] = None
 
 
-class TrackMaker:
-    @staticmethod
-    def from_plex(plex_track: PlexTrack, cursor: sqlite3.Cursor, rating: str):
-        """
-        Parses the track MBID from a Plex track and returns a Track with the
-        matching recording MBID.
+def query_recording_mbid(
+    track_mbid: Optional[str], title: str, artist: str
+) -> Optional[str]:
+    """
+    Queries MusicBrainz API for a track's recording MBID.
+    """
+    log.info("Searching MusicBrainz for recording MBID.")
+    if track_mbid is None:
+        log.info("Using track MBID: %s", track_mbid)
+        search = mbz.search_recordings(query=title, artist=artist)
+    else:
+        log.info("track_mbid is empty, using title and artist: %s - %s", title, artist)
+        search = mbz.search_recordings(query=f"tid:{track_mbid}")
+    recording = search.get("recording-list")
 
-        First, queries the database for a match. If no match is found, a query is
-        made to the MusicBrainz API to get the recording MBID.
+    if recording == []:
+        log.warning("No recordings found on MusicBrainz.")
+        rec_mbid = None
+    else:
+        log.info("Recording MBID found from MusicBrainz search.")
+        rec_mbid = recording[0].get("id")
 
-        Args:
-            plex_track: A PlexAPI Track object
-            cursor: Database cursor
-            rating: `loved` or `hated`
-        """
-        title = plex_track.title
-        artist = plex_track.artist().title
-        track_mbid = TrackMaker.get_plex_track_mbid(plex_track)
-
-        # The MBID returned by Plex is the track ID. For use with ListenBrainz,
-        # we need the recording ID.
-        log.info("Checking database for existing track.")
-        db_match = TrackMaker.check_db(cursor, track_mbid, title, artist, rating)
-        if db_match:
-            log.info("Existing track found in database.")
-            rec_mbid = db_match[3]
-        else:
-            rec_mbid = TrackMaker.get_recording_mbid(
-                track_mbid=track_mbid, title=title, artist=artist
-            )
-
-        return Track(title=title, artist=artist, mbid=rec_mbid, track_mbid=track_mbid)
-
-    def get_recording_mbid(
-        track_mbid: Optional[str], title: str, artist: str
-    ) -> Optional[str]:
-        """
-        Queries MusicBrainz API for a track's recording MBID.
-        """
-        log.info("Searching MusicBrainz for recording MBID.")
-        if track_mbid is None:
-            log.info("Using track MBID: %s", track_mbid)
-            search = mbz.search_recordings(query=title, artist=artist)
-        else:
-            log.info(
-                "track_mbid is empty, using title and artist: %s - %s", title, artist
-            )
-            search = mbz.search_recordings(query=f"tid:{track_mbid}")
-        recording = search.get("recording-list")
-
-        if recording == []:
-            log.warning("No recordings found on MusicBrainz.")
-            rec_mbid = None
-        else:
-            log.info("Recording MBID found from MusicBrainz search.")
-            rec_mbid = recording[0].get("id")
-
-        return rec_mbid
-
-    def get_plex_track_mbid(track: PlexTrack) -> Optional[str]:
-        """Parses track MBID from a Plex track object"""
-        log.info("Trying to grab MBID from PlexTrack: %s", track.title)
-        try:
-            mbid = track.guids[0].id
-            mbid = mbid.removeprefix("mbid://")
-            log.info("Found track ID from PlexTrack: %s.", mbid)
-        except IndexError:
-            mbid = None
-            log.warning("No track MBID found in PlexTrack.")
-
-        return mbid
-
-    def check_db(
-        cursor: sqlite3.Cursor, track_mbid: str, title: str, artist: str, table: str
-    ) -> Optional[str]:
-        """
-        Check for a matching track in the database table provided
-        """
-        match table:
-            case "loved":
-                tablename = "loved"
-            case "hated":
-                tablename = "hated"
-            case _:
-                log.fatal("Unrecognized table name: %s", table)
-                raise ValueError(f"Unrecognized table name: {table}")
-        result = cursor.execute(
-            f"SELECT title, artist, trackId, recordingId FROM {tablename} WHERE trackId = ?",
-            (track_mbid,),
-        )
-        matching_entry = result.fetchone()
-        if matching_entry:
-            return matching_entry
-        result = cursor.execute(
-            f"SELECT title, artist, trackId, recordingId FROM {tablename} WHERE title = ? AND artist = ?",
-            (
-                title,
-                artist,
-            ),
-        )
-        matching_entry = result.fetchone()
-        if matching_entry:
-            return matching_entry
-            return None
+    return rec_mbid
 
 
 class Plex:
@@ -393,6 +312,20 @@ class Plex:
         Submit a new track rating to the Plex server.
         """
         return track.rate(rating=rating)
+
+    @staticmethod
+    def parse_track_mbid(track: PlexTrack) -> Optional[str]:
+        """Parses track MBID from a Plex track object"""
+        log.info("Trying to grab MBID from PlexTrack: %s", track.title)
+        try:
+            mbid = track.guids[0].id
+            mbid = mbid.removeprefix("mbid://")
+            log.info("Found track ID from PlexTrack: %s.", mbid)
+        except IndexError:
+            mbid = None
+            log.warning("No track MBID found in PlexTrack.")
+
+        return mbid
 
 
 class ListenBrainz:
@@ -779,20 +712,208 @@ class LastFM:
         return loves
 
 
+class Database:
+    def __init__(self):
+        self.conn = sqlite3.connect(DATABASE)
+        self.cur = self.conn.cursor()
+        self.create_tables()
+
+    @staticmethod
+    def _validate_table_name(table: str) -> Optional[str]:
+        """
+        Used to validate that a variable contains a valid table name.
+        Only strings returned by this function are passed to the database
+        as table names.
+        """
+        match table:
+            case "loved":
+                tablename = "loved"
+            case "hated":
+                tablename = "hated"
+            case "reset":
+                tablename = "reset"
+            case _:
+                tablename = None
+        return tablename
+
+    def create_tables(self):
+        self.cur.execute(
+            """
+    CREATE TABLE IF NOT EXISTS loved(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        recordingId TEXT,
+        trackId TEXT UNIQUE,
+        title TEXT,
+        artist TEXT
+    )
+           """
+        )
+        self.cur.execute(
+            """
+    CREATE TABLE IF NOT EXISTS hated(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        recordingId TEXT,
+        trackId TEXT UNIQUE,
+        title TEXT,
+        artist TEXT
+    )
+           """
+        )
+        self.cur.execute(
+            """
+    CREATE TABLE IF NOT EXISTS reset(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        recordingId TEXT,
+        trackId TEXT UNIQUE,
+        title TEXT,
+        artist TEXT
+    )
+           """
+        )
+        self.conn.commit()
+
+    def add_track(
+        self,
+        title: Optional[str],
+        artist: Optional[str],
+        track_mbid: Optional[str],
+        rec_mbid: Optional[str],
+        table: str,
+    ):
+        """
+        Add a track to the database, or ignore if one already exists.
+        """
+        tablename = self._validate_table_name(table)
+        self.cursor.execute(
+            f"INSERT OR IGNORE INTO {tablename} (title, artist, trackId, recordingId) VALUES(?, ?, ?, ?)",
+            (title, artist, track_mbid, rec_mbid),
+        )
+        self.conn.commit()
+
+    def delete_track(
+        self,
+        title: Optional[str],
+        artist: Optional[str],
+        track_mbid: Optional[str],
+        rec_mbid: Optional[str],
+        table: str,
+    ):
+        """Remove track from database"""
+        tablename = self._validate_table_name(table)
+        self.cursor.execute(
+            f"DELETE FROM {tablename} (title, artist, trackId, recordingId) VALUES(?, ?, ?, ?)",
+            (title, artist, track_mbid, rec_mbid),
+        )
+        self.conn.commit()
+
+    def delete_by_id(
+        self,
+        db_id: int,
+        table: str,
+    ):
+        """Delete a track by its ID (primary key)"""
+        tablename = self._validate_table_name(table)
+        self.cursor.execute(f"DELETE FROM {tablename} WHERE ID = ?", (db_id,))
+        self.conn.commit()
+
+    def query_track(
+        self, track_mbid: str, title: str, artist: str, table: str
+    ) -> Optional[dict]:
+        """
+        Check for a matching track in the database table provided
+        """
+        match table:
+            case "loved":
+                tablename = "loved"
+            case "hated":
+                tablename = "hated"
+            case _:
+                log.fatal("Unrecognized table name: %s", table)
+                raise ValueError(f"Unrecognized table name: {table}")
+        result = self.cur.execute(
+            f"SELECT title, artist, trackId, recordingId FROM {tablename} WHERE trackId = ?",
+            (track_mbid,),
+        )
+        matching_entry = result.fetchone()
+        if matching_entry:
+            return self._make_dict(matching_entry)
+        result = self.cur.execute(
+            f"SELECT title, artist, trackId, recordingId FROM {tablename} WHERE title = ? AND artist = ?",
+            (
+                title,
+                artist,
+            ),
+        )
+        matching_entry = result.fetchone()
+        if matching_entry:
+            return self._make_dict(matching_entry)
+
+        return None
+
+    def _make_dict(self, db_entry: tuple) -> dict:
+        """Turn a tuple from the database into a dict where column names are keys"""
+
+        return {
+            "id": db_entry[0],
+            "title": db_entry[1],
+            "artist": db_entry[2],
+            "track_mbid": db_entry[3],
+            "rec_mbid": db_entry[4],
+        }
+
+    def get_all_tracks(self, table: str) -> list:
+        match table:
+            case "loved":
+                result = self.cur.execute(
+                    "SELECT id, title, artist, trackId, recordingId FROM loved"
+                )
+            case "hated":
+                result = self.cur.execute(
+                    "SELECT id, title, artist, trackId, recordingId FROM hated"
+                )
+        entries = result.fetchall()
+        formatted = [self._make_dict(t) for t in entries]
+        return formatted
+
+
+def track_from_plex(plex_track: PlexTrack, db: Database, rating: str) -> Track:
+    """
+    Parses the track MBID from a Plex track and returns a Track with the
+    matching recording MBID.
+
+    First, queries the database for a match. If no match is found, a query is
+    made to the MusicBrainz API to get the recording MBID.
+
+    Args:
+        plex_track: A PlexAPI Track object
+        db: Database class instance
+        rating: `loved` or `hated`
+    """
+    title = plex_track.title
+    artist = plex_track.artist().title
+    track_mbid = Plex.parse_track_mbid(plex_track)
+
+    # The MBID returned by Plex is the track ID. For use with ListenBrainz,
+    # we need the recording ID.
+    log.info("Checking database for existing track.")
+    db_match = db.query_track(
+        track_mbid=track_mbid, title=title, artist=artist, table=rating
+    )
+    if db_match:
+        log.info("Existing track found in database.")
+        rec_mbid = db_match.get("rec_mbid")
+    else:
+        rec_mbid = query_recording_mbid(
+            track_mbid=track_mbid, title=title, artist=artist
+        )
+
+    return Track(title=title, artist=artist, mbid=rec_mbid, track_mbid=track_mbid)
+
+
 @dataclass
 class Services:
-    """
-    Dataclass for interacting with services.
-
     plex: Plex
-    cursor: sqlite3.Cursor
-    lbz: Optional[ListenBrainz]
-    lfm: Optional[LastFM]
-    """
-
-    plex: Plex
-    cursor: sqlite3.Cursor
-    conn: sqlite3.Connection
+    db: Database
     lbz: Optional[ListenBrainz]
     lfm: Optional[LastFM]
 
@@ -808,39 +929,34 @@ class Relay:
         love_stats = Relay.loves(**services.__dict__)
         if services.plex.hate_threshold is not None:
             hate_stats = Relay.hates(
-                plex=services.plex,
-                lbz=services.lbz,
-                cursor=services.cursor,
-                conn=services.conn,
+                plex=services.plex, lbz=services.lbz, db=services.db
             )
         else:
             hate_stats = {"plex_hates": 0, "lbz_added": 0}
 
-        Reset.all(
-            lbz=services.lbz,
-            lfm=services.lfm,
-            cursor=services.cursor,
-            conn=services.conn,
-        )
+        Reset.all(lbz=services.lbz, lfm=services.lfm, db=services.db)
+        Relay.print_stats(love=love_stats, hate=hate_stats)
 
+    @staticmethod
+    def print_stats(love: dict, hate: dict):
         log.info("STATISTICS:")
         log.info(
             "%-12s\tLoves: %-10s\tHates: %-10s",
             "Plex:",
-            love_stats.get("plex_loves"),
-            hate_stats.get("plex_hates"),
+            love.get("plex_loves"),
+            hate.get("plex_hates"),
         )
         log.info("ADDITIONS:")
         log.info(
             "%-12s\tLoves: %-10s\tHates: %-10s\t",
             "ListenBrainz:",
-            love_stats.get("lbz_added"),
-            hate_stats.get("lbz_added"),
+            love.get("lbz_added"),
+            hate.get("lbz_added"),
         )
         log.info(
             "%-12s\tLoves: %-10s\tHates: %-10s\t",
             "Last.FM:",
-            love_stats.get("lfm_added"),
+            love.get("lfm_added"),
             "N/A",
         )
 
@@ -849,8 +965,7 @@ class Relay:
         plex: Plex,
         lbz: ListenBrainz,
         lfm: LastFM,
-        cursor: sqlite3.Cursor,
-        conn: sqlite3.Connection,
+        db: Database,
     ):
         """
         Relays loves from Plex to LBZ/LFM
@@ -878,17 +993,15 @@ class Relay:
 
         for plex_track in plex_loves:
             log.info("Processing PlexTrack into Track: %s", plex_track.title)
-            track = TrackMaker.from_plex(
-                plex_track=plex_track, cursor=cursor, rating="loved"
-            )
+            track = track_from_plex(plex_track=plex_track, db=db, rating="loved")
             plex_tracks.add(track)
-            # insert the track if it's new, or ignore if there is a matching
-            # recording MBID in the database
-            cursor.execute(
-                "INSERT OR IGNORE INTO loved (title, artist, trackId, recordingId) VALUES(?, ?, ?, ?)",
-                (track.title, track.artist, track.track_mbid, track.mbid),
+            db.add_track(
+                title=track.title,
+                artist=track.artist,
+                track_mbid=track.track_mbid,
+                rec_mbid=track.mbid,
+                table="loved",
             )
-            conn.commit()
 
             if lbz:
                 if track.mbid not in lbz_loved_mbids:
@@ -921,9 +1034,7 @@ class Relay:
             lbz_added,
             lfm_added,
         )
-        Reset.find_tracks(
-            conn=conn, cursor=cursor, plex_tracks=plex_tracks, table="loved"
-        )
+        Reset.find_tracks(db=db, plex_tracks=plex_tracks, table="loved")
         return {
             "plex_loves": len(plex_loves),
             "lbz_added": lbz_added,
@@ -931,9 +1042,7 @@ class Relay:
         }
 
     @staticmethod
-    def hates(
-        plex: Plex, lbz: ListenBrainz, cursor: sqlite3.Cursor, conn: sqlite3.Connection
-    ):
+    def hates(plex: Plex, lbz: ListenBrainz, db: Database):
         """
         Relays hates from Plex to LBZ
 
@@ -956,17 +1065,16 @@ class Relay:
         log.info("Plex returned %s hated tracks.", len(plex_hates))
 
         for plex_track in plex_hates:
-            track = TrackMaker.from_plex(
-                plex_track=plex_track, cursor=cursor, rating="hated"
-            )
+            track = track_from_plex(plex_track=plex_track, db=db, rating="hated")
             plex_tracks.add(track)
             # insert the track if it's new, or ignore if there is a matching
             # recording MBID in the database
-            cursor.execute(
-                "INSERT OR IGNORE INTO hated (title, artist, trackId, recordingId) VALUES(?, ?, ?, ?)",
-                (track.title, track.artist, track.track_mbid, track.mbid),
+            db.add_track(
+                title=track.title,
+                artist=track.artist,
+                track_mbid=track.track_mbid,
+                rec_mbid=track.mbid,
             )
-            conn.commit()
 
             if track.mbid not in lbz_hated_mbids:
                 log.info("Hating %s by %s", track.title, track.artist)
@@ -975,9 +1083,7 @@ class Relay:
 
         log.info("Finished adding hates:   ListenBrainz: %s", lbz_added)
 
-        Reset.find_tracks(
-            conn=conn, cursor=cursor, plex_tracks=plex_tracks, table="hated"
-        )
+        Reset.find_tracks(db=db, plex_tracks=plex_tracks, table="hated")
 
         return {"plex_hates": len(plex_hates), "lbz_added": lbz_added}
 
@@ -985,8 +1091,7 @@ class Relay:
 class Reset:
     @staticmethod
     def find_tracks(
-        conn: sqlite3.Connection,
-        cursor: sqlite3.Cursor,
+        db: Database,
         plex_tracks: list[Track],
         table: str,
     ):
@@ -1000,66 +1105,45 @@ class Reset:
         to services that their ratings should be reset to 0.
         """
         log.info("Checking for tracks to reset.")
-        match table:
-            case "loved":
-                result = cursor.execute(
-                    "SELECT title, artist, trackId, recordingId FROM loved"
-                )
-            case "hated":
-                result = cursor.execute(
-                    "SELECT title, artist, trackId, recordingId FROM hated"
-                )
-        entries = result.fetchall()
+        entries = db.get_all_tracks(table=table)
         plex_ids = [track.mbid for track in plex_tracks]
 
         for title, artist, track_mbid, rec_mbid in entries:
             if rec_mbid not in plex_ids:
-                match table:
-                    case "loved":
-                        log.info("Track no longer loved on Plex: %s", (title, artist))
-                        cursor.execute(
-                            "DELETE FROM loved WHERE recordingId = ?", (rec_mbid,)
-                        )
-                    case "hated":
-                        log.info("Track no longer hated on Plex: %s", (title, artist))
-                        cursor.execute(
-                            "DELETE FROM hated WHERE recordingId = ?", (rec_mbid,)
-                        )
-                cursor.execute(
-                    "INSERT INTO reset (title, artist, trackId, recordingId) VALUES(?, ?, ?, ?)",
-                    (
-                        title,
-                        artist,
-                        track_mbid,
-                        rec_mbid,
-                    ),
+                log.info("Track no longer %sd on Plex: %s", table, (title, artist))
+                # move from current table to reset table
+                db.delete_track(rec_mbid=rec_mbid, table=table)
+                db.add_track(
+                    title=title,
+                    artist=artist,
+                    track_mbid=track_mbid,
+                    rec_mbid=rec_mbid,
+                    table="reset",
                 )
-                conn.commit()
 
     @staticmethod
     def all(
         lbz: Optional[ListenBrainz],
         lfm: Optional[LastFM],
-        cursor: sqlite3.Cursor,
-        conn: sqlite3.Connection,
+        db: Database,
     ):
         """
         Reset all tracks that are present in the reset table, meaning they are
         no longer loved.
         """
         log.info("Resetting tracks that are no longer loved/hated on Plex.")
-        result = cursor.execute(
-            "SELECT id, title, artist, recordingId, trackId FROM RESET"
-        )
-        to_remove = result.fetchall()
+        to_remove = db.get_all_tracks(table="reset")
 
         if lbz:
-            for dbid, title, artist, rec_mbid, track_mbid in to_remove:
+            for db_track in to_remove:
                 track = Track(
-                    title=title, artist=artist, mbid=rec_mbid, track_mbid=track_mbid
+                    title=db_track.get("title"),
+                    artist=db_track.get("artist"),
+                    mbid=db_track.get("rec_mbid"),
+                    track_mbid=db_track.get("track_mbid"),
                 )
                 log.info("Removing %s", track)
-                if rec_mbid is not None:
+                if db_track.get("rec_mbid") is not None:
                     lbz.reset(track)
                 else:
                     log.warning(
@@ -1068,16 +1152,14 @@ class Reset:
                     )
 
         if lfm:
-            for dbid, title, artist, mbid, track_mbid in to_remove:
-                lfm.reset(Track(title=title, artist=artist))
+            for db_track in to_remove:
+                lfm.reset(
+                    Track(title=db_track.get("title"), artist=db_track.get("artist"))
+                )
 
         # Now that tracks have been reset, remove them from the 'reset' table
         for track in to_remove:
-            cursor.execute(
-                "DELETE FROM reset WHERE id = ?",
-                (track[0],),
-            )
-        conn.commit()
+            db.delete_by_id(db_id=track[0], table="reset")
 
         log.info("Reset %s tracks", len(to_remove))
 
@@ -1088,7 +1170,7 @@ class Setup:
         """
         Sets up Plex object, database, and attempts to set up LastFM and ListenBrainz objects.
         """  # noqa
-        cur, conn = Setup.db()
+        db = Database()
         plex = Plex(
             music_library=PLEX_LIBRARY,
             love_threshold=PLEX_LOVE_THRESHOLD,
@@ -1097,51 +1179,7 @@ class Setup:
         )
         lfm = Setup.lfm()
         lbz = Setup.lbz()
-        return Services(plex=plex, cursor=cur, conn=conn, lfm=lfm, lbz=lbz)
-
-    @staticmethod
-    def db() -> (sqlite3.Cursor, sqlite3.Connection):
-        """
-        Database setup function. Creates the tables used by the script if they don't
-        exist, and returns a cursor for the database.
-        """
-        db_conn = sqlite3.connect(DATABASE)
-        db_cur = db_conn.cursor()
-
-        db_cur.execute(
-            """
-    CREATE TABLE IF NOT EXISTS loved(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        recordingId TEXT,
-        trackId TEXT UNIQUE,
-        title TEXT,
-        artist TEXT
-    )
-           """
-        )
-        db_cur.execute(
-            """
-    CREATE TABLE IF NOT EXISTS hated(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        recordingId TEXT,
-        trackId TEXT UNIQUE,
-        title TEXT,
-        artist TEXT
-    )
-           """
-        )
-        db_cur.execute(
-            """
-    CREATE TABLE IF NOT EXISTS reset(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        recordingId TEXT,
-        trackId TEXT UNIQUE,
-        title TEXT,
-        artist TEXT
-    )
-           """
-        )
-        return db_cur, db_conn
+        return Services(plex=plex, db=db, lfm=lfm, lbz=lbz)
 
     @staticmethod
     def lfm() -> Optional[LastFM]:

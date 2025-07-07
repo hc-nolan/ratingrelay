@@ -99,5 +99,4 @@ def get(var_name: str) -> Optional[str]:
     return getenv(var_name)
 
 
-env_file = get_env_file()
-load_dotenv(env_file)
+load_dotenv()

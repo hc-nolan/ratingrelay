@@ -22,7 +22,7 @@ logging.basicConfig(
     handlers=[
         logging.StreamHandler(sys.stdout),
         TimedRotatingFileHandler(
-            "ratingrelay.log", when="midnight", interval=30, backupCount=6
+            "data/ratingrelay.log", when="midnight", interval=30, backupCount=6
         ),
     ],
 )
@@ -386,7 +386,7 @@ def read_args() -> str:
             # "lbz",  - ListenBrainz mode is being deprecated.
             "reset",
         ],
-        required=True,
+        default="plex",
         help="Mode to run the script in (plex or lbz)",
     )
 

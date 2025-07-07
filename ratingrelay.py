@@ -4,6 +4,7 @@ Usage: python ratingrelay.py -m <mode>
 """
 
 import argparse
+import os
 import time
 import sys
 import logging
@@ -14,6 +15,8 @@ import sqlite3
 from dataclasses import dataclass, asdict
 from services import Plex, LastFM, ListenBrainz, make_Track, Track
 
+# Ensure the data directory exists
+os.makedirs("data", exist_ok=True)
 
 log = logging.getLogger(__name__)
 logging.basicConfig(

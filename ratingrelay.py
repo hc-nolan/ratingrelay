@@ -109,7 +109,7 @@ class Env:
         """
         value: Optional[str] = getenv(var_name)
         if not value:
-            raise ValueError(
+            raise ConfigError(
                 f"Environment variable {var_name} is not set. "
                 "Please add it and re-run the script."
             )
@@ -340,7 +340,7 @@ class ListenBrainz:
         if not all(
             val is not None and val != "" for val in (self.token, self.username)
         ):
-            raise RuntimeError(
+            raise ConfigError(
                 "One or more ListenBrainz variables are missing.\n"
                 "If you intended to use ListenBrainz, "
                 "make sure all environment variables are set."
@@ -646,7 +646,7 @@ class LastFM:
             val is not None or val != ""
             for val in (self.token, self.secret, self.username, self.password)
         ):
-            raise RuntimeError(
+            raise ConfigError(
                 "One or more Last.fm environment variables are missing.\n"
                 "If you intended to use Last.fm, make sure all environment variables are set."
             )
@@ -1186,9 +1186,9 @@ class Setup:
                 token=LFM_TOKEN,
                 secret=LFM_SECRET,
             )
-        except RuntimeError as e:
+        except ConfigError as e:
             log.warning(
-                "Got a runtime error when attempting to execute Last.fm - skipping Last.fm"
+                "Got config error when attempting to execute Last.fm - skipping Last.fm"
             )
             log.warning("Error details:")
             log.warning(e)
@@ -1200,9 +1200,9 @@ class Setup:
     def lbz() -> Optional[ListenBrainz]:
         try:
             lbz = ListenBrainz(username=LBZ_USERNAME, token=LBZ_TOKEN)
-        except RuntimeError as e:
+        except ConfigError as e:
             log.error(
-                "Got a runtime error when attempting to execute ListenBrainz - "
+                "Got config error when attempting to execute ListenBrainz - "
                 "skipping ListenBrainz"
             )
             log.error("Error details:")

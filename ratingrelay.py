@@ -182,7 +182,7 @@ def query_recording_mbid(
     Queries MusicBrainz API for a track's recording MBID.
     """
     log.info("Searching MusicBrainz for recording MBID.")
-    if track_mbid is None:
+    if track_mbid is not None:
         log.info("Using track MBID: %s", track_mbid)
         search = mbz.search_recordings(query=title, artist=artist)
     else:
@@ -615,7 +615,7 @@ class ListenBrainz:
                     return mbid
             except (IndexError, KeyError, TypeError):
                 # These exceptions mean the MBID is missing
-                return None
+                continue
         return None
 
 
@@ -646,7 +646,7 @@ class LastFM:
         Creates a connection to Last.fm using pylast
         """
         if not all(
-            val is not None or val != ""
+            val is not None and val != ""
             for val in (self.token, self.secret, self.username, self.password)
         ):
             raise ConfigError(
@@ -801,7 +801,9 @@ class Database:
     ):
         """Delete a track by its recording MBID"""
         tablename = self._validate_table_name(table)
-        self.cursor.execute(f"DELETE FROM {tablename} WHERE recordingId = ?", rec_mbid)
+        self.cursor.execute(
+            f"DELETE FROM {tablename} WHERE recordingId = ?", (rec_mbid,)
+        )
         self.conn.commit()
 
     def delete_by_id(

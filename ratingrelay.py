@@ -734,7 +734,7 @@ class Database:
             case "reset":
                 tablename = "reset"
             case _:
-                tablename = None
+                raise ValueError(f"Unrecognized table name: {table}")
         return tablename
 
     def create_tables(self):
@@ -817,33 +817,15 @@ class Database:
         """
         Check for a matching track in the database table provided
         """
-        match table:
-            case "loved":
-                tablename = "loved"
-            case "hated":
-                tablename = "hated"
-            case _:
-                log.fatal("Unrecognized table name: %s", table)
-                raise ValueError(f"Unrecognized table name: {table}")
-        result = self.cursor.execute(
-            f"SELECT id, title, artist, trackId, recordingId FROM {tablename} WHERE trackId = ?",
-            (track_mbid,),
-        )
+        tablename = self._validate_table_name(table)
+        query = f"""
+            SELECT id, title, artist, trackId, recordingId
+            FROM {tablename}
+            WHERE trackId = ? OR (title = ? AND artist = ?)
+        """
+        result = self.cursor.execute(query, (track_mbid,))
         matching_entry = result.fetchone()
-        if matching_entry:
-            return self._make_dict(matching_entry)
-        result = self.cursor.execute(
-            f"SELECT id, title, artist, trackId, recordingId FROM {tablename} WHERE title = ? AND artist = ?",
-            (
-                title,
-                artist,
-            ),
-        )
-        matching_entry = result.fetchone()
-        if matching_entry:
-            return self._make_dict(matching_entry)
-
-        return None
+        return self._make_dict(matching_entry) if matching_entry else None
 
     def _make_dict(self, db_entry: tuple) -> dict:
         """Turn a tuple from the database into a dict where column names are keys"""

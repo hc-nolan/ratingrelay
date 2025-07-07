@@ -590,7 +590,7 @@ class ListenBrainz:
         """
         Queries MusicBrainz and retrieves matching result
         """
-        query = " ".join(str(val) for val in [track.title, track.artist])
+        query = " ".join(val for val in [track.title, track.artist])
         track_search = mbz.search_recordings(
             query=query, artist=track.artist, recording=track.title
         )

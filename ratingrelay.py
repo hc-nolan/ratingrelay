@@ -209,6 +209,8 @@ class Plex:
     :param `hate_threshold`: (Optional) Integer representing the rating to consider tracks as 'hated'
     """  # noqa
 
+    _RATING_OFFSET = 0.1
+
     def __init__(
         self, url: str, music_library: str, love_threshold: int, hate_threshold: int = 0
     ):
@@ -291,7 +293,7 @@ class Plex:
 
         # The Plex >>= filter is "greater than", so we subtract from the defined
         # threshold value to effectively make it "greater than or equal to"
-        thresh = float(self.love_threshold) - 0.1
+        thresh = float(self.love_threshold) - self._RATING_OFFSET
         return self.music_library.search(
             libtype="track", filters={"userRating>>=": thresh}
         )
@@ -303,7 +305,7 @@ class Plex:
 
         # The Plex <<= filter is "less than", so we add too the defined
         # threshold value to effectively make it "less than or equal to"
-        thresh = float(self.hate_threshold) + 0.1
+        thresh = float(self.hate_threshold) + self._RATING_OFFSET
         return self.music_library.search(
             libtype="track", filters={"userRating<<=": thresh}
         )

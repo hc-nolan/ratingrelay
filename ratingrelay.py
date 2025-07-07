@@ -401,7 +401,7 @@ class ListenBrainz:
             log.info("MBID found. Submitting %s to ListenBrainz.", mbid)
             self.client.submit_user_feedback(feedback_value, mbid)
         else:
-            log.info("No MBID found. Unable to submit to ListenBrainz.")
+            log.warning("No MBID found. Unable to submit to ListenBrainz: %s", track)
 
     def reset(self, track: Track):
         """
@@ -614,6 +614,7 @@ class ListenBrainz:
                     mbid = result["id"]
                     return mbid
             except (IndexError, KeyError, TypeError):
+                # These exceptions mean the MBID is missing
                 return None
         return None
 
@@ -881,6 +882,14 @@ def track_from_plex(plex_track: PlexTrack, db: Database, rating: str) -> Track:
         rec_mbid = query_recording_mbid(
             track_mbid=track_mbid, title=title, artist=artist
         )
+        if rec_mbid is None:
+            log.warning(
+                "No recording MBID returned by MusicBrainz for: %s",
+                (
+                    title,
+                    artist,
+                ),
+            )
 
     return Track(title=title, artist=artist, mbid=rec_mbid, track_mbid=track_mbid)
 

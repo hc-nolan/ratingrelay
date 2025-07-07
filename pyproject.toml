@@ -1,7 +1,7 @@
 [project]
 name = "ratingrelay"
-version = "0.4.0"
-description = "Add your description here"
+version = "1.0.0"
+description = "Relay track ratings from Plex to ListenBrainz and/or Last.FM"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [

@@ -155,7 +155,7 @@ PLEX_HATE_THRESHOLD = Env.get("HATE_THRESHOLD")
 DATABASE = Env.get_required("DATABASE")
 
 mbz.set_useragent(
-    "RatingRelay", "v0.4", contact="https://github.com/hc-nolan/ratingrelay"
+    "RatingRelay", "v1.0", contact="https://github.com/hc-nolan/ratingrelay"
 )
 
 

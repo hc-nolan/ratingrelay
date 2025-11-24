@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Optional
+
 from .plex import Plex
 from .database import Database
 from .lastfm import LastFM

@@ -1,5 +1,6 @@
-import logging
 from typing import Optional
+import logging
+
 import musicbrainzngs as mbz
 
 
@@ -14,10 +15,10 @@ def query_recording_mbid(
     """
     log.info("Searching MusicBrainz for recording MBID.")
     if track_mbid is not None:
-        log.info("Using track MBID: %s", track_mbid)
+        log.info(f"Using track MBID: {track_mbid}")
         search = mbz.search_recordings(query=title, artist=artist)
     else:
-        log.info("track_mbid is empty, using title and artist: %s - %s", title, artist)
+        log.info(f"track_mbid is empty, using title and artist: {title} - {artist}")
         search = mbz.search_recordings(query=f"tid:{track_mbid}")
     recording = search.get("recording-list")
 

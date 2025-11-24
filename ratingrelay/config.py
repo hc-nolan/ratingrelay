@@ -1,13 +1,14 @@
+from enum import Enum
+import sys
 from typing import Optional
 from functools import lru_cache
 from logging.config import dictConfig
 import logging
+
 from pydantic import BaseModel, HttpUrl, field_validator
 from pydantic_settings import BaseSettings
-import httpx
 from pydantic_core import ValidationError
-from enum import Enum
-import sys
+import httpx
 import musicbrainzngs as mbz
 
 
@@ -124,4 +125,4 @@ class LogConfig(BaseModel):
 
 
 dictConfig(LogConfig().model_dump())
-logger = logging.getLogger("ratingrelay")
+log = logging.getLogger("ratingrelay")

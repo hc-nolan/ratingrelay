@@ -1,7 +1,9 @@
 from typing import Optional
 import logging
+
 import liblistenbrainz as liblbz
 import musicbrainzngs as mbz
+
 from .exceptions import ConfigError
 from .track import Track
 from .config import Settings
@@ -24,6 +26,9 @@ class ListenBrainz:
         self.client = self._connect()
 
     def _check_missing(self):
+        """
+        Check for missing environment variables
+        """
         missing = []
         if not self.token:
             missing.append("token")
@@ -40,8 +45,6 @@ class ListenBrainz:
     def _connect(self) -> liblbz.ListenBrainz:
         """
         Creates a connection to ListenBrainz
-        :return None if any environment variables are missing,
-        the ListenBrainz client otherwise
         """
         client = liblbz.ListenBrainz()
         client.set_auth_token(self.token)
@@ -55,8 +58,7 @@ class ListenBrainz:
         Handler method for `love()` and `hate()`. Submits track feedback to
         Listenbrainz.
 
-        Args:
-            `feedback`: One of the following strings: `love`, `hate`
+        `feedback` should be one of the following strings: `love`, `hate`
         """
         if feedback == "love":
             log_str = "Loving"
@@ -71,26 +73,23 @@ class ListenBrainz:
 
         if track.mbid is None:
             log.info(
-                "%s: %s by %s - Checking for track MBID",
-                log_str,
-                track.title,
-                track.artist,
+                f"{log_str}: {track.title} by {track.artist} - Checking for track MBID",
             )
             mbid = self._get_track_mbid(track)
         else:
             mbid = track.mbid
 
         if mbid:
-            log.info("MBID found. Submitting %s to ListenBrainz.", mbid)
+            log.info(f"MBID found. Submitting {mbid} to ListenBrainz.")
             self.client.submit_user_feedback(feedback_value, mbid)
         else:
-            log.warning("No MBID found. Unable to submit to ListenBrainz: %s", track)
+            log.warning(f"No MBID found. Unable to submit to ListenBrainz: {track}")
 
     def reset(self, track: Track):
         """
         Reset a track's ListenBrainz rating to 0.
         """
-        log.info("ListenBrainz - resetting track: %s", track)
+        log.info(f"ListenBrainz - resetting track: {track}")
         self.client.submit_user_feedback(0, track.get("track_mbid"))
 
     def love(self, track: Track):
@@ -110,12 +109,7 @@ class ListenBrainz:
         Compares the list of tracks from Plex to already loved/hated
         ListenBrainz tracks; returns the tracks that have not yet been loved/hated
 
-        Args:
-            `rating`: "love" or "hate"
-            `track_list`: List of tracks found from Plex
-
-        Returns:
-            Subset of `track_list` containing items not in `self.loves`/`self.hates`
+        `rating` should be either "love" or "hate"
         """
         if rating == "love":
             lbz_tracks = self.loves
@@ -137,13 +131,8 @@ class ListenBrainz:
         ListenBrainz tracks; returns the tracks that have been loved/hated
         on ListenBrainz but no longer meet the rating threshold
 
-        Args:
-            `rating`: "love" or "hate"
-            `track_list`: List of tracks found from Plex
-
-        Returns:
-            Subset of `track_list` containing items in `self.loves`/`self.hates` but not in `track_list`
-        """  # noqa
+        `rating` should be either "love" or "hate"
+        """
         if rating == "love":
             lbz_tracks = self.loves
         elif rating == "hate":
@@ -162,12 +151,6 @@ class ListenBrainz:
         """
         Compares the list of tracks from Plex to already loved ListenBrainz
         tracks; returns the tracks that have not yet been loved
-
-        Args:
-            `track_list`: List of tracks found from Plex
-
-        Returns:
-            Subset of `track_list` containing items not in `self.loves`
         """
         return self._new(rating="love", track_list=track_list)
 
@@ -175,12 +158,6 @@ class ListenBrainz:
         """
         Compares the list of tracks from Plex to already hated ListenBrainz
         tracks; returns the tracks that have not yet been hated
-
-        Args:
-            `track_list`: List of tracks found from Plex
-
-        Returns:
-            Subset of `track_list` containing items not in `self.hates`
         """
         return self._new(rating="hate", track_list=track_list)
 
@@ -189,12 +166,6 @@ class ListenBrainz:
         Compares the list of tracks from Plex to already loved ListenBrainz
         tracks; returns the tracks that are loved on ListenBrainz but no longer
         meet the rating threshold on Plex.
-
-        Args:
-            `track_list`: List of tracks found from Plex
-
-        Returns:
-            Subset of `self.loves` containing items not in `track_list`
         """
         return self._old(rating="love", track_list=track_list)
 
@@ -203,12 +174,6 @@ class ListenBrainz:
         Compares the list of tracks from Plex to already hated ListenBrainz
         tracks; returns the tracks that are hated on ListenBrainz but no longer
         meet the rating threshold on Plex.
-
-        Args:
-            `track_list`: List of tracks found from Plex
-
-        Returns:
-            Subset of `self.hates` containing items not in `track_list`
         """
         return self._old(rating="hate", track_list=track_list)
 
@@ -228,13 +193,10 @@ class ListenBrainz:
 
     def _get_all_feedback(self, score: int):
         """
-        Retrieve all tracks the user has submitted feedback for
+        Retrieve all tracks the user has submitted feedback for.
 
-        Args:
-            `score`: Integer representing the user feedback; `1` for love, `-1` for hate.
-
-        Returns:
-            `set` of all tracks found on ListenBrainz account
+        `score` should be an integer representing the user feedback;
+        `1` for love, `-1` for hate.
         """
         all_loves = set()
         offset = 0
@@ -262,9 +224,8 @@ class ListenBrainz:
                     all_loves.add(track_tuple)
                 except TypeError:
                     log.warning(
-                        "Malformed data in response from MusicBrainz; "
-                        "track title and/or artist unavailable for %s",
-                        track["recording_mbid"],
+                        f"Malformed data in response from MusicBrainz; "
+                        f"track title and/or artist unavailable for {track['recording_mbid']}"
                     )
 
             if len(user_loves) < count:

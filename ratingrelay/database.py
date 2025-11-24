@@ -1,9 +1,11 @@
 from typing import Optional
 import sqlite3
 
+from .config import Settings
+
 
 class Database:
-    def __init__(self, settings):
+    def __init__(self, settings: Settings):
         self.conn = sqlite3.connect(settings.database)
         self.cursor = self.conn.cursor()
         self.create_tables()
@@ -85,7 +87,9 @@ class Database:
         rec_mbid: str,
         table: str,
     ):
-        """Delete a track by its recording MBID"""
+        """
+        Delete a track by its recording MBID
+        """
         tablename = self._validate_table_name(table)
         self.cursor.execute(
             f"DELETE FROM {tablename} WHERE recordingId = ?", (rec_mbid,)
@@ -97,7 +101,9 @@ class Database:
         db_id: int,
         table: str,
     ):
-        """Delete a track by its ID (primary key)"""
+        """
+        Delete a track by its ID (primary key)
+        """
         tablename = self._validate_table_name(table)
         self.cursor.execute(f"DELETE FROM {tablename} WHERE ID = ?", (db_id,))
         self.conn.commit()
@@ -119,7 +125,9 @@ class Database:
         return self._make_dict(matching_entry) if matching_entry else None
 
     def _make_dict(self, db_entry: tuple) -> dict:
-        """Turn a tuple from the database into a dict where column names are keys"""
+        """
+        Turn a tuple from the database into a dict where column names are keys
+        """
 
         return {
             "id": db_entry[0],
@@ -130,6 +138,9 @@ class Database:
         }
 
     def get_all_tracks(self, table: str) -> list[dict]:
+        """
+        Return all tracks in the database
+        """
         tablename = self._validate_table_name(table)
         result = self.cursor.execute(
             f"SELECT id, title, artist, trackId, recordingId FROM {tablename}"

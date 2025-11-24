@@ -1,5 +1,7 @@
 import logging
+
 import pylast
+
 from .exceptions import ConfigError
 from .track import Track
 from .config import Settings
@@ -25,6 +27,9 @@ class LastFM:
         self.new_love_count = 0
 
     def _check_missing(self):
+        """
+        Check for missing configuration variables
+        """
         missing = []
         if not self.token:
             missing.append("token")
@@ -35,9 +40,7 @@ class LastFM:
         if not self.password:
             missing.append("password")
         if missing:
-            raise ConfigError(
-                f"One or more ListenBrainz variables are missing: {missing}"
-            )
+            raise ConfigError(f"One or more LastFM variables are missing: {missing}")
 
     def __str__(self):
         return "LastFM"
@@ -60,7 +63,7 @@ class LastFM:
         """
         Loves a single track
         """
-        # log.info("Loving: %s by %s", track.title, track.artist)
+        log.info(f"Loving: {track.title} by {track.artist}")
         lastfm_track = self.client.get_track(track.artist, track.title)
         lastfm_track.love()
         self.new_love_count += 1
@@ -69,7 +72,7 @@ class LastFM:
         """
         Un-loves a single track
         """
-        log.info("Last.FM - resetting track: %s", track)
+        log.info(f"Last.FM - resetting track: {track}")
         lastfm_track = self.client.get_track(track.artist, track.title)
         lastfm_track.unlove()
 
@@ -77,12 +80,6 @@ class LastFM:
         """
         Compares the list of tracks from Plex above the love threshold to
         the user's already loved Last.fm tracks
-
-        Args:
-            track_list: List of Tracks from Plex to compare against
-
-        Returns:
-            list[Track]: List of Tracks that have not been loved yet
         """
         track_list.sort(key=lambda track: track.title)
         # grab tracks user has already loved
@@ -95,7 +92,7 @@ class LastFM:
             for track in track_list
             if (track.title.lower(), track.artist.lower()) not in old_loves
         ]
-        log.info("Found %s new tracks to submit to Last.fm.", len(new))
+        log.info(f"Found {len(new)} new tracks to submit to Last.fm.")
         return new
 
     def all_loves(self) -> list[Track]:

@@ -2,6 +2,7 @@ from typing import Optional
 from pathlib import Path
 from os import getenv
 import logging
+
 from .exceptions import ConfigError
 
 log = logging.getLogger("ratingrelay")
@@ -19,7 +20,7 @@ class Env:
         """
         Writes or updates an environment variable
         """
-        log.info("Writing new %s to config.env.", name)
+        log.info(f"Writing new {name} to config.env.")
         env_file = Env.get_env_file()
 
         with open(env_file, "r", encoding="utf-8") as f:
@@ -32,7 +33,7 @@ class Env:
                 updated = True
 
         if not updated:
-            log.info("No saved %s found. Adding it now.", name)
+            log.info(f"No saved {name} found. Adding it now.")
             # If above did not produce an update,
             # it means no line '<NAME>=' was found; append it
             lines.append("\n" + name + "=" + value + "\n")
@@ -41,7 +42,7 @@ class Env:
         if updated:
             with open(env_file, "w", encoding="utf-8") as f:
                 f.writelines(lines)
-            log.info("Updated saved %s value.", name)
+            log.info(f"Updated saved {name} value.")
         else:
             raise IOError(
                 f"Unable to write to env file. Cannot continue without {name}.\n"
@@ -55,7 +56,7 @@ class Env:
         """
         env_file = Path(__file__).parent.parent / "config.env"
         if env_file.exists():
-            log.info("Found .env file at: %s", env_file)
+            log.info(f"Found .env file at: {env_file}")
             return env_file
         else:
             raise FileNotFoundError(
@@ -80,16 +81,18 @@ class Env:
     @staticmethod
     def get_required_int(var_name: str) -> int:
         """
-        Wraps get_required() - raises an exception if an integer value is not present
-        """  # noqa:E501
+        Wraps get_required() - raises an exception if an integer
+        value is not present
+        """
         value = Env.get_required(var_name)
         return int(value)
 
     @staticmethod
     def get_required_bool(var_name: str) -> bool:
         """
-        Wraps get_required() - raises an exception if a boolean value is not present
-        """  # noqa:E501
+        Wraps get_required() - raises an exception if a boolean value
+        is not present
+        """
         value = Env.get_required(var_name)
         return bool(value)
 

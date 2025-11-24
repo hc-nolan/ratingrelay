@@ -1,8 +1,10 @@
 import os
 import time
 from typing import Optional
+
 from rich.prompt import Prompt
-from .config import settings, logger, Settings
+
+from .config import settings, log, Settings
 from .plex import Plex
 from .lastfm import LastFM
 from .listenbrainz import ListenBrainz
@@ -14,7 +16,9 @@ from .relay import relay
 
 
 def setup_lastfm(settings: Settings) -> Optional[LastFM]:
-    """Set up Last.fm service if credentials are provided."""
+    """
+    Set up Last.fm service if credentials are provided.
+    """
     if not all(
         [
             settings.lastfm_username,
@@ -23,7 +27,7 @@ def setup_lastfm(settings: Settings) -> Optional[LastFM]:
             settings.lastfm_secret,
         ]
     ):
-        logger.info("Last.fm credentials not provided - skipping Last.fm")
+        log.info("Last.fm credentials not provided - skipping Last.fm")
         return None
 
     try:
@@ -31,26 +35,26 @@ def setup_lastfm(settings: Settings) -> Optional[LastFM]:
 
         return lfm
     except ConfigError as e:
-        logger.warning("Failed to configure Last.fm - skipping Last.fm")
-        logger.warning(f"Error details: {e}")
-        logger.warning("This can be safely ignored if you do not wish to use Last.fm")
+        log.warning("Failed to configure Last.fm - skipping Last.fm")
+        log.warning(f"Error details: {e}")
+        log.warning("This can be safely ignored if you do not wish to use Last.fm")
         return None
 
 
 def setup_listenbrainz(settings: Settings) -> Optional[ListenBrainz]:
-    """Set up ListenBrainz service if credentials are provided."""
+    """
+    Set up ListenBrainz service if credentials are provided.
+    """
     if not all([settings.listenbrainz_username, settings.listenbrainz_token]):
-        logger.info("ListenBrainz credentials not provided - skipping ListenBrainz")
+        log.info("ListenBrainz credentials not provided - skipping ListenBrainz")
         return None
 
     try:
         return ListenBrainz(settings)
     except ConfigError as e:
-        logger.error("Failed to configure ListenBrainz - skipping ListenBrainz")
-        logger.error(f"Error details: {e}")
-        logger.error(
-            "This can be safely ignored if you do not wish to use ListenBrainz"
-        )
+        log.error("Failed to configure ListenBrainz - skipping ListenBrainz")
+        log.error(f"Error details: {e}")
+        log.error("This can be safely ignored if you do not wish to use ListenBrainz")
         return None
 
 
@@ -73,7 +77,7 @@ def main():
     os.makedirs("data", exist_ok=True)  # ensure data directory exists
 
     settings_json = settings.model_dump_json(indent=2)
-    logger.info(f"Configured settings:\n{settings_json}")
+    log.info(f"Configured settings:\n{settings_json}")
 
     services = setup_services(settings)
     match settings.mode:
@@ -88,4 +92,4 @@ def main():
                 reset(services)
 
     exec_time = time.perf_counter() - start_time
-    logger.info("RatingRelay finished in %.2f seconds.", exec_time)
+    log.info(f"RatingRelay finished in {exec_time:2f} seconds.")

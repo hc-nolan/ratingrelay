@@ -1,13 +1,15 @@
 import logging
 from typing import Optional
+
 from rich.prompt import IntPrompt, Prompt
 from rich import print
 from plexapi.myplex import MyPlexAccount
 from plexapi.server import PlexServer
 from plexapi.library import LibrarySection
 from plexapi.audio import Track as PlexTrack
+
 from .env import Env
-from .musicbrainz import query_recording_mbid
+from .config import Settings
 
 
 log = logging.getLogger("ratingrelay")
@@ -16,15 +18,11 @@ log = logging.getLogger("ratingrelay")
 class Plex:
     """
     Handles all interaction with Plex server
-    :param `url`: URL for the Plex server
-    :param `music_library`: Name of the music library
-    :param `love_threshold`: Integer representing the rating to consider tracks as 'loved'
-    :param `hate_threshold`: (Optional) Integer representing the rating to consider tracks as 'hated'
-    """  # noqa
+    """
 
     _RATING_OFFSET = 0.1
 
-    def __init__(self, settings):
+    def __init__(self, settings: Settings):
         self.url = str(settings.plex_server_url)
         self.love_threshold = settings.love_threshold
         self.hate_threshold = settings.hate_threshold
@@ -34,9 +32,10 @@ class Plex:
 
     def _verify_auth(self):
         """
-        Checks if self.token is valid for authenticating to Plex. If token is not valid,
-        proceeds with interactive authentication to retrieve a new token.
-        """  # noqa: E501
+        Checks if self.token is valid for authenticating to Plex.
+        If token is not valid, proceeds with interactive authentication
+        to retrieve a new token.
+        """
         if not self.token:
             log.info(
                 "No saved PLEX_TOKEN found. Proceeding with manual authentication."
@@ -50,9 +49,9 @@ class Plex:
 
     def _manual_auth(self):
         """
-        Handles the manual authentication process. Retrieves the valid token after
-        authentication for future use.
-        """  # noqa: E501
+        Handles the manual authentication process.
+        Retrieves the valid token after authentication for future use.
+        """
         print(
             "Please enter your Plex authentication details. "
             "This should only be required the first time the program is run."
@@ -95,8 +94,8 @@ class Plex:
 
     def get_loved_tracks(self) -> list[PlexTrack]:
         """
-        Queries a given library for all tracks meeting the `LOVE_THRESHOLD` defined in `.env`
-        """  # noqa: E501
+        Queries a given library for all tracks meeting settings.love_threshold
+        """
 
         # The Plex >>= filter is "greater than", so we subtract from the defined
         # threshold value to effectively make it "greater than or equal to"
@@ -107,8 +106,8 @@ class Plex:
 
     def get_hated_tracks(self) -> list[PlexTrack]:
         """
-        Queries a given library for all tracks meeting the `HATE_THRESHOLD` defined in `.env`
-        """  # noqa: E501
+        Queries a given library for all tracks meeting settings.hate_threshold
+        """
 
         # The Plex <<= filter is "less than", so we add to the defined
         # threshold value to effectively make it "less than or equal to"
@@ -116,18 +115,6 @@ class Plex:
         return self.music_library.search(
             libtype="track", filters={"userRating<<=": thresh}
         )
-
-    def get_lookup_table(self) -> dict:
-        """
-        Create a lookup table for every track in the Plex database; keys are
-        a tuple of the lowercase track title and artist name; values are the
-        PlexTrack object.
-        """  # noqa
-        lookup = {}
-        for item in self.music_library.all(libtype="track"):
-            key = (item.title.lower(), item.artist().title.lower())
-            lookup[key] = item
-        return lookup
 
     def submit_rating(self, track: PlexTrack, rating: int):
         """
@@ -137,12 +124,14 @@ class Plex:
 
     @staticmethod
     def parse_track_mbid(track: PlexTrack) -> Optional[str]:
-        """Parses track MBID from a Plex track object"""
-        log.info("Trying to grab MBID from PlexTrack: %s", track.title)
+        """
+        Parses track MBID from a Plex track object
+        """
+        log.info(f"Trying to grab MBID from PlexTrack: {track.title}")
         try:
             mbid = track.guids[0].id
             mbid = mbid.removeprefix("mbid://")
-            log.info("Found track ID from PlexTrack: %s.", mbid)
+            log.info(f"Found track ID from PlexTrack: {mbid}.")
         except IndexError:
             mbid = None
             log.warning("No track MBID found in PlexTrack.")

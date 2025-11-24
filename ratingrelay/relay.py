@@ -1,6 +1,8 @@
 from typing import Optional
 import logging
+
 from plexapi.audio import Track as PlexTrack
+
 from .services import Services
 from .config import Settings
 from .listenbrainz import ListenBrainz
@@ -65,7 +67,7 @@ def plex_relay_loves(services: Services):
     plex_loves = to_tracks(
         plex_tracks=plex.get_loved_tracks(), services=services, rating="loved"
     )
-    log.info("Plex returned %s loved tracks.", len(plex_loves))
+    log.info(f"Plex returned {len(plex_loves)} loved tracks.")
 
     for track in plex_loves:
         db.add_track(
@@ -78,32 +80,25 @@ def plex_relay_loves(services: Services):
 
         if lbz:
             if track.mbid not in lbz_loves:
-                log.info("ListenBrainz - New love: %s by %s", track.title, track.artist)
+                log.info(f"ListenBrainz - New love: {track.title} by {track.artist}")
                 lbz.love(track)
                 lbz_added += 1
             else:
                 log.info(
-                    "ListenBrainz - Track already loved: %s by %s",
-                    track.title,
-                    track.artist,
+                    f"ListenBrainz - Track already loved: {track.title} by {track.artist}"
                 )
 
         if lfm:
             if (track.title.lower(), track.artist.lower()) not in lfm_loves:
-                log.info("Last.FM - New love: %s by %s", track.title, track.artist)
+                log.info(f"Last.FM - New love: {track.title} by {track.artist}")
                 lfm.love(track)
                 lfm_added += 1
             else:
                 log.info(
-                    "Last.FM - Track already loved: %s by %s",
-                    track.title,
-                    track.artist,
+                    f"Last.FM - Track already loved: {track.title} by {track.artist}"
                 )
-
     log.info(
-        "Finished adding loves:     ListenBrainz: %-10s Last.FM: %-10s",
-        lbz_added,
-        lfm_added,
+        f"Finished adding loves:     ListenBrainz: {lbz_added:<10} Last.FM: {lfm_added:<10}"
     )
 
     plex_reset(services=services, tracks=plex_loves, table="loved")
@@ -134,13 +129,13 @@ def plex_relay_hates(services: Services):
 
     log.info("Grabbing existing ListenBrainz hated tracks.")
     lbz_hates = lbz.all_hates()
-    log.info("ListenBrainz returned %s existing hated tracks", len(lbz_hates))
+    log.info(f"ListenBrainz returned {len(lbz_hates)} existing hated tracks")
     lbz_hated_mbids = {t.mbid for t in lbz_hates}
 
     plex_hates = to_tracks(
         plex_tracks=plex.get_hated_tracks(), services=services, rating="hated"
     )
-    log.info("Plex returned %s hated tracks.", len(plex_hates))
+    log.info(f"Plex returned {len(plex_hates)} hated tracks.")
 
     for track in plex_hates:
         # insert the track if it's new, or ignore if there is a matching
@@ -154,11 +149,11 @@ def plex_relay_hates(services: Services):
         )
 
         if track.mbid not in lbz_hated_mbids:
-            log.info("Hating %s by %s", track.title, track.artist)
+            log.info(f"Hating {track.title}, {track.artist}")
             lbz.hate(track)
             lbz_added += 1
 
-    log.info("Finished adding hates:   ListenBrainz: %s", lbz_added)
+    log.info(f"Finished adding hates:   ListenBrainz: {lbz_added}")
 
     plex_reset(services=services, tracks=plex_hates, table="hated")
     return {"plex_hates": len(plex_hates), "lbz_added": lbz_added}
@@ -185,9 +180,7 @@ def plex_reset(services: Services, tracks: set[Track], table: str):
         if track.get("rec_mbid") not in plex_ids:
             reset_count += 1
             log.info(
-                "Track no longer %s on Plex: %s",
-                table,
-                (track.get("title"), track.get("artist")),
+                f"Track no longer {table} on Plex: {(track.get('title'), track.get('artist'))}"
             )
             # move from current table to reset table
             db.delete_by_rec_id(rec_mbid=track.get("rec_mbid"), table=table)
@@ -202,23 +195,14 @@ def plex_reset(services: Services, tracks: set[Track], table: str):
 def print_stats(love: dict, hate: Optional[dict]):
     log.info("STATISTICS:")
     log.info(
-        "%-12s\tLoves: %-10s\tHates: %-10s",
-        "Plex:",
-        love.get("plex_loves"),
-        hate.get("plex_hates"),
+        f"{'Plex:':<12}\tLoves: {love.get('plex_loves'):<10}\tHates: {hate.get('plex_hates'):<10}"
     )
     log.info("ADDITIONS:")
     log.info(
-        "%-12s\tLoves: %-10s\tHates: %-10s\t",
-        "ListenBrainz:",
-        love.get("lbz_added"),
-        hate.get("lbz_added"),
+        f"{'ListenBrainz:':<12}\tLoves: {love.get('lbz_added'):<10}\tHates: {hate.get('lbz_added'):<10}\t"
     )
     log.info(
-        "%-12s\tLoves: %-10s\tHates: %-10s\t",
-        "Last.FM:",
-        love.get("lfm_added"),
-        "N/A",
+        f"{'Last.FM:':<12}\tLoves: {love.get('lfm_added'):<10}\tHates: {'N/A':<10}\t"
     )
 
 
@@ -274,11 +258,7 @@ def track_from_plex(
         )
         if rec_mbid is None:
             log.warning(
-                "No recording MBID returned by MusicBrainz for: %s",
-                (
-                    title,
-                    artist,
-                ),
+                f"No recording MBID returned by MusicBrainz for: {(title, artist)}"
             )
 
     return Track(title=title, artist=artist, mbid=rec_mbid, track_mbid=track_mbid)
@@ -291,7 +271,7 @@ def lbz_get_loves(lbz: ListenBrainz) -> set[str]:
     """
     log.info("Grabbing all existing loved tracks from ListenBrainz.")
     lbz_loves = lbz.all_loves()
-    log.info("ListenBrainz returned %s loved tracks.", len(lbz_loves))
+    log.info(f"ListenBrainz returned {len(lbz_loves)} loved tracks.")
     lbz_loved_mbids = {t.mbid for t in lbz_loves}
     return lbz_loved_mbids
 
@@ -303,7 +283,7 @@ def lbz_get_hates(lbz: ListenBrainz) -> set[str]:
     """
     log.info("Grabbing all existing hated tracks from ListenBrainz.")
     lbz_hates = lbz.all_hates()
-    log.info("ListenBrainz returned %s hated tracks.", len(lbz_hates))
+    log.info(f"ListenBrainz returned {len(lbz_hates)} hated tracks.")
     lbz_hated_mbids = {t.mbid for t in lbz_hates}
     return lbz_hated_mbids
 
@@ -316,7 +296,7 @@ def lfm_get_loves(lfm: LastFM) -> list[tuple]:
     log.info("Grabbing all existing loved tracks from LastFM.")
     lfm_loves = lfm.all_loves()
     lfm_loves_tuples = [(t.title.lower(), t.artist.lower()) for t in lfm_loves]
-    log.info("Last.FM returned %s loved tracks.", len(lfm_loves))
+    log.info(f"Last.FM returned {len(lfm_loves)} loved tracks.")
     return lfm_loves_tuples
 
 
@@ -331,29 +311,17 @@ def lbz_relay(services: Services):
         )
         return
 
-    # log.info(
-    #     "Grabbing all Plex track MBIDs. "
-    #     "This may take some time depending on the size of your library."
-    # )
-    # plex_lookup = services.plex.get_lookup_table()
-    # log.info(f"Plex returned {len(plex_lookup)} track MBIDs.")
-    plex_lookup = None
-
-    lbz_love_stats = lbz_relay_generic(
-        services=services, plex_lookup=plex_lookup, rating="love"
-    )
+    lbz_love_stats = lbz_relay_generic(services=services, rating="love")
     if services.plex.hate_threshold is None:
         lbz_hate_stats = {"lbz_hates": 0, "plex_added": 0}
     else:
-        lbz_hate_stats = lbz_relay_generic(
-            services=services, plex_lookup=plex_lookup, rating="hate"
-        )
+        lbz_hate_stats = lbz_relay_generic(services=services, rating="hate")
 
     log.info("Finished relaying tracks from ListenBrainz to Plex")
     log.info(f"Added:\tLoves: {lbz_love_stats}\tHates: {lbz_hate_stats}")
 
 
-def lbz_relay_generic(services: Services, plex_lookup: dict, rating: str):
+def lbz_relay_generic(services: Services, rating: str):
     """
     Relay loved or hated tracks from ListenBrainz to Plex
     """
@@ -366,7 +334,7 @@ def lbz_relay_generic(services: Services, plex_lookup: dict, rating: str):
     if rating == "love":
         log.info("Grabbing all existing loved tracks from ListenBrainz.")
         lbz_items = lbz.all_loves()
-        log.info("ListenBrainz returned %s loved tracks.", len(lbz_items))
+        log.info(f"ListenBrainz returned {len(lbz_items)} loved tracks.")
         log.info("Querying Plex for loved tracks")
         plex_items = to_tracks(
             plex_tracks=plex.get_loved_tracks(), services=services, rating="loved"
@@ -374,7 +342,7 @@ def lbz_relay_generic(services: Services, plex_lookup: dict, rating: str):
     elif rating == "hate":
         log.info("Grabbing all existing hated tracks from ListenBrainz.")
         lbz_items = lbz.all_hates()
-        log.info("ListenBrainz returned %s hated tracks.", len(lbz_items))
+        log.info(f"ListenBrainz returned {len(lbz_items)} hated tracks.")
         log.info("Querying Plex for loved tracks")
         plex_items = to_tracks(
             plex_tracks=plex.get_hated_tracks(), services=services, rating="hated"

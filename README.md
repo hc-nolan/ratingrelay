@@ -10,9 +10,10 @@ The script will un-love/hate tracks, but only ones that it added. This way, if y
 
 # Usage
 
-Fill out the required values. If using Docker, these are in `docker-compose.yml`. Otherwise, rename `env.example` to `.env` and set them there.
+To run the script, you must set a number of configuration values in a file named `config.env` in the root of the repository. You can use `config.env.example` as a starting point.
 
-- `SERVER_URL`: the URL of your Plex server
+
+- `PLEX_SERVER_URL`: the URL of your Plex server
 - `MUSIC_LIBRARY`: by default, this is set to "Music". If your library is named something else, change this value.
 - `LOVE_THRESHOLD`: by default, this is set to 10 (5 stars). Ratings are out of 10, so 1 star in the Plex UI = 2/10.
   - (optional) `HATE_THRESHOLD`: If you want to use hated tracks with ListenBrainz, uncomment this.

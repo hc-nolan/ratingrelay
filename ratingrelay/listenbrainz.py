@@ -1,6 +1,5 @@
 from typing import Optional
 import logging
-import time
 import liblistenbrainz as liblbz
 import musicbrainzngs as mbz
 from .exceptions import ConfigError
@@ -23,8 +22,6 @@ class ListenBrainz:
         self._check_missing()
 
         self.client = self._connect()
-        self.min_delay: Optional[float] = 0.5
-        self.last_req_time: Optional[float] = None
 
     def _check_missing(self):
         missing = []
@@ -85,22 +82,9 @@ class ListenBrainz:
 
         if mbid:
             log.info("MBID found. Submitting %s to ListenBrainz.", mbid)
-            self._wait_if_needed()
             self.client.submit_user_feedback(feedback_value, mbid)
-            self.last_req_time = time.time()
         else:
             log.warning("No MBID found. Unable to submit to ListenBrainz: %s", track)
-
-    def _wait_if_needed(self):
-        """
-        Used to enforce rate limiting; ensures minimum delay between subsequent
-        requests.
-        """
-        if self.last_req_time is not None:
-            last = time.time() - self.last_req_time
-            if last < self.min_delay:
-                log.info("Waiting...")
-                time.sleep(self.min_delay - last)
 
     def reset(self, track: Track):
         """

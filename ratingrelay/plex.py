@@ -7,6 +7,7 @@ from plexapi.server import PlexServer
 from plexapi.library import LibrarySection
 from plexapi.audio import Track as PlexTrack
 from .env import Env
+from .musicbrainz import query_recording_mbid
 
 
 log = logging.getLogger("ratingrelay")
@@ -109,12 +110,24 @@ class Plex:
         Queries a given library for all tracks meeting the `HATE_THRESHOLD` defined in `.env`
         """  # noqa: E501
 
-        # The Plex <<= filter is "less than", so we add too the defined
+        # The Plex <<= filter is "less than", so we add to the defined
         # threshold value to effectively make it "less than or equal to"
         thresh = float(self.hate_threshold) + self._RATING_OFFSET
         return self.music_library.search(
             libtype="track", filters={"userRating<<=": thresh}
         )
+
+    def get_lookup_table(self) -> dict:
+        """
+        Create a lookup table for every track in the Plex database; keys are
+        a tuple of the lowercase track title and artist name; values are the
+        PlexTrack object.
+        """  # noqa
+        lookup = {}
+        for item in self.music_library.all(libtype="track"):
+            key = (item.title.lower(), item.artist().title.lower())
+            lookup[key] = item
+        return lookup
 
     def submit_rating(self, track: PlexTrack, rating: int):
         """

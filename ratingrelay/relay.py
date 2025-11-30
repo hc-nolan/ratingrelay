@@ -45,7 +45,7 @@ def plex_relay(services: Services):
     print_stats(love=plex_love_stats, hate=plex_hate_stats)
 
 
-def plex_relay_loves(services: Services):
+def plex_relay_loves(services: Services) -> dict:
     """
     Relays loved track ratings from Plex to LastFM and/or ListenBrainz
     """
@@ -110,7 +110,7 @@ def plex_relay_loves(services: Services):
     }
 
 
-def plex_relay_hates(services: Services):
+def plex_relay_hates(services: Services) -> dict:
     """
     Relays hated track ratings from Plex to ListenBrainz.
     LastFM does not support hated tracks.
@@ -260,6 +260,7 @@ def track_from_plex(
             log.warning(
                 f"No recording MBID returned by MusicBrainz for: {(title, artist)}"
             )
+            return
 
     return Track(title=title, artist=artist, mbid=rec_mbid, track_mbid=track_mbid)
 
@@ -321,12 +322,11 @@ def lbz_relay(services: Services):
     log.info(f"Added:\tLoves: {lbz_love_stats}\tHates: {lbz_hate_stats}")
 
 
-def lbz_relay_generic(services: Services, rating: str):
+def lbz_relay_generic(services: Services, rating: str) -> int:
     """
     Relay loved or hated tracks from ListenBrainz to Plex
     """
     log.info(f"Relaying {rating}d tracks from ListenBrainz.")
-    plex = services.plex
     lbz = services.lbz
 
     plex_added = 0

@@ -6,7 +6,7 @@ from logging.config import dictConfig
 import logging
 
 from pydantic import BaseModel, HttpUrl, field_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import SettingsConfigDict, BaseSettings
 from pydantic_core import ValidationError
 import httpx
 import musicbrainzngs as mbz
@@ -61,8 +61,7 @@ class Settings(BaseSettings):
                 f"Please check the URL and ensure the server is running. Error: {e}"
             )
 
-    class Config:
-        env_file: str = "config.env"
+    model_config = SettingsConfigDict(env_file="config.env")
 
 
 try:

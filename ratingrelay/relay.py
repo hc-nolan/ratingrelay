@@ -25,7 +25,7 @@ def relay(services: Services, settings: Settings):
     """
     plex_relay(services)
     if settings.two_way:
-        lbz_relay(services)
+        # lbz_relay(services)
         lfm_relay(services)
 
 
@@ -335,74 +335,19 @@ def lbz_relay_generic(services: Services, rating: str):
         log.info("Grabbing all existing loved tracks from ListenBrainz.")
         lbz_items = lbz.all_loves()
         log.info(f"ListenBrainz returned {len(lbz_items)} loved tracks.")
-        log.info("Querying Plex for loved tracks")
-        plex_items = to_tracks(
-            plex_tracks=plex.get_loved_tracks(), services=services, rating="loved"
+
+        plex_added = sync_list_with_plex(
+            tracks=lbz_items, services=services, rating="loved"
         )
+
     elif rating == "hate":
         log.info("Grabbing all existing hated tracks from ListenBrainz.")
         lbz_items = lbz.all_hates()
         log.info(f"ListenBrainz returned {len(lbz_items)} hated tracks.")
-        log.info("Querying Plex for loved tracks")
-        plex_items = to_tracks(
-            plex_tracks=plex.get_hated_tracks(), services=services, rating="hated"
+
+        plex_added = sync_list_with_plex(
+            tracks=lbz_items, services=services, rating="hated"
         )
-
-    log.info(f"Plex returned {len(plex_items)} {rating}d tracks.")
-
-    for lbz_track in lbz_items:
-        # Plex uses smart quotes, so substitute apostrophes for smart quotes
-        # See https://github.com/pushingkarmaorg/python-plexapi/issues/1474#issuecomment-2421041094
-        lbz_title = lbz_track.title.replace("'", "’").lower()
-        exists = any(lbz_title == plex_item.title.lower() for plex_item in plex_items)
-        if not exists:
-            log.info(f"Track not {rating}d on Plex: {lbz_track}")
-
-            plex_track_search = plex.music_library.search(
-                libtype="track", title=lbz_title
-            )
-            if len(plex_track_search) == 0:
-                # if no results were returned, try a search again with normal
-                # apostrophes; while plex normally uses smart quotes, some
-                # results with improper metadata may still have a standard
-                # apostrophe
-                lbz_title = lbz_title.replace("’", "'").lower()
-                plex_track_search = plex.music_library.search(
-                    libtype="track", title=lbz_title
-                )
-
-            matched_full = False
-            matched_title = False
-            for plex_search_result in plex_track_search:
-                plex_artist = plex_search_result.artist().title.lower()
-                lbz_artist = lbz_track.artist.lower()
-                plex_title = plex_search_result.title.lower()
-                lbz_title = lbz_track.title.lower()
-                if (plex_title in lbz_title) or (lbz_title in plex_title):
-                    matched_title = True
-                    if (lbz_artist in plex_artist) or (plex_artist in lbz_artist):
-                        matched_full = True
-                        if rating == "love":
-                            log.info(f"Loving track on Plex: {plex_search_result}")
-                            plex.submit_rating(plex_search_result, plex.love_threshold)
-                        elif rating == "hate":
-                            log.info(f"Hating track on Plex: {plex_search_result}")
-                            plex.submit_rating(plex_search_result, plex.hate_threshold)
-
-                        plex_added += 1
-
-            if matched_title and not matched_full:
-                log.warning(
-                    f"Found matching title on Plex, but artist(s) did not match "
-                    f"for track: {lbz_track}"
-                )
-            if not matched_title and not matched_full:
-                log.warning(
-                    f"Found no matching tracks on Plex for "
-                    f"ListenBrainz loved track: {lbz_track}"
-                )
-        else:
-            log.info(f"Track already loved on Plex: {lbz_track}")
 
     return plex_added
 
@@ -414,3 +359,94 @@ def lfm_relay(services: Services):
     log.info("Starting sync from LastFM -> Plex.")
     if not services.lfm:
         log.warning("LastFM service not configured. Skipping sync from LastFM -> Plex.")
+        return
+
+    lfm = services.lfm
+
+    log.info("Grabbing all existing loved tracks from LastFM.")
+    lfm_items = lfm.all_loves()
+    log.info(f"LastFM returned {len(lfm_items)} loved tracks.")
+
+    plex_added = sync_list_with_plex(
+        tracks=lfm_items, services=services, rating="loved"
+    )
+    log.info("Finished relaying tracks from LastFM to Plex")
+    log.info(f"Added:\tLoves: {plex_added}")
+
+
+def sync_list_with_plex(tracks: set[Track], services: Services, rating: str) -> int:
+    """
+    Pass a list of Tracks and a Plex object; ensure the ratings are synced to
+    Plex. Rating should be either `loved` or `hated`. Returns the number of
+    tracks changed on Plex.
+    """
+    plex = services.plex
+
+    log.info(f"Querying Plex for {rating} tracks")
+    plex_items = to_tracks(
+        plex_tracks=plex.get_loved_tracks(), services=services, rating=rating
+    )
+    log.info(f"Plex returned {len(plex_items)} {rating} tracks.")
+
+    plex_added = 0
+    for track in tracks:
+        # Plex uses smart quotes, so substitute apostrophes for smart quotes
+        # See https://github.com/pushingkarmaorg/python-plexapi/issues/1474#issuecomment-2421041094
+        title_original = track.title.lower()
+        title_replaced_quotes = title_original.replace("'", "’")
+
+        exists = any(
+            title_replaced_quotes == plex_item.title.lower() for plex_item in plex_items
+        )
+        if not exists:
+            log.info(f"Track not {rating} on Plex: {track}")
+
+            plex_track_search = plex.music_library.search(
+                libtype="track", title=title_replaced_quotes
+            )
+            if len(plex_track_search) == 0:
+                # if no results were returned, try a search again with normal
+                # apostrophes; while plex normally uses smart quotes, some
+                # results with improper metadata may still have a standard
+                # apostrophe
+                plex_track_search = plex.music_library.search(
+                    libtype="track", title=title_original
+                )
+
+            matched_full = False
+            matched_title = False
+
+            for plex_search_result in plex_track_search:
+                plex_artist = plex_search_result.artist().title.lower()
+                artist = track.artist.lower()
+
+                plex_title = plex_search_result.title.lower()
+                title = track.title.lower()
+
+                if (plex_title in title) or (title in plex_title):
+                    matched_title = True
+                    if (artist in plex_artist) or (plex_artist in artist):
+                        matched_full = True
+                        if rating == "loved":
+                            log.info(f"Loving track on Plex: {plex_search_result}")
+                            plex.submit_rating(plex_search_result, plex.love_threshold)
+                        elif rating == "hated":
+                            log.info(f"Hating track on Plex: {plex_search_result}")
+                            plex.submit_rating(plex_search_result, plex.hate_threshold)
+
+                        plex_added += 1
+
+            if matched_title and not matched_full:
+                log.warning(
+                    f"Found matching title on Plex, but artist(s) did not match "
+                    f"for track: {track}"
+                )
+            if not matched_title and not matched_full:
+                log.warning(
+                    f"Found no matching tracks on Plex for "
+                    f"ListenBrainz {rating} track: {track}"
+                )
+        else:
+            log.info(f"Track already {rating} on Plex: {track}")
+
+    return plex_added

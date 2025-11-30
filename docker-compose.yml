@@ -19,38 +19,5 @@ services:
     image: ratingrelay
     volumes:
       - ./data:/app/data
-    environment:
-      # Database file
-      - DATABASE=ratingrelay.db
-
-      # Full Plex server URL including port, i.e. http://192.168.0.1:32400
-      - SERVER_URL=http://
-
-      # Title of the library where music is stored
-      - MUSIC_LIBRARY=Music
-
-      # Threshold to determine a "Loved" track.
-      # 1 star = 2; 2 stars = 4, etc.
-      # e.g. LOVE_THRESHOLD=7 would mean any tracks rated 3.5 stars or higher get submitted
-      - LOVE_THRESHOLD=10
-
-      # OPTIONAL: Threshold to determine a "Hated" track
-      # NOTES:
-      # - Hated tracks are only supported on ListenBrainz
-      # - This will not effect tracks that have not been rated yet. Therefore, the minimum
-      #   value is 1 (half a star)
-      - HATE_THRESHOLD=1
-
-
-      # Obtain these at https://www.last.fm/api/account/create
-      - LASTFM_API_KEY=
-      - LASTFM_SECRET=
-      - LASTFM_USERNAME=
-      - LASTFM_PASSWORD=
-
-      # ListenBrainz username and token - leave blank if you do not wish to use ListenBrainz
-      # Obtain token at: https://listenbrainz.org/settings/
-      - LISTENBRAINZ_TOKEN=
-      - LISTENBRAINZ_USERNAME=
-
+      - ./config.env:/app/config.env
 

@@ -5,9 +5,11 @@ description = "Relay track ratings from Plex to ListenBrainz and/or Last.FM"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "httpx>=0.28.1",
     "liblistenbrainz>=0.5.6",
     "musicbrainzngs>=0.7.1",
     "plexapi>=4.17.0",
+    "pydantic-settings>=2.12.0",
     "pylast>=5.5.0",
     "python-dotenv>=1.1.1",
     "rich>=14.0.0",

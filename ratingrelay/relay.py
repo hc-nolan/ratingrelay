@@ -25,7 +25,7 @@ def relay(services: Services, settings: Settings):
     """
     plex_relay(services)
     if settings.two_way:
-        # lbz_relay(services)
+        lbz_relay(services)
         lfm_relay(services)
 
 

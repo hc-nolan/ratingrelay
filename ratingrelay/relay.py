@@ -89,7 +89,7 @@ def plex_relay_loves(services: Services) -> dict:
                 )
 
         if lfm:
-            if (track.title.lower(), track.artist.lower()) not in lfm_loves:
+            if check_list_match(track=track, target_list=lfm_loves):
                 log.info(f"Last.FM - New love: {track.title} by {track.artist}")
                 lfm.love(track)
                 lfm_added += 1
@@ -108,6 +108,51 @@ def plex_relay_loves(services: Services) -> dict:
         "lbz_added": lbz_added,
         "lfm_added": lfm_added,
     }
+
+
+def check_list_match(track: Track, target_list: list) -> any:
+    """
+    Check if there is a match for the provided `track` in the `target_list`.
+    Returns the matching item.
+    """
+    title = comparison_format(track.title)
+    artist = comparison_format(track.artist)
+
+    matched_title = False
+
+    for list_track in target_list:
+        list_title = comparison_format(list_track.title)
+        if (title in list_title) or (list_title in title):
+            matched_title = True
+
+            temp_artist = list_track.artist
+            if not isinstance(temp_artist, str):
+                # If list_track.artist isn't a string, the track is a
+                # PlexTrack; call artist().title to get the artist name
+                list_artist = comparison_format(list_track.artist().title)
+            else:
+                list_artist = comparison_format(list_track.artist)
+
+            if (artist in list_artist) or (list_artist in artist):
+                return list_track
+
+    if matched_title:
+        log.warning(
+            f"Found matching title in target list, but artist(s) did not match "
+            f"for track: {track}"
+        )
+
+    return False
+
+
+def comparison_format(item: str) -> str:
+    """
+    Apply processing to the input string for comparison purposes between
+    services which may have the strings in different formats.
+
+    Removes any quote/apostrophe characters, converts to lowercase
+    """
+    return item.lower().replace("'", "").replace("’", "")
 
 
 def plex_relay_hates(services: Services) -> dict:
@@ -390,62 +435,28 @@ def sync_list_with_plex(tracks: set[Track], services: Services, rating: str) -> 
 
     plex_added = 0
     for track in tracks:
-        # Plex uses smart quotes, so substitute apostrophes for smart quotes
-        # See https://github.com/pushingkarmaorg/python-plexapi/issues/1474#issuecomment-2421041094
-        title_original = track.title.lower()
-        title_replaced_quotes = title_original.replace("'", "’")
-
-        exists = any(
-            title_replaced_quotes == plex_item.title.lower() for plex_item in plex_items
-        )
-        if not exists:
+        if not check_list_match(track=track, target_list=plex_items):
             log.info(f"Track not {rating} on Plex: {track}")
 
             plex_track_search = plex.music_library.search(
-                libtype="track", title=title_replaced_quotes
+                libtype="track", title=track.title.lower()
             )
             if len(plex_track_search) == 0:
-                # if no results were returned, try a search again with normal
-                # apostrophes; while plex normally uses smart quotes, some
-                # results with improper metadata may still have a standard
-                # apostrophe
+                # if no results were returned, try a search again with smart quotes
                 plex_track_search = plex.music_library.search(
-                    libtype="track", title=title_original
+                    libtype="track", title=track.title.lower().replace("'", "’")
                 )
 
-            matched_full = False
-            matched_title = False
+            match = check_list_match(track=track, target_list=plex_track_search)
+            if match:
+                if rating == "loved":
+                    log.info(f"Loving track on Plex: {match}")
+                    plex.submit_rating(match, plex.love_threshold)
+                elif rating == "hated":
+                    log.info(f"Hating track on Plex: {match}")
+                    plex.submit_rating(match, plex.hate_threshold)
 
-            for plex_search_result in plex_track_search:
-                plex_artist = plex_search_result.artist().title.lower()
-                artist = track.artist.lower()
-
-                plex_title = plex_search_result.title.lower()
-                title = track.title.lower()
-
-                if (plex_title in title) or (title in plex_title):
-                    matched_title = True
-                    if (artist in plex_artist) or (plex_artist in artist):
-                        matched_full = True
-                        if rating == "loved":
-                            log.info(f"Loving track on Plex: {plex_search_result}")
-                            plex.submit_rating(plex_search_result, plex.love_threshold)
-                        elif rating == "hated":
-                            log.info(f"Hating track on Plex: {plex_search_result}")
-                            plex.submit_rating(plex_search_result, plex.hate_threshold)
-
-                        plex_added += 1
-
-            if matched_title and not matched_full:
-                log.warning(
-                    f"Found matching title on Plex, but artist(s) did not match "
-                    f"for track: {track}"
-                )
-            if not matched_title and not matched_full:
-                log.warning(
-                    f"Found no matching tracks on Plex for "
-                    f"ListenBrainz {rating} track: {track}"
-                )
+                plex_added += 1
         else:
             log.info(f"Track already {rating} on Plex: {track}")
 

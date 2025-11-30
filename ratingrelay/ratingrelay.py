@@ -90,6 +90,10 @@ def main():
             )
             if reset_user_check == "reset":
                 reset(services)
+            else:
+                log.info(
+                    f"Answer '{reset_user_check}' does not equal 'reset' - exiting."
+                )
 
     exec_time = time.perf_counter() - start_time
     log.info(f"RatingRelay finished in {exec_time:2f} seconds.")

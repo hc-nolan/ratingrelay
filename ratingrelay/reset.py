@@ -1,3 +1,5 @@
+import time
+from urllib3.exceptions import ResponseError
 import logging
 from .services import Services
 
@@ -12,14 +14,31 @@ def reset_lbz(lbz):
     for track in loves:
         i += 1
         log.info(f"{i}/{len(loves)}")
-        lbz.client.submit_user_feedback(0, track.mbid)
+        try:
+            lbz.client.submit_user_feedback(0, track.mbid)
+        except ResponseError as e:
+            if "429" in str(e):
+                log.warning("Rate limited, waiting 60s")
+                time.sleep(60)
+                lbz.client.submit_user_feedback(0, track.mbid)
+            else:
+                raise
+
     hates = lbz.all_hates()
     log.info(f"ListenBrainz: {len(hates)} tracks to unhate")
     i = 0
     for track in hates:
         i += 1
         log.info(f"{i}/{len(hates)}")
-        lbz.client.submit_user_feedback(0, track.mbid)
+        try:
+            lbz.client.submit_user_feedback(0, track.mbid)
+        except ResponseError as e:
+            if "429" in str(e):
+                log.warning("Rate limited, waiting 60s")
+                time.sleep(60)
+                lbz.client.submit_user_feedback(0, track.mbid)
+            else:
+                raise
 
 
 def reset_lfm(lfm):

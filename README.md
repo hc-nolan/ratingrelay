@@ -1,76 +1,81 @@
-# Introduction
+# RatingRelay
 
-**Relay** loved track **ratings** from Plex to ListenBrainz and/or Last.FM.
+Syncs track ratings from Plex to ListenBrainz and/or Last.fm. ListenBrainz supports both loved and hated tracks.
 
-ListenBrainz also supports hated tracks.
+By default, syncing is one-way (Plex → other services). Plex ratings are not modified unless you enable the `TWO_WAY` environment variable.
 
-The relay is one-way from Plex to the other services - Plex track ratings will not be modified.
+The script will only remove loved/hated tracks from Last.fm/ListenBrainz that it previously added, preserving any manually set ratings.
 
-The script will un-love/hate tracks, but only ones that it added. This way, if you have existing loved/hated tracks that you manually set, they won't be removed.
+## Configuration
 
-# Usage
+Create a `config.env` file in the repository root. Use `config.env.example` as a template.
 
-To run the script, you must set a number of configuration values in a file named `config.env` in the root of the repository. You can use `config.env.example` as a starting point.
+Required settings:
+- `PLEX_SERVER_URL`: Your Plex server URL
+- `MUSIC_LIBRARY`: Name of your music library (default: "Music")
+- `LOVE_THRESHOLD`: Rating threshold for loving tracks (default: 10, which equals 5 stars). Plex uses a 0-10 scale where 1 star = 2 points.
+- `HATE_THRESHOLD`: (Optional) Rating threshold for hating tracks on ListenBrainz
 
+API credentials:
+- Configure ListenBrainz and/or Last.fm credentials (at least one required)
 
-- `PLEX_SERVER_URL`: the URL of your Plex server
-- `MUSIC_LIBRARY`: by default, this is set to "Music". If your library is named something else, change this value.
-- `LOVE_THRESHOLD`: by default, this is set to 10 (5 stars). Ratings are out of 10, so 1 star in the Plex UI = 2/10.
-  - (optional) `HATE_THRESHOLD`: If you want to use hated tracks with ListenBrainz, uncomment this.
-- ListenBrainz and/or Last.FM API values
-  - Fill out one or both of these sets of values.
+## Installation
 
-## Docker Compose
+### Docker Compose
 
-After setting the required environment variables, you must manually authenticate with Plex. To do so, run:
-```bash
-sudo docker compose run --rm ratingrelay
-```
+1. Set the required environment variables in `config.env`
+2. Authenticate with Plex:
+   ```bash
+   sudo docker compose run --rm ratingrelay
+   ```
+   Follow the authentication prompts. You can exit with `Ctrl+C` after authenticating.
 
-You should be prompted for your Plex authentication details. After this you can either let the script finish or press `Ctrl+C` to finish it.
+3. Adjust the sync frequency by modifying this line in `docker-compose.yml`:
+   ```yml
+   ofelia.job-run.ratingrelay.schedule: "@every 24h"
+   ```
 
-Then, you can set the container to execute however often you like. You can change the frequency on this line:
-```yml
-      ofelia.job-run.ratingrelay.schedule: "@every 24h" # how often to run
-```
+4. Start the container:
+   ```bash
+   sudo docker compose up -d
+   ```
 
-After everything is set up, run:
-```bash
-sudo docker compose up -d
-```
+### Python
 
-## Python
+1. [Install uv](https://docs.astral.sh/uv/#installation)
+2. Install dependencies:
+   ```bash
+   uv sync --frozen
+   ```
+3. Run the script:
+   ```bash
+   uv run /path/to/repo/ratingrelay.py
+   ```
+   On first run, you'll be prompted for Plex authentication.
 
-- [Install uv](https://docs.astral.sh/uv/#installation)
-- In the repository directory, run `uv sync --frozen`
-- Run the script with: `uv run /path/to/repo/ratingrelay.py`
-  - **Note**: The first time the script runs, you will be prompted to enter your Plex authentication details.
-  - If you wish, you can also run with `/path/to/repo/.venv/bin/python /path/to/repo/ratingrelay.py`
+   Alternatively: `/path/to/repo/.venv/bin/python /path/to/repo/ratingrelay.py`
 
-To run on a regular basis, set up a cronjob (Linux) or Scheduled Task (Windows).
+4. Schedule regular execution using cron (Linux) or Task Scheduler (Windows)
 
-# Testing
+## Testing
 
-If you want to run the test to make sure everything works properly, you should use separate accounts on Plex and any services you wish to test. These tests rely on accounts that start with no data. Additionally, all data is reset on the accounts at the end of testing - so **if you use your real account to run the tests, your data will be lost.**
+**Warning**: Tests reset all data on the configured accounts. Use separate test accounts to avoid data loss.
 
-- [Install uv](https://docs.astral.sh/uv/#installation)
-- In the repository directory, run `uv sync --frozen`
-- Create a copy of `config.env.example` named `test.env` and enter the test account credentials
-- You should either back up your existing database to another location, or change the value of `DATABASE` in `config.env` to create a new database for the tests
-- Run the script normally once and authenticate with Plex
-- Open `./ratingrelay/config.py` and change the following:
-```python
-class Settings(BaseSettings):
-    ...
-    ...
-    env_file="config.env")
-```
-to:
-```python
-class Settings(BaseSettings):
-    ...
-    ...
-    env_file="test.env")
-```
-
-- Run the tests: `uv run pytest`
+1. [Install uv](https://docs.astral.sh/uv/#installation)
+2. Install dependencies:
+   ```bash
+   uv sync --frozen
+   ```
+3. Create `test.env` from `config.env.example` with test account credentials
+4. Either back up your existing database or change the `DATABASE` value in `config.env` to use a separate test database
+5. Edit `./ratingrelay/config.py`:
+   ```python
+   class Settings(BaseSettings):
+       ...
+       env_file="test.env")
+   ```
+6. Run the script once to authenticate with Plex
+7. Run tests:
+   ```bash
+   uv run pytest
+   ```

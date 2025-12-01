@@ -92,7 +92,7 @@ class ListenBrainz:
         Reset a track's ListenBrainz rating to 0.
         """
         log.info(f"ListenBrainz - resetting track: {track}")
-        self.client.submit_user_feedback(0, track.get("track_mbid"))
+        self.client.submit_user_feedback(0, track.get("rec_mbid"))
 
     def love(self, track: Track):
         """

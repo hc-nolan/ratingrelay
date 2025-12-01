@@ -56,6 +56,7 @@ If you want to run the test to make sure everything works properly, you should u
 - [Install uv](https://docs.astral.sh/uv/#installation)
 - In the repository directory, run `uv sync --frozen`
 - Create a copy of `config.env.example` named `test.env` and enter the test account credentials
+- You should either back up your existing database to another location, or change the value of `DATABASE` in `config.env` to create a new database for the tests
 - Run the script normally once and authenticate with Plex
 - Open `./ratingrelay/config.py` and change the following:
 ```python

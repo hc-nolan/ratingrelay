@@ -11,7 +11,13 @@ dependencies = [
     "plexapi>=4.17.0",
     "pydantic-settings>=2.12.0",
     "pylast>=5.5.0",
+    "pylint>=4.0.4",
     "pytest>=9.0.1",
     "python-dotenv>=1.1.1",
     "rich>=14.0.0",
+]
+[tool.pylint."MESSAGES CONTROL"]
+disable = [
+    "logging-fstring-interpolation",
+    "missing-module-docstring",
 ]

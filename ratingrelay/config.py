@@ -13,23 +13,37 @@ import musicbrainzngs as mbz
 
 
 class OperatingMode(str, Enum):
+    """
+    Enum that defines the valid operating modes for the script
+    """
+
     relay = "relay"
     reset = "reset"
 
 
 @lru_cache()
 def get_settings():
+    """
+    Return a cached instance of the settings
+    """
     return Settings()
 
 
 @lru_cache()
 def set_mbz_user_agent(version: str):
+    """
+    Set user agent for MusicBrainz
+    """
     mbz.set_useragent(
         "RatingRelay", version, contact="https://github.com/hc-nolan/ratingrelay"
     )
 
 
 class Settings(BaseSettings):
+    """
+    App configuration settings
+    """
+
     version: str = "1.1"
     log_level: str = "INFO"
     timezone: str = "America/Toronto"
@@ -59,7 +73,7 @@ class Settings(BaseSettings):
             raise ValueError(
                 f"Cannot reach Plex server at {v}. "
                 f"Please check the URL and ensure the server is running. Error: {e}"
-            )
+            ) from e
 
     model_config = SettingsConfigDict(env_file="config.env")
 
@@ -77,6 +91,8 @@ except ValidationError as e:
 
 
 class LogConfig(BaseModel):
+    """Logger configuration"""
+
     LOGGER_NAME: str = "ratingrelay"
     LOG_FORMAT: str = "%(asctime)s:%(levelname)s:%(module)s:%(message)s"
     LOG_LEVEL: str = settings.log_level

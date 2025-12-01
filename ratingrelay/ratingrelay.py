@@ -15,23 +15,23 @@ from .services import Services
 from .relay import relay
 
 
-def setup_lastfm(settings: Settings) -> Optional[LastFM]:
+def setup_lastfm(config: Settings) -> Optional[LastFM]:
     """
     Set up Last.fm service if credentials are provided.
     """
     if not all(
         [
-            settings.lastfm_username,
-            settings.lastfm_password,
-            settings.lastfm_token,
-            settings.lastfm_secret,
+            config.lastfm_username,
+            config.lastfm_password,
+            config.lastfm_token,
+            config.lastfm_secret,
         ]
     ):
         log.info("Last.fm credentials not provided - skipping Last.fm")
         return None
 
     try:
-        lfm = LastFM(settings)
+        lfm = LastFM(config)
 
         return lfm
     except ConfigError as e:
@@ -41,16 +41,16 @@ def setup_lastfm(settings: Settings) -> Optional[LastFM]:
         return None
 
 
-def setup_listenbrainz(settings: Settings) -> Optional[ListenBrainz]:
+def setup_listenbrainz(config: Settings) -> Optional[ListenBrainz]:
     """
     Set up ListenBrainz service if credentials are provided.
     """
-    if not all([settings.listenbrainz_username, settings.listenbrainz_token]):
+    if not all([config.listenbrainz_username, config.listenbrainz_token]):
         log.info("ListenBrainz credentials not provided - skipping ListenBrainz")
         return None
 
     try:
-        return ListenBrainz(settings)
+        return ListenBrainz(config)
     except ConfigError as e:
         log.error("Failed to configure ListenBrainz - skipping ListenBrainz")
         log.error(f"Error details: {e}")
@@ -58,20 +58,21 @@ def setup_listenbrainz(settings: Settings) -> Optional[ListenBrainz]:
         return None
 
 
-def setup_services(settings: Settings) -> Services:
+def setup_services(config: Settings) -> Services:
     """
     Sets up all services: Plex, database, Last.fm, and ListenBrainz.
     Optional services (Last.fm/ListenBrainz) will be None if credentials aren't provided.
     """
-    db = Database(settings)
-    plex = Plex(settings)
-    lfm = setup_lastfm(settings)
-    lbz = setup_listenbrainz(settings)
+    db = Database(config)
+    plex = Plex(config)
+    lfm = setup_lastfm(config)
+    lbz = setup_listenbrainz(config)
 
     return Services(plex=plex, db=db, lfm=lfm, lbz=lbz)
 
 
 def main():
+    """main"""
     start_time = time.perf_counter()
 
     os.makedirs("data", exist_ok=True)  # ensure data directory exists

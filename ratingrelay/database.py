@@ -5,6 +5,10 @@ from .config import Settings
 
 
 class Database:
+    """
+    Class for all database interactions
+    """
+
     def __init__(self, settings: Settings):
         self.conn = sqlite3.connect(settings.database)
         self.cursor = self.conn.cursor()
@@ -29,6 +33,9 @@ class Database:
         return tablename
 
     def create_tables(self):
+        """
+        Create all tables in the database
+        """
         self.cursor.execute(
             """
     CREATE TABLE IF NOT EXISTS loved(
@@ -77,7 +84,8 @@ class Database:
         """
         tablename = self._validate_table_name(table)
         self.cursor.execute(
-            f"INSERT OR IGNORE INTO {tablename} (title, artist, trackId, recordingId) VALUES(?, ?, ?, ?)",
+            f"INSERT OR IGNORE INTO {tablename}"
+            f"(title, artist, trackId, recordingId) VALUES(?, ?, ?, ?)",
             (title, artist, track_mbid, rec_mbid),
         )
         self.conn.commit()

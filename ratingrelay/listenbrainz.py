@@ -18,6 +18,8 @@ class ListenBrainz:
     """
 
     def __init__(self, settings: Settings):
+        self.loves = None
+        self.hates = None
         self.token = settings.listenbrainz_token
         self.username = settings.listenbrainz_username
 

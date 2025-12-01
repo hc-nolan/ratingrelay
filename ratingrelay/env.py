@@ -58,12 +58,11 @@ class Env:
         if env_file.exists():
             log.info(f"Found .env file at: {env_file}")
             return env_file
-        else:
-            raise FileNotFoundError(
-                ".env file not found in repository root directory. "
-                "Check the usage guide for details on "
-                "setting up the environment variables."
-            )
+        raise FileNotFoundError(
+            ".env file not found in repository root directory. "
+            "Check the usage guide for details on "
+            "setting up the environment variables."
+        )
 
     @staticmethod
     def get_required(var_name: str) -> str:

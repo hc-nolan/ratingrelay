@@ -2,7 +2,7 @@ import logging
 from typing import Optional
 
 from rich.prompt import IntPrompt, Prompt
-from rich import print
+from rich import print as rprint
 from plexapi.myplex import MyPlexAccount
 from plexapi.server import PlexServer
 from plexapi.library import LibrarySection
@@ -23,6 +23,7 @@ class Plex:
     _RATING_OFFSET = 0.1
 
     def __init__(self, settings: Settings):
+        self.server = None
         self.url = str(settings.plex_server_url)
         self.love_threshold = settings.love_threshold
         self.hate_threshold = settings.hate_threshold
@@ -52,7 +53,7 @@ class Plex:
         Handles the manual authentication process.
         Retrieves the valid token after authentication for future use.
         """
-        print(
+        rprint(
             "Please enter your Plex authentication details. "
             "This should only be required the first time the program is run."
         )

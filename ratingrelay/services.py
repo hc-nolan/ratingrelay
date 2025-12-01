@@ -9,6 +9,8 @@ from .listenbrainz import ListenBrainz
 
 @dataclass
 class Services:
+    """Container for various services used by the script"""
+
     plex: Plex
     db: Database
     lfm: Optional[LastFM]

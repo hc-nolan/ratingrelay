@@ -1,6 +1,6 @@
 import time
-from urllib3.exceptions import ResponseError
 import logging
+from urllib3.exceptions import ResponseError
 from .services import Services
 from .plex import Plex
 from .listenbrainz import ListenBrainz
@@ -49,6 +49,7 @@ def reset_plex(plex: Plex):
     loves = plex.get_loved_tracks()
     log.info(f"Plex: {len(loves)} tracks to unlove")
 
+    hates = []
     if plex.hate_threshold is not None:
         hates = plex.get_hated_tracks()
         log.info(f"Plex: {len(loves)} tracks to unhate")

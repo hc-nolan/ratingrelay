@@ -4,6 +4,8 @@ from typing import Optional
 
 @dataclass(frozen=True)
 class Track:
+    """Track object"""
+
     title: str
     artist: str
     mbid: Optional[str] = None

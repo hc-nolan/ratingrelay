@@ -170,7 +170,7 @@ def plex_relay_hates(services: Services) -> dict:
 
     if not lbz:
         log.warning("ListenBrainz not configured, skipping relaying hated tracks.")
-        return
+        return {}
 
     log.info("Grabbing existing ListenBrainz hated tracks.")
     lbz_hates = lbz.all_hates()
@@ -238,13 +238,15 @@ def plex_reset(services: Services, tracks: set[Track], table: str):
 
 
 def print_stats(love: dict, hate: Optional[dict]):
+    """Prints statistics"""
     log.info("STATISTICS:")
     log.info(
         f"{'Plex:':<12}\tLoves: {love.get('plex_loves'):<10}\tHates: {hate.get('plex_hates'):<10}"
     )
     log.info("ADDITIONS:")
     log.info(
-        f"{'ListenBrainz:':<12}\tLoves: {love.get('lbz_added'):<10}\tHates: {hate.get('lbz_added'):<10}\t"
+        f"{'ListenBrainz:':<12}\tLoves: {love.get('lbz_added'):<10}\t"
+        f"Hates: {hate.get('lbz_added'):<10}\t"
     )
     log.info(
         f"{'Last.FM:':<12}\tLoves: {love.get('lfm_added'):<10}\tHates: {'N/A':<10}\t"
@@ -305,7 +307,7 @@ def track_from_plex(
             log.warning(
                 f"No recording MBID returned by MusicBrainz for: {(title, artist)}"
             )
-            return
+            return None
 
     return Track(title=title, artist=artist, mbid=rec_mbid, track_mbid=track_mbid)
 

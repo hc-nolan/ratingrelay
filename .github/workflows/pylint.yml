@@ -1,0 +1,21 @@
+name: Pylint
+
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.8", "3.9", "3.10"]
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install uv
+      uses: astral-sh/setup-uv@7
+
+    - name: Install dependencies
+      run: uv sync --frozen
+
+    - name: Lint
+      run: uv run pylint ratingrelay/  
+

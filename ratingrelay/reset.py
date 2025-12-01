@@ -17,7 +17,7 @@ def reset_lbz(lbz: ListenBrainz):
     hates = lbz.all_hates()
     log.info(f"ListenBrainz: {len(hates)} tracks to unhate")
 
-    tracks_to_reset = loves.union(hates)
+    tracks_to_reset = loves + hates
     i = 0
     for track in tracks_to_reset:
         i += 1

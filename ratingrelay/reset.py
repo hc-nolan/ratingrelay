@@ -49,17 +49,18 @@ def reset_plex(plex: Plex):
     loves = plex.get_loved_tracks()
     log.info(f"Plex: {len(loves)} tracks to unlove")
 
-    hates = []
     if plex.hate_threshold is not None:
         hates = plex.get_hated_tracks()
         log.info(f"Plex: {len(loves)} tracks to unhate")
+    else:
+        hates = []
 
     tracks_to_reset = loves + hates
     i = 0
     for track in tracks_to_reset:
         i += 1
         log.info(f"{i / len(tracks_to_reset)}: {track}")
-        plex.submit_rating(track=track, rating=0)
+        plex.submit_rating(track=track, rating=None)
 
 
 def reset(services: Services):

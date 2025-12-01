@@ -89,7 +89,7 @@ def plex_relay_loves(services: Services) -> dict:
                 )
 
         if lfm:
-            if check_list_match(track=track, target_list=lfm_loves):
+            if not check_list_match(track=track, target_list=lfm_loves):
                 log.info(f"Last.FM - New love: {track.title} by {track.artist}")
                 lfm.love(track)
                 lfm_added += 1

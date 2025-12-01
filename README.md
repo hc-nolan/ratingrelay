@@ -48,3 +48,29 @@ sudo docker compose up -d
   - If you wish, you can also run with `/path/to/repo/.venv/bin/python /path/to/repo/ratingrelay.py`
 
 To run on a regular basis, set up a cronjob (Linux) or Scheduled Task (Windows).
+
+# Testing
+
+If you want to run the test to make sure everything works properly, you should use separate accounts on Plex and any services you wish to test. These tests rely on accounts that start with no data. Additionally, all data is reset on the accounts at the end of testing - so **if you use your real account to run the tests, your data will be lost.**
+
+- [Install uv](https://docs.astral.sh/uv/#installation)
+- In the repository directory, run `uv sync --frozen`
+- Create a copy of `config.env.example` named `test.env` and enter the test account credentials
+- You should either back up your existing database to another location, or change the value of `DATABASE` in `config.env` to create a new database for the tests
+- Run the script normally once and authenticate with Plex
+- Open `./ratingrelay/config.py` and change the following:
+```python
+class Settings(BaseSettings):
+    ...
+    ...
+    env_file="config.env")
+```
+to:
+```python
+class Settings(BaseSettings):
+    ...
+    ...
+    env_file="test.env")
+```
+
+- Run the tests: `uv run pytest`

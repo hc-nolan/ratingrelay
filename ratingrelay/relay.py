@@ -121,7 +121,10 @@ def check_list_match(track: Track, target_list: list) -> any:
     matched_title = False
 
     for list_track in target_list:
-        list_title = comparison_format(list_track.title)
+        if isinstance(list_track, tuple):
+            list_title = comparison_format(list_track[0])
+        else:
+            list_title = comparison_format(list_track.title)
         if (title in list_title) or (list_title in title):
             matched_title = True
 

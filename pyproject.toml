@@ -21,3 +21,5 @@ disable = [
     "logging-fstring-interpolation",
     "missing-module-docstring",
 ]
+[tool.pylint.MASTER]
+fail-under = 9.0

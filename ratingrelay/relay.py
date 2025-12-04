@@ -466,6 +466,8 @@ def sync_list_with_plex(tracks: set[Track], services: Services, rating: str) -> 
                     plex.submit_rating(match, plex.hate_threshold)
 
                 plex_added += 1
+            else:
+                log.warning(f"No match found on Plex for track: {track}")
         else:
             log.info(f"Track already {rating} on Plex: {track}")
 

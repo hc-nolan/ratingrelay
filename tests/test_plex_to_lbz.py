@@ -136,9 +136,9 @@ def test_lbz_unlove(services, cleanup):
     assert len(lbz_loves) == settings.test_limit
 
     # Un-love the tracks
-    for plex_track in track_search:
-        lbz_loves = services.lbz.all_loves()
-    assert len(lbz_loves) == 0
+    for lbz_track in lbz_loves:
+        lbz_loves = services.lbz.reset(lbz_track)
+    assert len(services.lbz.all_loves()) == 0
 
     # Sync again
     plex_relay_loves(services)

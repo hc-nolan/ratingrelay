@@ -52,6 +52,6 @@ def _test_lbz_relay(services, rating: str, lbz_action, plex_getter, lbz_getter):
     assert_relay_success(
         expected=settings.test_limit,
         actual=plex_tracks,
-        lbz_getter=lbz_getter,
+        source_getter=lbz_getter,
         rating=rating,
     )

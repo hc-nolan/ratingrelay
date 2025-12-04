@@ -437,9 +437,14 @@ def sync_list_with_plex(tracks: set[Track], services: Services, rating: str) -> 
     plex = services.plex
 
     log.info(f"Querying Plex for {rating} tracks")
-    plex_items = to_tracks(
-        plex_tracks=plex.get_loved_tracks(), services=services, rating=rating
-    )
+    if rating == "loved":
+        plex_items = to_tracks(
+            plex_tracks=plex.get_loved_tracks(), services=services, rating=rating
+        )
+    else:
+        plex_items = to_tracks(
+            plex_tracks=plex.get_hated_tracks(), services=services, rating=rating
+        )
     log.info(f"Plex returned {len(plex_items)} {rating} tracks.")
 
     plex_added = 0
@@ -450,12 +455,16 @@ def sync_list_with_plex(tracks: set[Track], services: Services, rating: str) -> 
             plex_track_search = plex.music_library.search(
                 libtype="track", title=track.title.lower()
             )
-            if len(plex_track_search) == 0:
-                # if no results were returned, try a search again with smart quotes
-                plex_track_search = plex.music_library.search(
-                    libtype="track", title=track.title.lower().replace("'", "’")
-                )
-
+            match = check_list_match(track=track, target_list=plex_track_search)
+            if not match:
+                if "'" in track.title:
+                    plex_track_search = plex.music_library.search(
+                        libtype="track", title=track.title.lower().replace("'", "’")
+                    )
+                if "’" in track.title:
+                    plex_track_search = plex.music_library.search(
+                        libtype="track", title=track.title.lower().replace("’", "'")
+                    )
             match = check_list_match(track=track, target_list=plex_track_search)
             if match:
                 if rating == "loved":

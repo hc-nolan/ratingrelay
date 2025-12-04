@@ -80,4 +80,6 @@ By default, test syncs use 10 tracks. You can modify this by setting the `TEST_L
 7. Run tests:
    ```bash
    uv run pytest
+   # note: -s flag recommended to see stdout
+   uv run pytest -s
    ```

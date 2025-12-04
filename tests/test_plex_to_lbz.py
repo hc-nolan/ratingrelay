@@ -143,3 +143,37 @@ def test_lbz_unlove(services, cleanup):
     # Check that the track was unloved from LastFM
     lbz_loves_after = services.lbz.all_loves()
     assert len(lbz_loves_after) == 1
+
+
+def test_lbz_unhate(services, cleanup):
+    """
+    If a track is synced from Plex to ListenBrainz, then the user unhates the track
+    on ListenBrainz, it should be re-hated next sync
+    """
+    plex = services.plex
+
+    # Make sure we're starting with no hated tracks
+    assert len(plex.get_hated_tracks()) == 0
+
+    # Search for an arbitrary track, then hate it
+    track_search = plex.music_library.search(libtype="track", limit=1)
+    plex_track = track_search[0]
+    plex.submit_rating(plex_track, plex.hate_threshold)
+
+    services.lfm = None
+    plex_relay_hates(services)
+
+    lbz_hates = services.lbz.all_hates()
+    assert len(lbz_hates) == 1
+
+    # Un-hate the track
+    services.lbz.reset(lbz_hates[0])
+    lbz_hates = services.lbz.all_hates()
+    assert len(lbz_hates) == 0
+
+    # Sync again
+    plex_relay_hates(services)
+
+    # Check that the track was unhated from LastFM
+    lbz_hates_after = services.lbz.all_hates()
+    assert len(lbz_hates_after) == 1

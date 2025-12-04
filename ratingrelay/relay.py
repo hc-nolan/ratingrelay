@@ -121,20 +121,23 @@ def check_list_match(track: Track, target_list: list) -> any:
     matched_title = False
 
     for list_track in target_list:
-        if isinstance(list_track, tuple):
-            list_title = comparison_format(list_track[0])
-        else:
-            list_title = comparison_format(list_track.title)
+        match list_track:
+            case tuple():
+                list_title = comparison_format(list_track[0])
+                list_artist = comparison_format(list_track[1])
+            case Track():
+                list_title = comparison_format(list_track.title)
+                list_artist = list_track.artist
+            case PlexTrack():
+                list_artist = comparison_format(list_track.artist().title)
+            case _:
+                log.warning(
+                    f"Unrecognized type for comparison track: {list_track} - "
+                    f"Type: {type(list_track)}"
+                )
+                continue
         if (title in list_title) or (list_title in title):
             matched_title = True
-
-            temp_artist = list_track.artist
-            if not isinstance(temp_artist, str):
-                # If list_track.artist isn't a string, the track is a
-                # PlexTrack; call artist().title to get the artist name
-                list_artist = comparison_format(list_track.artist().title)
-            else:
-                list_artist = comparison_format(list_track.artist)
 
             if (artist in list_artist) or (list_artist in artist):
                 return list_track

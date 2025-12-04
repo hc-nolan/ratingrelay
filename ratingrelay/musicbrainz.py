@@ -16,10 +16,10 @@ def query_recording_mbid(
     log.info("Searching MusicBrainz for recording MBID.")
     if track_mbid is not None:
         log.info(f"Using track MBID: {track_mbid}")
-        search = mbz.search_recordings(query=title, artist=artist)
+        search = mbz.search_recordings(query=f"tid:{track_mbid}")
     else:
         log.info(f"track_mbid is empty, using title and artist: {title} - {artist}")
-        search = mbz.search_recordings(query=f"tid:{track_mbid}")
+        search = mbz.search_recordings(query=title, artist=artist)
     recording = search.get("recording-list")
 
     if recording == []:

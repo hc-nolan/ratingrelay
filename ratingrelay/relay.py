@@ -129,6 +129,7 @@ def check_list_match(track: Track, target_list: list) -> any:
                 list_title = comparison_format(list_track.title)
                 list_artist = list_track.artist
             case PlexTrack():
+                list_title = comparison_format(list_track.title)
                 list_artist = comparison_format(list_track.artist().title)
             case _:
                 log.warning(

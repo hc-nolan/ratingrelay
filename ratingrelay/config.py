@@ -113,7 +113,7 @@ class LogConfig(BaseModel):
         "file": {
             "formatter": "default",
             "class": "logging.handlers.TimedRotatingFileHandler",
-            "filename": "data/ratingrelay.log",
+            "filename": "ratingrelay.log",
             "when": "midnight",
             "interval": 30,
             "backupCount": 6,

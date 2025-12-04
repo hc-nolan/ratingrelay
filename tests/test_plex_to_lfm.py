@@ -1,3 +1,4 @@
+from ratingrelay.config import settings
 from ratingrelay.relay import plex_relay_loves
 
 
@@ -12,7 +13,7 @@ def test_plex_relay_loves_to_lastfm(services, cleanup):
     assert len(loves) == 0
 
     # Search for 10 arbitrary tracks, then love them
-    track_search = plex.music_library.search(libtype="track", limit=10)
+    track_search = plex.music_library.search(libtype="track", limit=settings.test_limit)
     for track in track_search:
         plex.submit_rating(track, plex.love_threshold)
 
@@ -20,7 +21,7 @@ def test_plex_relay_loves_to_lastfm(services, cleanup):
     plex_relay_loves(services)
 
     lfm_loves = services.lfm.all_loves()
-    assert len(lfm_loves) == 10
+    assert len(lfm_loves) == settings.test_limit
 
 
 def test_plex_unlove(services, cleanup):
@@ -34,24 +35,25 @@ def test_plex_unlove(services, cleanup):
     loves = plex.get_loved_tracks()
     assert len(loves) == 0
 
-    # Search for an arbitrary track, then love it
-    track_search = plex.music_library.search(libtype="track", limit=1)
-    plex_track = track_search[0]
-    plex.submit_rating(plex_track, plex.love_threshold)
+    # Search for arbitrary tracks and then love them
+    track_search = plex.music_library.search(libtype="track", limit=settings.test_limit)
+    for plex_track in track_search:
+        plex.submit_rating(plex_track, plex.love_threshold)
 
     services.lbz = None
     plex_relay_loves(services)
 
     lfm_loves = services.lfm.all_loves()
-    assert len(lfm_loves) == 1
+    assert len(lfm_loves) == settings.test_limit
 
-    # Un-love the track
-    plex.submit_rating(plex_track, plex.love_threshold - 1)
+    # Un-love the tracks
+    for plex_track in track_search:
+        plex.submit_rating(plex_track, plex.love_threshold - 1)
 
     # Sync again
     plex_relay_loves(services)
 
-    # Check that the track was unloved from LastFM
+    # Check that the tracks were unloved from LastFM
     lfm_loves_after = services.lfm.all_loves()
     assert len(lfm_loves_after) == 0
 
@@ -66,25 +68,27 @@ def test_lfm_unlove(services, cleanup):
     # Make sure we're starting with no loved tracks
     assert len(plex.get_loved_tracks()) == 0
 
-    # Search for an arbitrary track, then love it
-    track_search = plex.music_library.search(libtype="track", limit=1)
-    plex_track = track_search[0]
-    plex.submit_rating(plex_track, plex.love_threshold)
+    # Search for arbitrary tracks and love them
+    track_search = plex.music_library.search(libtype="track", limit=settings.test_limit)
+    for plex_track in track_search:
+        plex.submit_rating(plex_track, plex.love_threshold)
 
     services.lbz = None
     plex_relay_loves(services)
 
     lfm_loves = services.lfm.all_loves()
-    assert len(lfm_loves) == 1
+    assert len(lfm_loves) == settings.test_limit
 
-    # Un-love the track
-    services.lfm.reset(lfm_loves[0])
+    # Un-love the tracks
+    for lfm_love in lfm_loves:
+        services.lfm.reset(lfm_love)
+
     lfm_loves = services.lfm.all_loves()
     assert len(lfm_loves) == 0
 
     # Sync again
     plex_relay_loves(services)
 
-    # Check that the track was unloved from LastFM
+    # Check that the tracks were loved again on LastFM
     lfm_loves_after = services.lfm.all_loves()
-    assert len(lfm_loves_after) == 1
+    assert len(lfm_loves_after) == settings.test_limit

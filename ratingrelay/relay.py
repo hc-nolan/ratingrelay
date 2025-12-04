@@ -155,7 +155,7 @@ def comparison_format(item: str) -> str:
 
     Removes any quote/apostrophe characters, converts to lowercase
     """
-    return item.lower().replace("'", "").replace("’", "")
+    return item.lower().replace("'", "").replace("’", "").replace("&", "and")
 
 
 def plex_relay_hates(services: Services) -> dict:

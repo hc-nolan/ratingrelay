@@ -159,7 +159,14 @@ def comparison_format(item: str) -> str:
 
     Removes any quote/apostrophe characters, converts to lowercase
     """
-    return item.lower().replace("'", "").replace("’", "").replace("&", "and")
+    return (
+        item.lower()
+        .replace("'", "")
+        .replace("’", "")  # smart quote
+        .replace("&", "and")
+        .replace("‐", "")  # fancy hyphen
+        .replace("-", "")
+    )
 
 
 def plex_relay_hates(services: Services) -> dict:
@@ -465,6 +472,11 @@ def sync_list_with_plex(tracks: set[Track], services: Services, rating: str) -> 
                     plex_track_search = plex.music_library.search(
                         libtype="track", title=track.title.lower().replace("’", "'")
                     )
+                if "‐" in track.title:
+                    plex_track_search = plex.music_library.search(
+                        libtype="track", title=track.title.lower().replace("‐", "-")
+                    )
+
             match = check_list_match(track=track, target_list=plex_track_search)
             if match:
                 if rating == "loved":

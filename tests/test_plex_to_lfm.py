@@ -54,3 +54,37 @@ def test_plex_unlove(services, cleanup):
     # Check that the track was unloved from LastFM
     lfm_loves_after = services.lfm.all_loves()
     assert len(lfm_loves_after) == 0
+
+
+def test_lfm_unlove(services, cleanup):
+    """
+    If a track is synced from Plex to LastFM, then the user unloves the track
+    on LastFM, it should be re-loved next sync
+    """
+    plex = services.plex
+
+    # Make sure we're starting with no loved tracks
+    assert len(plex.get_loved_tracks()) == 0
+
+    # Search for an arbitrary track, then love it
+    track_search = plex.music_library.search(libtype="track", limit=1)
+    plex_track = track_search[0]
+    plex.submit_rating(plex_track, plex.love_threshold)
+
+    services.lbz = None
+    plex_relay_loves(services)
+
+    lfm_loves = services.lfm.all_loves()
+    assert len(lfm_loves) == 1
+
+    # Un-love the track
+    services.lfm.reset(lfm_loves[0])
+    lfm_loves = services.lfm.all_loves()
+    assert len(lfm_loves) == 0
+
+    # Sync again
+    plex_relay_loves(services)
+
+    # Check that the track was unloved from LastFM
+    lfm_loves_after = services.lfm.all_loves()
+    assert len(lfm_loves_after) == 1

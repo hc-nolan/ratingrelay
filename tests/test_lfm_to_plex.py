@@ -8,16 +8,15 @@ def test_lfm_relay(services, cleanup):
     plex = services.plex
     lfm = services.lfm
 
-    # Search for an arbitrary track, then love it on ListenBrainz
-    track_search = plex.music_library.search(libtype="track", limit=1)
-    plex_track = track_search[0]
-
-    track = track_from_plex(
-        plex_track=plex_track, db=services.db, plex=plex, rating="loved"
-    )
-    lfm.love(track)
+    # Search for 10 arbitrary tracks, then love them on ListenBrainz
+    track_search = plex.music_library.search(libtype="track", limit=10)
+    for plex_track in track_search:
+        track = track_from_plex(
+            plex_track=plex_track, db=services.db, plex=plex, rating="loved"
+        )
+        lfm.love(track)
 
     lfm_relay(services)
 
     plex_loves = plex.get_loved_tracks()
-    assert len(plex_loves) == 1
+    assert len(plex_loves) == 10

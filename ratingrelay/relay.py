@@ -115,8 +115,16 @@ def check_list_match(track: Track, target_list: list) -> any:
     Check if there is a match for the provided `track` in the `target_list`.
     Returns the matching item.
     """
-    title = comparison_format(track.title)
-    artist = comparison_format(track.artist)
+    match track:
+        case Track():
+            title = comparison_format(track.title)
+            artist = comparison_format(track.artist)
+        case PlexTrack():
+            title = comparison_format(track.title)
+            artist = comparison_format(track.artist().title)
+        case tuple():
+            title = comparison_format(track[0])
+            artist = comparison_format(track[1])
 
     matched_title = False
 
@@ -127,7 +135,7 @@ def check_list_match(track: Track, target_list: list) -> any:
                 list_artist = comparison_format(list_track[1])
             case Track():
                 list_title = comparison_format(list_track.title)
-                list_artist = list_track.artist
+                list_artist = comparison_format(list_track.artist)
             case PlexTrack():
                 list_title = comparison_format(list_track.title)
                 list_artist = comparison_format(list_track.artist().title)

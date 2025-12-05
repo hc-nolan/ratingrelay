@@ -1,5 +1,6 @@
 from ratingrelay.config import settings
 from ratingrelay.relay import plex_relay_loves
+from tests.conftest import assert_relay_success
 
 
 def test_plex_relay_loves_to_lastfm(services, cleanup):
@@ -20,8 +21,12 @@ def test_plex_relay_loves_to_lastfm(services, cleanup):
     services.lbz = None
     plex_relay_loves(services)
 
-    lfm_loves = services.lfm.all_loves()
-    assert len(lfm_loves) == settings.test_limit
+    assert_relay_success(
+        expected=settings.test_limit,
+        actual=services.lfm.all_loves(),
+        source_getter=plex.get_loved_tracks,
+        rating="love",
+    )
 
 
 def test_plex_unlove(services, cleanup):
@@ -43,8 +48,12 @@ def test_plex_unlove(services, cleanup):
     services.lbz = None
     plex_relay_loves(services)
 
-    lfm_loves = services.lfm.all_loves()
-    assert len(lfm_loves) == settings.test_limit
+    assert_relay_success(
+        expected=settings.test_limit,
+        actual=services.lfm.all_loves(),
+        source_getter=plex.get_loved_tracks,
+        rating="love",
+    )
 
     # Un-love the tracks
     for plex_track in track_search:
@@ -76,11 +85,15 @@ def test_lfm_unlove(services, cleanup):
     services.lbz = None
     plex_relay_loves(services)
 
-    lfm_loves = services.lfm.all_loves()
-    assert len(lfm_loves) == settings.test_limit
+    assert_relay_success(
+        expected=settings.test_limit,
+        actual=services.lfm.all_loves(),
+        source_getter=plex.get_loved_tracks,
+        rating="love",
+    )
 
     # Un-love the tracks
-    for lfm_love in lfm_loves:
+    for lfm_love in services.lfm.all_loves():
         services.lfm.reset(lfm_love)
 
     lfm_loves = services.lfm.all_loves()
@@ -90,5 +103,9 @@ def test_lfm_unlove(services, cleanup):
     plex_relay_loves(services)
 
     # Check that the tracks were loved again on LastFM
-    lfm_loves_after = services.lfm.all_loves()
-    assert len(lfm_loves_after) == settings.test_limit
+    assert_relay_success(
+        expected=settings.test_limit,
+        actual=services.lfm.all_loves(),
+        source_getter=plex.get_loved_tracks,
+        rating="love",
+    )

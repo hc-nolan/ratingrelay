@@ -87,12 +87,22 @@ class ListenBrainz:
         else:
             log.warning(f"No MBID found. Unable to submit to ListenBrainz: {track}")
 
-    def reset(self, track: Track):
+    def reset(self, track: Track | dict):
         """
         Reset a track's ListenBrainz rating to 0.
         """
         log.info(f"ListenBrainz - resetting track: {track}")
-        self.client.submit_user_feedback(0, track.get("rec_mbid"))
+        match track:
+            case dict():
+                recording_mbid = track.get("rec_mbid")
+            case Track():
+                recording_mbid = track.mbid
+            case _:
+                raise ValueError(
+                    f"Invalid type for track argument: {track} - {type(track)}. "
+                    f"Supported types: Track, dict"
+                )
+        self.client.submit_user_feedback(0, recording_mbid)
 
     def love(self, track: Track):
         """

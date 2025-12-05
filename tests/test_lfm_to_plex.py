@@ -1,3 +1,5 @@
+from tests.conftest import assert_relay_success
+from ratingrelay.config import settings
 from ratingrelay.relay import lfm_relay, track_from_plex
 
 
@@ -8,16 +10,20 @@ def test_lfm_relay(services, cleanup):
     plex = services.plex
     lfm = services.lfm
 
-    # Search for an arbitrary track, then love it on ListenBrainz
-    track_search = plex.music_library.search(libtype="track", limit=1)
-    plex_track = track_search[0]
-
-    track = track_from_plex(
-        plex_track=plex_track, db=services.db, plex=plex, rating="loved"
-    )
-    lfm.love(track)
+    # Search for arbitrary tracks and love them on ListenBrainz
+    track_search = plex.music_library.search(libtype="track", limit=settings.test_limit)
+    for plex_track in track_search:
+        track = track_from_plex(
+            plex_track=plex_track, db=services.db, plex=plex, rating="loved"
+        )
+        lfm.love(track)
 
     lfm_relay(services)
 
     plex_loves = plex.get_loved_tracks()
-    assert len(plex_loves) == 1
+    assert_relay_success(
+        expected=settings.test_limit,
+        actual=plex_loves,
+        source_getter=lfm.all_loves,
+        rating="love",
+    )

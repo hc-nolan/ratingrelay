@@ -61,6 +61,8 @@ API credentials:
 
 **Warning**: Tests reset all data on the configured accounts. Use separate test accounts to avoid data loss.
 
+By default, test syncs use 10 tracks. You can modify this by setting the `TEST_LIMIT` value in `config.env`.
+
 1. [Install uv](https://docs.astral.sh/uv/#installation)
 2. Install dependencies:
    ```bash
@@ -78,4 +80,6 @@ API credentials:
 7. Run tests:
    ```bash
    uv run pytest
+   # note: -s flag recommended to see stdout
+   uv run pytest -s
    ```

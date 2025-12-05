@@ -115,26 +115,38 @@ def check_list_match(track: Track, target_list: list) -> any:
     Check if there is a match for the provided `track` in the `target_list`.
     Returns the matching item.
     """
-    title = comparison_format(track.title)
-    artist = comparison_format(track.artist)
+    match track:
+        case Track():
+            title = comparison_format(track.title)
+            artist = comparison_format(track.artist)
+        case PlexTrack():
+            title = comparison_format(track.title)
+            artist = comparison_format(track.artist().title)
+        case tuple():
+            title = comparison_format(track[0])
+            artist = comparison_format(track[1])
 
     matched_title = False
 
     for list_track in target_list:
-        if isinstance(list_track, tuple):
-            list_title = comparison_format(list_track[0])
-        else:
-            list_title = comparison_format(list_track.title)
+        match list_track:
+            case tuple():
+                list_title = comparison_format(list_track[0])
+                list_artist = comparison_format(list_track[1])
+            case Track():
+                list_title = comparison_format(list_track.title)
+                list_artist = comparison_format(list_track.artist)
+            case PlexTrack():
+                list_title = comparison_format(list_track.title)
+                list_artist = comparison_format(list_track.artist().title)
+            case _:
+                log.warning(
+                    f"Unrecognized type for comparison track: {list_track} - "
+                    f"Type: {type(list_track)}"
+                )
+                continue
         if (title in list_title) or (list_title in title):
             matched_title = True
-
-            temp_artist = list_track.artist
-            if not isinstance(temp_artist, str):
-                # If list_track.artist isn't a string, the track is a
-                # PlexTrack; call artist().title to get the artist name
-                list_artist = comparison_format(list_track.artist().title)
-            else:
-                list_artist = comparison_format(list_track.artist)
 
             if (artist in list_artist) or (list_artist in artist):
                 return list_track
@@ -155,7 +167,14 @@ def comparison_format(item: str) -> str:
 
     Removes any quote/apostrophe characters, converts to lowercase
     """
-    return item.lower().replace("'", "").replace("’", "")
+    return (
+        item.lower()
+        .replace("'", "")
+        .replace("’", "")  # smart quote
+        .replace("&", "and")
+        .replace("‐", "")  # fancy hyphen
+        .replace("-", "")
+    )
 
 
 def plex_relay_hates(services: Services) -> dict:
@@ -433,9 +452,14 @@ def sync_list_with_plex(tracks: set[Track], services: Services, rating: str) -> 
     plex = services.plex
 
     log.info(f"Querying Plex for {rating} tracks")
-    plex_items = to_tracks(
-        plex_tracks=plex.get_loved_tracks(), services=services, rating=rating
-    )
+    if rating == "loved":
+        plex_items = to_tracks(
+            plex_tracks=plex.get_loved_tracks(), services=services, rating=rating
+        )
+    else:
+        plex_items = to_tracks(
+            plex_tracks=plex.get_hated_tracks(), services=services, rating=rating
+        )
     log.info(f"Plex returned {len(plex_items)} {rating} tracks.")
 
     plex_added = 0
@@ -446,11 +470,20 @@ def sync_list_with_plex(tracks: set[Track], services: Services, rating: str) -> 
             plex_track_search = plex.music_library.search(
                 libtype="track", title=track.title.lower()
             )
-            if len(plex_track_search) == 0:
-                # if no results were returned, try a search again with smart quotes
-                plex_track_search = plex.music_library.search(
-                    libtype="track", title=track.title.lower().replace("'", "’")
-                )
+            match = check_list_match(track=track, target_list=plex_track_search)
+            if not match:
+                if "'" in track.title:
+                    plex_track_search = plex.music_library.search(
+                        libtype="track", title=track.title.lower().replace("'", "’")
+                    )
+                if "’" in track.title:
+                    plex_track_search = plex.music_library.search(
+                        libtype="track", title=track.title.lower().replace("’", "'")
+                    )
+                if "‐" in track.title:
+                    plex_track_search = plex.music_library.search(
+                        libtype="track", title=track.title.lower().replace("‐", "-")
+                    )
 
             match = check_list_match(track=track, target_list=plex_track_search)
             if match:
@@ -462,6 +495,8 @@ def sync_list_with_plex(tracks: set[Track], services: Services, rating: str) -> 
                     plex.submit_rating(match, plex.hate_threshold)
 
                 plex_added += 1
+            else:
+                log.warning(f"No match found on Plex for track: {track}")
         else:
             log.info(f"Track already {rating} on Plex: {track}")
 

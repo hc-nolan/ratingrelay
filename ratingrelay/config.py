@@ -61,6 +61,7 @@ class Settings(BaseSettings):
     lastfm_password: Optional[str] = None
     listenbrainz_token: Optional[str] = None
     listenbrainz_username: Optional[str] = None
+    test_limit: Optional[int] = 10
 
     @field_validator("plex_server_url")
     @classmethod
@@ -113,7 +114,7 @@ class LogConfig(BaseModel):
         "file": {
             "formatter": "default",
             "class": "logging.handlers.TimedRotatingFileHandler",
-            "filename": "data/ratingrelay.log",
+            "filename": "ratingrelay.log",
             "when": "midnight",
             "interval": 30,
             "backupCount": 6,

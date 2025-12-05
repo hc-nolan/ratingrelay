@@ -36,7 +36,7 @@ def assert_relay_success(expected: int, actual: list, source_getter, rating: str
 
         print(f"Missing tracks ({len(missing)}):")
         for track in missing:
-            print(track)
+            print(f"{track.artist().title} - {track.title}")
 
         success_rate = (expected - len(missing)) / expected
 

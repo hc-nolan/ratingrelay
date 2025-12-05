@@ -8,6 +8,8 @@ from ratingrelay.relay import check_list_match
 from ratingrelay import setup_services
 from ratingrelay.config import settings
 from ratingrelay.reset import reset
+from ratingrelay.track import Track
+from ratingrelay.plex import PlexTrack
 
 
 @pytest.fixture
@@ -36,7 +38,11 @@ def assert_relay_success(expected: int, actual: list, source_getter, rating: str
 
         print(f"Missing tracks ({len(missing)}):")
         for track in missing:
-            print(f"{track.artist().title} - {track.title}")
+            match track:
+                case PlexTrack():
+                    print(f"{track.artist().title} - {track.title}")
+                case Track():
+                    print(f"{track.artist} - {track.title}")
 
         success_rate = (expected - len(missing)) / expected
 

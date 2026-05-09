@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel
 
 
@@ -7,5 +9,5 @@ class ListenBrainzAuthRequest(BaseModel):
 
 
 class ListenBrainzStatusResponse(BaseModel):
-    status: str  # "connected" | "needs-auth"
+    status: Literal["connected", "needs-auth"]
     username: str | None = None

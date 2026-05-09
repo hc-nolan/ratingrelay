@@ -1,14 +1,8 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
-from zoneinfo import ZoneInfo
 
 from sqlmodel import Field, SQLModel
-
-from ratingrelay.settings import get_settings
-
-settings = get_settings()
-timezone = ZoneInfo(settings.timezone)
 
 
 class ServiceName(str, Enum):
@@ -38,4 +32,4 @@ class ServiceCredential(SQLModel, table=True):
     plex_server_url: Optional[str] = Field(default=None)
     plex_server_name: Optional[str] = Field(default=None)
 
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(tz=timezone))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))

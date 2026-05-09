@@ -29,10 +29,16 @@ export interface ListenBrainzAuthState {
 	username?: string;
 }
 
+export interface PlexServerItem {
+	name: string;
+	product: string;
+	client_identifier: string;
+}
+
 export interface AuthCheckResult {
-	plex: Pick<PlexAuthState, 'status' | 'username' | 'server_name' | 'server_url'>;
-	lastfm: Pick<LastFMAuthState, 'status' | 'username'>;
-	listenbrainz: Pick<ListenBrainzAuthState, 'status' | 'username'>;
+	plex: PlexAuthState;
+	lastfm: LastFMAuthState;
+	listenbrainz: ListenBrainzAuthState;
 }
 
 /**

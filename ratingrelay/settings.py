@@ -1,11 +1,10 @@
 import sys
-from typing import Optional
 from functools import lru_cache
+from typing import Optional
 import logging
-from pydantic import HttpUrl, field_validator
+from pydantic import HttpUrl
 from pydantic_settings import SettingsConfigDict, BaseSettings
 from pydantic_core import ValidationError
-import httpx
 import musicbrainzngs as mbz
 
 
@@ -46,22 +45,6 @@ class Settings(BaseSettings):
     lastfm_password: Optional[str] = None
     listenbrainz_token: Optional[str] = None
     listenbrainz_username: Optional[str] = None
-
-    @field_validator("plex_server_url")
-    @classmethod
-    def validate_server_reachable(cls, v):
-        """Check if the Plex server is reachable."""
-        if not v:
-            # Don't validate if no value was provided
-            return v
-        try:
-            httpx.head(str(v), timeout=5.0, follow_redirects=True)
-            return v
-        except (httpx.ConnectError, httpx.TimeoutException) as e:
-            raise ValueError(
-                f"Cannot reach Plex server at {v}. "
-                f"Please check the URL and ensure the server is running. Error: {e}"
-            ) from e
 
 
 @lru_cache()

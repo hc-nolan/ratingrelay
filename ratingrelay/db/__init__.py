@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from ratingrelay.settings import settings
 from ratingrelay.models.models import Loves, Hates, Reset
+from ratingrelay.models.services import ServiceCredential  # noqa: F401 — ensure table is registered
 
 
 SQLITE_URL = f"sqlite+aiosqlite:///{settings.database}"

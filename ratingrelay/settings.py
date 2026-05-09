@@ -1,9 +1,8 @@
 import sys
 from typing import Optional
 from functools import lru_cache
-from logging.config import dictConfig
 import logging
-from pydantic import BaseModel, HttpUrl, field_validator
+from pydantic import HttpUrl, field_validator
 from pydantic_settings import SettingsConfigDict, BaseSettings
 from pydantic_core import ValidationError
 import httpx
@@ -25,7 +24,7 @@ class Settings(BaseSettings):
         test_limit: Request limit used when running tests
     """
 
-    version = "2.0.0"
+    version: str = "2.0.0"
     model_config = SettingsConfigDict(env_file=".config")
 
     frontend_dir: str = "frontend/build"
@@ -35,7 +34,9 @@ class Settings(BaseSettings):
     timezone: str = "America/Toronto"
     secret: str = "AUTHSECRET"
     test_limit: Optional[int] = 10
-    # TODO: frontend flow for all of these if not provided at startup
+    # Below settings are all optional. If not found, you will be prompted
+    # to enter them in the frontend.
+    # Values here take precedence over values in the database.
     plex_server_url: Optional[HttpUrl] = None
     plex_music_library: str = "Music"
     plex_token: Optional[str] = None
@@ -50,6 +51,9 @@ class Settings(BaseSettings):
     @classmethod
     def validate_server_reachable(cls, v):
         """Check if the Plex server is reachable."""
+        if not v:
+            # Don't validate if no value was provided
+            return v
         try:
             httpx.head(str(v), timeout=5.0, follow_redirects=True)
             return v
@@ -58,8 +62,6 @@ class Settings(BaseSettings):
                 f"Cannot reach Plex server at {v}. "
                 f"Please check the URL and ensure the server is running. Error: {e}"
             ) from e
-
-    # END TODO
 
 
 @lru_cache()
@@ -92,30 +94,42 @@ except ValidationError as e:
     sys.exit(1)
 
 
-class LogConfig(BaseModel):
-    LOGGER_NAME: str = "ratingrelay"
-    LOG_FORMAT: str = "%(levelprefix)s %(asctime)s %(message)s"
-    LOG_LEVEL: str = settings.log_level
-    version: int = 1
-    formatters: dict = {
+LOG_CONFIG = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
         "default": {
             "()": "uvicorn.logging.DefaultFormatter",
-            "fmt": LOG_FORMAT,
-            "datefmt": "%Y-%m-%d %H:%M:%S",
+            "fmt": "%(levelprefix)s %(message)s",
+            "use_colors": None,
         },
-    }
-    handlers: dict = {
+        "access": {
+            "()": "uvicorn.logging.AccessFormatter",
+            "fmt": '%(levelprefix)s %(client_addr)s - "%(request_line)s" %(status_code)s',
+        },
+    },
+    "handlers": {
         "default": {
             "formatter": "default",
             "class": "logging.StreamHandler",
             "stream": "ext://sys.stderr",
         },
-    }
-    loggers: dict = {
-        "uvicorn": {"handlers": ["default"], "level": LOG_LEVEL},
-        "ratingrelay": {"handlers": ["default"], "level": LOG_LEVEL},
-    }
+        "access": {
+            "formatter": "access",
+            "class": "logging.StreamHandler",
+            "stream": "ext://sys.stdout",
+        },
+    },
+    "loggers": {
+        "uvicorn": {"handlers": ["default"], "level": "INFO", "propagate": False},
+        "uvicorn.error": {"level": "INFO"},
+        "uvicorn.access": {"handlers": ["access"], "level": "INFO", "propagate": False},
+        "ratingrelay": {
+            "handlers": ["default"],
+            "level": settings.log_level,
+            "propagate": False,
+        },
+    },
+}
 
-
-dictConfig(LogConfig().model_dump())
 logger = logging.getLogger("ratingrelay")

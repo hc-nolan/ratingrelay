@@ -8,6 +8,11 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+import logging
+
+from ratingrelay.routes.lastfm import router as lastfm_router
+from ratingrelay.routes.listenbrainz import router as listenbrainz_router
+from ratingrelay.routes.plex import router as plex_router
 from ratingrelay.settings import get_settings
 
 settings = get_settings()
@@ -32,6 +37,10 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+app.include_router(plex_router)
+app.include_router(lastfm_router)
+app.include_router(listenbrainz_router)
 
 
 @app.get("/{full_path:path}")

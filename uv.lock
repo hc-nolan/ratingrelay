@@ -792,6 +792,18 @@ wheels = [
 ]
 
 [[package]]
+name = "pylast"
+version = "7.0.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/dc/56/1729aa02df4bf959f31f6bd024775f8be0aaa08fd18a1d2bbdaab3c38e9e/pylast-7.0.2.tar.gz", hash = "sha256:825e2b5d9144c5491d9c353511169a1595813e6a1ad203faf7525cd2d1d1828e", size = 435704 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/07/94/677dade2b8ed48631de3fd34b320ebfd59b7a66f831640831112d7a7190b/pylast-7.0.2-py3-none-any.whl", hash = "sha256:c995e078670b3a8e3116a31b17d1f0d89c4d020407f6967ee9ffab2aeecd9de7", size = 26773 },
+]
+
+[[package]]
 name = "pylint"
 version = "4.0.5"
 source = { registry = "https://pypi.org/simple" }
@@ -907,7 +919,7 @@ wheels = [
 
 [[package]]
 name = "ratingrelay2"
-version = "0.1.0"
+version = "2.0.0"
 source = { virtual = "." }
 dependencies = [
     { name = "aiosqlite" },
@@ -919,6 +931,7 @@ dependencies = [
     { name = "plexapi" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
+    { name = "pylast" },
     { name = "pylint" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -938,6 +951,7 @@ requires-dist = [
     { name = "plexapi", specifier = ">=4.18.1" },
     { name = "pydantic", specifier = ">=2.13.4" },
     { name = "pydantic-settings", specifier = ">=2.14.0" },
+    { name = "pylast", specifier = ">=7.0.2" },
     { name = "pylint", specifier = ">=4.0.5" },
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "pytest-asyncio", specifier = ">=1.3.0" },

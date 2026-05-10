@@ -6,7 +6,6 @@
 	let { data }: { data: PageData } = $props();
 
 	// ── Service state ─────────────────────────────────────────────────────────
-	// untrack: intentionally snapshot load values; mutations are local from here on.
 	let plex = $state<PlexAuthState>(untrack(() => ({ ...data.authStatus.plex })));
 	let lastfm = $state<LastFMAuthState>(untrack(() => ({ ...data.authStatus.lastfm })));
 	let listenbrainz = $state<ListenBrainzAuthState>(untrack(() => ({ ...data.authStatus.listenbrainz })));
@@ -25,10 +24,6 @@
 	});
 
 	// ── Plex OAuth popup flow ─────────────────────────────────────────────────
-	// POST /api/plex/auth/init  → { pin_id: number, oauth_url: string }
-	// GET  /api/plex/auth/callback  (handled by backend, closes popup via postMessage)
-	// GET  /api/plex/auth/status    → PlexStatusResponse
-
 	let plexPopup: Window | null = null;
 
 	async function startPlexAuth() {
@@ -38,7 +33,6 @@
 			if (!res.ok) throw new Error(await res.text());
 			const { oauth_url }: { pin_id: number; oauth_url: string } = await res.json();
 
-			// Open Plex OAuth in a centred popup
 			const w = 800, h = 700;
 			const left = Math.round(window.screenX + (window.outerWidth - w) / 2);
 			const top = Math.round(window.screenY + (window.outerHeight - h) / 2);
@@ -48,14 +42,12 @@
 				`width=${w},height=${h},left=${left},top=${top},toolbar=0,menubar=0`
 			);
 
-			plex.status = 'needs-auth'; // show "waiting for popup" UI
+			plex.status = 'needs-auth';
 		} catch {
 			plex.status = 'error';
 		}
 	}
 
-	// Listen for the postMessage sent by the backend callback page.
-	// Check origin to avoid acting on messages from other pages.
 	function handleMessage(event: MessageEvent) {
 		if (event.origin !== window.location.origin) return;
 		if (event.data !== 'plex:authed') return;
@@ -75,7 +67,6 @@
 			plex.username = body.username;
 			plex.server_name = body.server_name;
 			plex.server_url = body.server_url;
-			// Clear stale server list so it reloads on next server-select step
 			if (body.status === 'connected') {
 				availableServers = [];
 				selectedServer = '';
@@ -91,9 +82,6 @@
 	});
 
 	// ── Server selection ──────────────────────────────────────────────────────
-	// GET  /api/plex/servers   → { servers: PlexServerItem[] }
-	// POST /api/plex/server    → PlexStatusResponse
-
 	let availableServers = $state<PlexServerItem[]>([]);
 	let selectedServer = $state('');
 	let loadingServers = $state(false);
@@ -115,7 +103,6 @@
 		}
 	}
 
-	// Auto-load servers when we reach the server-select step
 	$effect(() => {
 		if (step === 'server-select' && availableServers.length === 0) {
 			loadServers();
@@ -145,8 +132,6 @@
 	}
 
 	// ── LastFM credentials form ───────────────────────────────────────────────
-	// POST /api/lastfm/auth  { api_key, api_secret, username, password }
-
 	let lastfmForm = $state({ api_key: '', api_secret: '', username: '', password: '' });
 	let lastfmError = $state('');
 
@@ -176,8 +161,6 @@
 	}
 
 	// ── ListenBrainz token flow ───────────────────────────────────────────────
-	// POST /api/listenbrainz/auth  { username, token }
-
 	let lbForm = $state({ username: '', token: '' });
 	let lbError = $state('');
 
@@ -214,11 +197,569 @@
 		disabled: 'Disabled',
 		error: 'Error',
 	};
+
+	// ── Relay home state ──────────────────────────────────────────────────────
+
+	type ServiceId = 'plex' | 'lastfm' | 'listenbrainz';
+
+	let selectedSource = $state<ServiceId>('plex');
+
+	let plexSourceConfig = $state({ ratingThreshold: 8, comparison: 'gte' as 'gte' | 'lte' });
+	let lbzSourceConfig = $state({ feedbackType: 'love' as 'love' | 'hate' });
+
+	let plexTargetEnabled = $state(false);
+	let plexTargetConfig = $state({ rating: 10 });
+	let lastfmTargetEnabled = $state(false);
+	let lbzTargetEnabled = $state(false);
+	let lbzTargetConfig = $state({ feedbackType: 'love' as 'love' | 'hate' });
+
+	let relaying = $state(false);
+	let relayResult = $state<{
+		status: string;
+		tracks_fetched: number;
+		results: { service: string; processed: number; errors: number }[];
+	} | null>(null);
+	let relayError = $state('');
+
+	let canRelay = $derived(
+		!relaying && (plexTargetEnabled || lastfmTargetEnabled || lbzTargetEnabled)
+	);
+
+	const plexStarOptions = [
+		{ value: 1,  label: '½★ 0.5 stars' },
+		{ value: 2,  label: '★ 1 star' },
+		{ value: 3,  label: '★½ 1.5 stars' },
+		{ value: 4,  label: '★★ 2 stars' },
+		{ value: 5,  label: '★★½ 2.5 stars' },
+		{ value: 6,  label: '★★★ 3 stars' },
+		{ value: 7,  label: '★★★½ 3.5 stars' },
+		{ value: 8,  label: '★★★★ 4 stars' },
+		{ value: 9,  label: '★★★★½ 4.5 stars' },
+		{ value: 10, label: '★★★★★ 5 stars' },
+	];
+
+	function buildRelayPayload() {
+		let source: object;
+		if (selectedSource === 'plex') {
+			source = {
+				service: 'plex',
+				rating_threshold: plexSourceConfig.ratingThreshold,
+				comparison: plexSourceConfig.comparison,
+			};
+		} else if (selectedSource === 'lastfm') {
+			source = { service: 'lastfm' };
+		} else {
+			source = { service: 'listenbrainz', feedback_type: lbzSourceConfig.feedbackType };
+		}
+
+		const targets: object[] = [];
+		if (plexTargetEnabled && plex.status === 'connected' && plex.server_name) {
+			targets.push({ service: 'plex', rating: plexTargetConfig.rating });
+		}
+		if (lastfmTargetEnabled && lastfm.status === 'connected') {
+			targets.push({ service: 'lastfm' });
+		}
+		if (lbzTargetEnabled && listenbrainz.status === 'connected') {
+			targets.push({ service: 'listenbrainz', feedback_type: lbzTargetConfig.feedbackType });
+		}
+
+		return { source, targets };
+	}
+
+	async function runRelay() {
+		if (!canRelay) return;
+		relaying = true;
+		relayResult = null;
+		relayError = '';
+		try {
+			const res = await fetch('/api/relay/run', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(buildRelayPayload()),
+			});
+			if (!res.ok) {
+				const err = await res.json().catch(() => ({ detail: 'Relay failed' }));
+				relayError = err.detail ?? 'Relay failed';
+				return;
+			}
+			relayResult = await res.json();
+		} catch {
+			relayError = 'Network error';
+		} finally {
+			relaying = false;
+		}
+	}
+
+	const serviceLabels: Record<ServiceId, string> = {
+		plex: 'Plex',
+		lastfm: 'Last.fm',
+		listenbrainz: 'ListenBrainz',
+	};
+
+	// ── Job queue state ───────────────────────────────────────────────────────
+
+	let recurring = $state(false);
+	let intervalMinutes = $state(1440);
+
+	const frequencyOptions = [
+		{ value: 60, label: 'Every hour' },
+		{ value: 360, label: 'Every 6 hours' },
+		{ value: 720, label: 'Every 12 hours' },
+		{ value: 1440, label: 'Daily' },
+		{ value: 10080, label: 'Weekly' },
+	];
+
+	interface JobData {
+		id: string;
+		status: string;
+		source_config: Record<string, unknown>;
+		targets_config: Record<string, unknown>[];
+		recurring: boolean;
+		interval_minutes?: number;
+		run_at?: string;
+		created_at: string;
+		started_at?: string;
+		completed_at?: string;
+		tracks_fetched: number;
+		tracks_ok: number;
+		tracks_err: number;
+	}
+
+	let jobs = $state<JobData[]>([]);
+
+	let canQueue = $derived(
+		!relaying && (plexTargetEnabled || lastfmTargetEnabled || lbzTargetEnabled)
+	);
+
+	async function queueJob() {
+		if (!canQueue) return;
+		relaying = true;
+		relayResult = null;
+		relayError = '';
+		try {
+			const payload = {
+				...buildRelayPayload(),
+				recurring,
+				interval_minutes: recurring ? intervalMinutes : undefined,
+			};
+			const res = await fetch('/api/relay/jobs', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(payload),
+			});
+			if (!res.ok) {
+				if (res.status === 409) {
+					const err = await res.json().catch(() => ({ detail: 'Duplicate job' }));
+					relayError = err.detail ?? 'An equivalent job is already active';
+					return;
+				}
+				const err = await res.json().catch(() => ({ detail: 'Queue failed' }));
+				relayError = err.detail ?? 'Failed to queue job';
+				return;
+			}
+			const job: JobData = await res.json();
+			jobs = [job, ...jobs];
+		} catch {
+			relayError = 'Network error';
+		} finally {
+			relaying = false;
+		}
+	}
+
+	async function loadJobs() {
+		try {
+			const res = await fetch('/api/relay/jobs');
+			if (!res.ok) return;
+			jobs = await res.json();
+		} catch {
+			// silently ignore
+		}
+	}
+
+	async function cancelJob(jobId: string) {
+		try {
+			const res = await fetch(`/api/relay/jobs/${jobId}`, { method: 'DELETE' });
+			if (!res.ok) return;
+			const updated: JobData = await res.json();
+			jobs = jobs.map(j => j.id === jobId ? { ...j, ...updated } : j);
+		} catch {
+			// silently ignore
+		}
+	}
+
+	// ── Helper functions ──────────────────────────────────────────────────────
+
+	function summarizeSource(cfg: Record<string, unknown>): string {
+		const svc = cfg.service as string;
+		if (svc === 'plex') {
+			const cmp = cfg.comparison === 'gte' ? '≥' : '≤';
+			const rating = (cfg.rating_threshold as number) / 2;
+			return `Plex ${cmp} ${rating}★`;
+		}
+		if (svc === 'lastfm') return 'Last.fm loved';
+		if (svc === 'listenbrainz') {
+			const fb = cfg.feedback_type as string;
+			return `ListenBrainz ${fb}d`;
+		}
+		return svc;
+	}
+
+	function summarizeTargets(cfgs: Record<string, unknown>[]): string {
+		return cfgs
+			.map(c => {
+				const s = c.service as string;
+				if (s === 'plex') return 'Plex';
+				if (s === 'lastfm') return 'Last.fm';
+				if (s === 'listenbrainz') return 'ListenBrainz';
+				return s;
+			})
+			.join(' + ');
+	}
+
+	function formatNextRun(runAt: string): string {
+		const diff = new Date(runAt).getTime() - Date.now();
+		if (diff <= 0) return 'soon';
+		const h = Math.floor(diff / 3600000);
+		const m = Math.floor((diff % 3600000) / 60000);
+		if (h > 0) return `in ${h}h ${m}m`;
+		return `in ${m}m`;
+	}
+
+	function statusColor(status: string): string {
+		const map: Record<string, string> = {
+			queued: 'status-queued',
+			scheduled: 'status-scheduled',
+			running: 'status-running',
+			completed: 'status-completed',
+			partial: 'status-partial',
+			failed: 'status-failed',
+			cancelled: 'status-cancelled',
+		};
+		return map[status] ?? 'status-queued';
+	}
+
+	// ── Mount: load jobs and poll for status updates ──────────────────────────
+	$effect(() => {
+		loadJobs();
+		const poll = setInterval(loadJobs, 5000);
+		return () => clearInterval(poll);
+	});
 </script>
 
 <svelte:head>
-	<title>RatingRelay — Setup</title>
+	<title>RatingRelay</title>
 </svelte:head>
+
+{#if step === 'done'}
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- Relay Home                                                              -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+
+<div class="setup-root">
+	<div class="bg-noise" aria-hidden="true"></div>
+
+	<main class="relay-main">
+
+		<!-- Header -->
+		<header class="setup-header">
+			<div class="logo-mark" aria-hidden="true">
+				<span class="logo-signal"></span>
+				<span class="logo-signal"></span>
+				<span class="logo-signal"></span>
+			</div>
+			<div style="flex:1">
+				<div class="title-row">
+					<h1 class="setup-title">RatingRelay</h1>
+					<a href="/unmatched" class="nav-link">Unmatched tracks</a>
+				</div>
+				<div class="conn-pills">
+					{#if plex.status === 'connected'}
+						<span class="conn-pill">
+							<svg viewBox="0 0 512 512" width="10" height="10"><path d="M256 70H148l108 186-108 186h108l108-186z" fill="currentColor"/></svg>
+							{plex.server_name}
+						</span>
+					{/if}
+					{#if lastfm.status === 'connected'}
+						<span class="conn-pill lastfm-pill">Last.fm · {lastfm.username}</span>
+					{/if}
+					{#if listenbrainz.status === 'connected'}
+						<span class="conn-pill lb-pill">ListenBrainz · {listenbrainz.username}</span>
+					{/if}
+				</div>
+			</div>
+		</header>
+
+		<!-- ── FROM section ───────────────────────────────────────────────── -->
+		<section class="relay-card">
+			<div class="relay-card-label">FROM</div>
+
+			<!-- Source service tabs -->
+			<div class="source-tabs">
+				{#if plex.status === 'connected' && plex.server_name}
+					<button
+						class="source-tab"
+						class:tab-active={selectedSource === 'plex'}
+						onclick={() => selectedSource = 'plex'}
+					>
+						<svg viewBox="0 0 512 512" width="14" height="14" aria-hidden="true"><rect width="512" height="512" rx="15%" fill="#282a2d"/><path d="M256 70H148l108 186-108 186h108l108-186z" fill="#e5a00d"/></svg>
+						Plex
+					</button>
+				{/if}
+				{#if lastfm.status === 'connected'}
+					<button
+						class="source-tab"
+						class:tab-active={selectedSource === 'lastfm'}
+						onclick={() => selectedSource = 'lastfm'}
+					>
+						<svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14" aria-hidden="true"><path d="M10.584 17.21l-.88-2.392s-1.43 1.6-3.573 1.6c-1.898 0-3.244-1.65-3.244-4.29 0-3.38 1.703-4.594 3.38-4.594 2.42 0 3.19 1.565 3.85 3.576l.88 2.75c.88 2.673 2.53 4.815 7.315 4.815 3.41 0 5.73-1.045 5.73-3.8 0-2.227-1.265-3.38-3.63-3.93l-1.76-.385c-1.21-.275-1.57-.77-1.57-1.593 0-.935.737-1.483 1.95-1.483 1.318 0 2.03.494 2.14 1.67l2.75-.33c-.22-2.47-1.925-3.48-4.755-3.48-2.49 0-4.82.935-4.82 3.93 0 1.87.907 3.05 3.19 3.6l1.87.44c1.375.33 1.87.88 1.87 1.76 0 1.046-.99 1.483-2.862 1.483-2.75 0-3.9-1.43-4.562-3.38l-.91-2.75c-1.155-3.52-3-4.87-6.655-4.87C1.87 5.528 0 8.278 0 12.238c0 3.82 1.87 6.234 6.04 6.234 3.135 0 4.544-1.262 4.544-1.262z"/></svg>
+						Last.fm
+					</button>
+				{/if}
+				{#if listenbrainz.status === 'connected'}
+					<button
+						class="source-tab"
+						class:tab-active={selectedSource === 'listenbrainz'}
+						onclick={() => selectedSource = 'listenbrainz'}
+					>
+						<svg viewBox="9,0,128,160" width="14" height="14" aria-hidden="true"><path d="m75.354 7.823v144l61-35v-74z" fill="#eb743b"/><path d="m70.354 7.823-61 35v74l61 35z" fill="#353070"/></svg>
+						ListenBrainz
+					</button>
+				{/if}
+			</div>
+
+			<!-- Source config -->
+			<div class="source-config">
+				{#if selectedSource === 'plex'}
+					<span class="config-label">Fetch tracks rated</span>
+					<select class="relay-select" bind:value={plexSourceConfig.comparison}>
+						<option value="gte">at least</option>
+						<option value="lte">at most</option>
+					</select>
+					<select class="relay-select" bind:value={plexSourceConfig.ratingThreshold}>
+						{#each plexStarOptions as opt}
+							<option value={opt.value}>{opt.label}</option>
+						{/each}
+					</select>
+				{:else if selectedSource === 'lastfm'}
+					<span class="config-label">Fetch all loved tracks</span>
+				{:else if selectedSource === 'listenbrainz'}
+					<span class="config-label">Fetch</span>
+					<div class="toggle-group">
+						<button
+							class="toggle-btn"
+							class:toggle-active={lbzSourceConfig.feedbackType === 'love'}
+							onclick={() => lbzSourceConfig.feedbackType = 'love'}
+						>Loved</button>
+						<button
+							class="toggle-btn"
+							class:toggle-active={lbzSourceConfig.feedbackType === 'hate'}
+							onclick={() => lbzSourceConfig.feedbackType = 'hate'}
+						>Hated</button>
+					</div>
+					<span class="config-label">recordings</span>
+				{/if}
+			</div>
+		</section>
+
+		<!-- ── TO section ─────────────────────────────────────────────────── -->
+		<section class="relay-card">
+			<div class="relay-card-label">TO</div>
+
+			<div class="targets-list">
+
+				<!-- Plex target -->
+				{#if plex.status === 'connected' && plex.server_name && selectedSource !== 'plex'}
+					<div class="target-row" class:target-enabled={plexTargetEnabled}>
+						<label class="target-check">
+							<input type="checkbox" bind:checked={plexTargetEnabled} />
+							<svg viewBox="0 0 512 512" width="14" height="14" aria-hidden="true"><rect width="512" height="512" rx="15%" fill="#282a2d"/><path d="M256 70H148l108 186-108 186h108l108-186z" fill="#e5a00d"/></svg>
+							<span>Plex</span>
+						</label>
+						{#if plexTargetEnabled}
+							<div class="target-config">
+								<span class="config-label">Rate as</span>
+								<select class="relay-select" bind:value={plexTargetConfig.rating}>
+									{#each plexStarOptions as opt}
+										<option value={opt.value}>{opt.label}</option>
+									{/each}
+								</select>
+							</div>
+						{:else}
+							<span class="target-hint">Rate tracks in your Plex library</span>
+						{/if}
+					</div>
+				{/if}
+
+				<!-- Last.fm target -->
+				{#if lastfm.status === 'connected' && selectedSource !== 'lastfm'}
+					<div class="target-row" class:target-enabled={lastfmTargetEnabled}>
+						<label class="target-check">
+							<input type="checkbox" bind:checked={lastfmTargetEnabled} />
+							<svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14" aria-hidden="true"><path d="M10.584 17.21l-.88-2.392s-1.43 1.6-3.573 1.6c-1.898 0-3.244-1.65-3.244-4.29 0-3.38 1.703-4.594 3.38-4.594 2.42 0 3.19 1.565 3.85 3.576l.88 2.75c.88 2.673 2.53 4.815 7.315 4.815 3.41 0 5.73-1.045 5.73-3.8 0-2.227-1.265-3.38-3.63-3.93l-1.76-.385c-1.21-.275-1.57-.77-1.57-1.593 0-.935.737-1.483 1.95-1.483 1.318 0 2.03.494 2.14 1.67l2.75-.33c-.22-2.47-1.925-3.48-4.755-3.48-2.49 0-4.82.935-4.82 3.93 0 1.87.907 3.05 3.19 3.6l1.87.44c1.375.33 1.87.88 1.87 1.76 0 1.046-.99 1.483-2.862 1.483-2.75 0-3.9-1.43-4.562-3.38l-.91-2.75c-1.155-3.52-3-4.87-6.655-4.87C1.87 5.528 0 8.278 0 12.238c0 3.82 1.87 6.234 6.04 6.234 3.135 0 4.544-1.262 4.544-1.262z"/></svg>
+							<span>Last.fm</span>
+						</label>
+						{#if lastfmTargetEnabled}
+							<div class="target-config">
+								<span class="config-label fixed-action">Love tracks</span>
+							</div>
+						{:else}
+							<span class="target-hint">Love tracks on Last.fm</span>
+						{/if}
+					</div>
+				{/if}
+
+				<!-- ListenBrainz target -->
+				{#if listenbrainz.status === 'connected' && selectedSource !== 'listenbrainz'}
+					<div class="target-row" class:target-enabled={lbzTargetEnabled}>
+						<label class="target-check">
+							<input type="checkbox" bind:checked={lbzTargetEnabled} />
+							<svg viewBox="9,0,128,160" width="14" height="14" aria-hidden="true"><path d="m75.354 7.823v144l61-35v-74z" fill="#eb743b"/><path d="m70.354 7.823-61 35v74l61 35z" fill="#353070"/></svg>
+							<span>ListenBrainz</span>
+						</label>
+						{#if lbzTargetEnabled}
+							<div class="target-config">
+								<span class="config-label">Mark as</span>
+								<div class="toggle-group">
+									<button
+										class="toggle-btn"
+										class:toggle-active={lbzTargetConfig.feedbackType === 'love'}
+										onclick={() => lbzTargetConfig.feedbackType = 'love'}
+									>Love</button>
+									<button
+										class="toggle-btn"
+										class:toggle-active={lbzTargetConfig.feedbackType === 'hate'}
+										onclick={() => lbzTargetConfig.feedbackType = 'hate'}
+									>Hate</button>
+								</div>
+							</div>
+						{:else}
+							<span class="target-hint">Submit feedback to ListenBrainz</span>
+						{/if}
+					</div>
+				{/if}
+
+			</div>
+		</section>
+
+		<!-- ── Recurring schedule section ─────────────────────────────────── -->
+		<section class="relay-card">
+			<div class="relay-card-label">SCHEDULE</div>
+			<div class="schedule-row">
+				<label class="schedule-toggle-label">
+					<input type="checkbox" bind:checked={recurring} />
+					<span>Run on a schedule</span>
+				</label>
+				{#if recurring}
+					<div class="schedule-freq">
+						<span class="config-label">Frequency:</span>
+						<select class="relay-select" bind:value={intervalMinutes}>
+							{#each frequencyOptions as opt}
+								<option value={opt.value}>{opt.label}</option>
+							{/each}
+						</select>
+					</div>
+				{/if}
+			</div>
+		</section>
+
+		<!-- ── Queue button ─────────────────────────────────────────────────── -->
+		<button
+			class="run-btn"
+			onclick={queueJob}
+			disabled={!canQueue}
+			aria-busy={relaying}
+		>
+			{#if relaying}
+				<span class="status-spinner" aria-hidden="true"></span>
+				Queueing…
+			{:else}
+				<svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16" aria-hidden="true">
+					<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd"/>
+				</svg>
+				Queue Job
+			{/if}
+		</button>
+
+		<!-- ── Error ───────────────────────────────────────────────────────── -->
+		{#if relayError}
+			<div class="relay-result result-error" role="alert">
+				<svg viewBox="0 0 16 16" fill="currentColor" width="14" height="14" aria-hidden="true">
+					<path d="M8 1L1 14h14L8 1zm0 9V6m0 3v1" stroke="currentColor" stroke-width="1.5" fill="none"/>
+				</svg>
+				{relayError}
+			</div>
+		{/if}
+
+		<!-- ── Jobs list ────────────────────────────────────────────────────── -->
+		{#if jobs.length > 0}
+			<div class="jobs-section">
+				<div class="jobs-section-label">Jobs</div>
+
+				{#each jobs as job (job.id)}
+					<a href="/jobs/{job.id}" class="job-card" data-status={job.status}>
+						<div class="job-card-top">
+							<div class="job-card-left">
+								<span class="job-status-dot {statusColor(job.status)}"></span>
+								<div class="job-card-info">
+									<span class="job-title">
+										{summarizeSource(job.source_config)} → {summarizeTargets(job.targets_config)}
+									</span>
+									{#if job.recurring && job.interval_minutes}
+										<span class="job-recur-hint">
+											Every {frequencyOptions.find(o => o.value === job.interval_minutes)?.label?.toLowerCase().replace('every ', '') ?? `${job.interval_minutes}m`}
+											{#if job.run_at && job.status === 'scheduled'}
+												· Next {formatNextRun(job.run_at)}
+											{/if}
+										</span>
+									{/if}
+								</div>
+							</div>
+							<div class="job-card-right">
+								{#if job.status === 'running'}
+									<span class="job-progress">
+										{#if job.tracks_fetched > 0}
+											{job.tracks_ok + job.tracks_err} / {job.tracks_fetched} tracks
+										{:else}
+											<span class="status-spinner" aria-hidden="true"></span>
+											Fetching…
+										{/if}
+									</span>
+								{:else if job.status === 'queued' || job.status === 'scheduled'}
+									<span class="job-status-text">{job.status}</span>
+								{:else}
+									<span class="job-done-stats">
+										{#if job.tracks_ok > 0}
+											<span class="stat-ok">{job.tracks_ok} ✓</span>
+										{/if}
+										{#if job.tracks_err > 0}
+											<span class="stat-err">{job.tracks_err} ✗</span>
+										{/if}
+										{#if job.tracks_ok === 0 && job.tracks_err === 0}
+											<span class="job-status-text">{job.status}</span>
+										{/if}
+									</span>
+								{/if}
+								{#if job.status === 'queued' || job.status === 'scheduled'}
+									<button class="job-cancel-btn" onclick={(e) => { e.preventDefault(); e.stopPropagation(); cancelJob(job.id); }}>
+										Cancel
+									</button>
+								{/if}
+							</div>
+						</div>
+					</a>
+				{/each}
+			</div>
+		{/if}
+
+	</main>
+</div>
+
+{:else}
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- Setup Wizard                                                            -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
 
 <div class="setup-root">
 	<!-- Background texture / atmosphere -->
@@ -284,9 +825,7 @@
 		<section class="service-card" class:card-active={step === 'plex'} class:card-done={plex.status === 'connected'}>
 			<div class="card-header">
 				<div class="service-icon plex-icon" aria-hidden="true">
-					<!-- Plex SVG chevron -->
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="15%" fill="#282a2d"/><path d="M256 70H148l108 186-108 186h108l108-186z" fill="#e5a00d"/></svg>
-
 				</div>
 				<div class="service-info">
 					<h2 class="service-name">Plex</h2>
@@ -336,7 +875,6 @@
 		>
 			<div class="card-header">
 				<div class="service-icon plex-icon" aria-hidden="true">
-					<!-- server icon -->
 					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" xmlns="http://www.w3.org/2000/svg">
 						<rect x="2" y="3" width="20" height="5" rx="1"/>
 						<rect x="2" y="10" width="20" height="5" rx="1"/>
@@ -452,10 +990,7 @@
 			<div class="service-card inner-card" class:card-done={listenbrainz.status === 'connected'} class:card-disabled={listenbrainz.status === 'disabled'}>
 				<div class="card-header">
 					<div class="service-icon lb-icon" aria-hidden="true">
-						<!-- <svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"> -->
-						<!-- 	<path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm.35 4.292l2.13 4.31 4.755.692-3.44 3.35.812 4.735-4.257-2.238-4.258 2.238.813-4.735-3.44-3.35 4.754-.692 2.13-4.31z"/> -->
-						<!-- </svg> -->
-            <svg id="svg1591" viewBox="9,0,128,160" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" inkscape:version="1.0.2 (e86c870879, 2021-01-15, custom)" sodipodi:docname="ListenBrainz_logo.svg" xmlns:cc="http://creativecommons.org/ns#" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd">
+            <svg id="svg1591" viewBox="9,0,128,160" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" inkscape:version="1.0.2 (e86c870879, 2021-01-15, custom)" sodipodi:docname="ListenBrainz_logo.svg" xmlns:cc="http://creativecommons.org/ns#" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.0.dtd">
  <defs id="defs1552">
   <path id="a" d="m75.354 33.239h51.433v90.792h-51.433z"/>
   <clipPath id="b">
@@ -477,10 +1012,10 @@
  <path id="path1549" d="m70.354 7.823-61 35v74l61 35z" fill="#353070"/>
  <g id="g1563" opacity=".07">
   <path id="path1557" clip-path="url(#b)" d="m92.657 99.557a2.1 2.1 0 0 1 1.819-1.03c.378 0 .752.104 1.078.297a2.12 2.12 0 0 1 .735 2.898 2.097 2.097 0 0 1 -1.817 1.032c-.379 0-.755-.105-1.084-.301a2.092 2.092 0 0 1 -.964-1.294 2.1 2.1 0 0 1 .233-1.602m12.602 22.362a2.121 2.121 0 0 1 -2.981-.225 2.116 2.116 0 0 1 .231-2.981 2.08 2.08 0 0 1 1.373-.512 2.117 2.117 0 0 1 2.109 2.278 2.086 2.086 0 0 1 -.732 1.44m-9.525-58.839a2.128 2.128 0 0 1 2.916-.656 2.12 2.12 0 0 1 .66 2.919 2.115 2.115 0 0 1 -2.919.661 2.128 2.128 0 0 1 -.657-2.924m6.379-20.187c-.6.951-1.937 1.271-2.912.653l-.096-.062a2.107 2.107 0 0 1 -.557-2.851 2.093 2.093 0 0 1 1.784-.98 2.11 2.11 0 0 1 1.781 3.24m16.767 11.598a2.096 2.096 0 0 1 1.783-.98c.4 0 .79.113 1.125.325.481.304.813.775.937 1.33a2.08 2.08 0 0 1 -.28 1.584c-.597.951-1.938 1.273-2.912.653l-.093-.062a2.105 2.105 0 0 1 -.56-2.85m0 23.463a2.096 2.096 0 0 1 1.783-.98c.4 0 .79.112 1.125.326.481.304.813.774.937 1.329a2.083 2.083 0 0 1 -.28 1.585c-.597.95-1.938 1.271-2.912.652l-.093-.062a2.105 2.105 0 0 1 -.56-2.85m0 26.303a2.099 2.099 0 0 1 1.783-.98c.4 0 .79.113 1.125.326.481.304.813.775.937 1.33a2.08 2.08 0 0 1 -.28 1.584c-.597.951-1.938 1.271-2.912.653l-.093-.062a2.107 2.107 0 0 1 -.56-2.851"/>
-  <path id="path1559" clip-path="url(#b)" d="m108.53 113.927a6.11 6.11 0 0 0 -8.631-.662 6.12 6.12 0 0 0 -2.087 5.396c-1.949.701-4.258 1.366-5.328 1.332-.822-.043-1.302-.345-2.224-.971-1.172-.795-2.418-1.512-4.149-1.847 2.936-2.761 6.009-6.83 8.584-12.834a6.15 6.15 0 0 0 5.039-2.972c1.724-2.896.773-6.659-2.124-8.394a6.133 6.133 0 0 0 -3.134-.864 6.154 6.154 0 0 0 -5.261 2.986 6.079 6.079 0 0 0 -.678 4.636 6.075 6.075 0 0 0 2.302 3.429c-4.053 9.218-9.219 13.08-12.565 14.685a2.016 2.016 0 0 0 -.361.168c-1.186.531-2.05.704-2.558.808v4c.275-.03 1.884-.118 4.247-1.192 5.347-1.357 6.839-.354 8.407.709 1.021.692 2.291 1.554 4.263 1.655.099.006.204.009.308.009 2.11 0 5.172-1.022 7.021-1.723a6.132 6.132 0 0 0 4.285 1.75 6.112 6.112 0 0 0 3.983-1.476 6.072 6.072 0 0 0 2.119-4.176 6.072 6.072 0 0 0 -1.458-4.452m-15.873-16.776a2.114 2.114 0 0 1 3.632 2.165 2.097 2.097 0 0 1 -1.817 1.032c-.379 0-.755-.105-1.084-.301a2.092 2.092 0 0 1 -.964-1.294 2.101 2.101 0 0 1 .233-1.602m12.602 22.363a2.121 2.121 0 0 1 -2.981-.225 2.116 2.116 0 0 1 .231-2.981 2.08 2.08 0 0 1 1.373-.512 2.117 2.117 0 0 1 2.109 2.278 2.086 2.086 0 0 1 -.732 1.44m1.045-81.487a6.088 6.088 0 0 0 -2.708-3.844 6.12 6.12 0 0 0 -3.264-.944 6.076 6.076 0 0 0 -5.174 2.85 6.108 6.108 0 0 0 .144 6.758c-3.646 4.124-8.707 4.314-9.943 4.293-3.692-1.604-7.234-2.164-10.005-2.317v3.996c2.442.144 5.553.686 8.748 2.136.005.002.01.002.015.005 3.445 1.562 6.334 3.927 8.607 7.041a6.364 6.364 0 0 0 -.381.538c-1.796 2.854-.943 6.643 1.903 8.444.98.622 2.111.951 3.269.951a6.105 6.105 0 0 0 5.183-2.851c1.806-2.851.951-6.642-1.908-8.453-1.384-.872-3.092-1.114-4.667-.755-1.538-2.155-3.323-4.017-5.345-5.567 2.517-.778 5.401-2.268 7.78-5.095a6.18 6.18 0 0 0 1.77.266 6.08 6.08 0 0 0 5.172-2.848 6.053 6.053 0 0 0 .804-4.604m-10.57 22.647a2.128 2.128 0 0 1 2.916-.656 2.12 2.12 0 0 1 .66 2.919 2.115 2.115 0 0 1 -2.919.661 2.128 2.128 0 0 1 -.657-2.924m6.379-20.187c-.6.951-1.937 1.271-2.912.653l-.096-.062a2.107 2.107 0 0 1 -.557-2.851 2.093 2.093 0 0 1 1.784-.98 2.11 2.11 0 0 1 1.781 3.24"/>
+  <path id="path1559" clip-path="url(#b)" d="m108.53 113.927a6.11 6.11 0 0 0 -8.631-.662 6.12 6.12 0 0 0 -2.087 5.396c-1.949.701-4.258 1.366-5.328 1.332-.822-.043-1.302-.345-2.224-.971-1.172-.795-2.418-1.512-4.149-1.847 2.936-2.761 6.009-6.83 8.584-12.834a6.15 6.15 0 0 0 5.039-2.972c1.724-2.896.773-6.659-2.124-8.394a6.133 6.133 0 0 0 -3.134-.864 6.154 6.154 0 0 0 -5.261 2.986 6.079 6.079 0 0 0 -.678 4.636 6.075 6.075 0 0 0 2.302 3.429c-4.053 9.218-9.219 13.08-12.565 14.685a2.016 2.016 0 0 0 -.361.168c-1.186.531-2.05.704-2.558.808v4c.275-.03 1.884-.118 4.247-1.192 5.347-1.357 6.839-.354 8.407.709 1.021.692 2.291 1.554 4.263 1.655.099.006.204.009.308.009 2.11 0 5.172-1.022 7.021-1.723a6.132 6.132 0 0 0 4.285 1.75 6.112 6.112 0 0 0 3.983-1.476 6.072 6.072 0 0 0 2.119-4.176 6.072 6.072 0 0 0 -1.458-4.452m-15.873-16.776a2.114 2.114 0 0 1 3.632 2.165 2.097 2.097 0 0 1 -1.817 1.032c-.379 0-.755-.105-1.084-.301a2.092 2.092 0 0 1 -.964-1.294 2.101 2.101 0 0 1 .233-1.602m12.602 22.363a2.121 2.121 0 0 1 -2.981-.225 2.116 2.116 0 0 1 .231-2.981 2.08 2.08 0 0 1 1.373-.512 2.117 2.117 0 0 1 2.109 2.278 2.086 2.086 0 0 1 -.732 1.44m1.045-81.487a6.088 6.088 0 0 0 -2.708-3.844 6.12 6.12 0 0 0 -3.264-.944 6.076 6.076 0 0 0 -5.174 2.85 6.108 6.108 0 0 0 .144 6.758c-3.646 4.124-8.707 4.314-9.943 4.293-3.692-1.604-7.234-2.164-10.005-2.317v3.996c2.442.144 5.553.686 8.748 2.136.005.002.01.002.015.005 3.445 1.562 6.334 3.927 8.607 7.041a6.364 6.364 0 0 0 -.381.538c-1.796 2.854-.943 6.643 1.903 8.444.98.622 2.111.951 3.269.951a6.105 6.105 0 0 0 5.183-2.851c1.806-2.851.951-6.642-1.908-8.453-1.384-.872-3.092-1.114-4.667-.755-1.538-2.155-3.323-4.017-5.345-5.567 2.517-.778 5.401-2.268 7.78-5.095a6.18 6.18 0 0 0 1.77.266 6.08 6.08 0 0 0 5.172-2.849 6.05 6.05 0 0 0 .804-4.603m-10.57 22.647a2.128 2.128 0 0 1 2.916-.656 2.12 2.12 0 0 1 .66 2.919 2.115 2.115 0 0 1 -2.919.661 2.128 2.128 0 0 1 -.657-2.924m6.379-20.187c-.6.951-1.937 1.271-2.912.653l-.096-.062a2.107 2.107 0 0 1 -.557-2.851 2.093 2.093 0 0 1 1.784-.98 2.11 2.11 0 0 1 1.781 3.24"/>
   <path id="path1561" clip-path="url(#b)" d="m115 79.011a6.036 6.036 0 0 0 2.11 2.649 6.098 6.098 0 0 0 3.55 1.14 6.083 6.083 0 0 0 5.173-2.848 6.064 6.064 0 0 0 .805-4.605 6.103 6.103 0 0 0 -2.709-3.844 6.128 6.128 0 0 0 -3.266-.944c-.125 0-.25.008-.375.018-.71-3.158-.919-7.769.035-11.265.113.011.225.024.337.024a6.08 6.08 0 0 0 5.173-2.848 6.062 6.062 0 0 0 .805-4.604 6.103 6.103 0 0 0 -2.709-3.844 6.128 6.128 0 0 0 -3.266-.944 6.079 6.079 0 0 0 -5.173 2.85 6.104 6.104 0 0 0 1.025 7.764c.021.02.048.037.071.059-1.349 4.518-1.145 10.324-.036 14.417-.144.132-.294.254-.426.399a6.327 6.327 0 0 0 -.634.825 6.2 6.2 0 0 0 -.71 1.578c-3.371.488-5.198 1.671-6.824 2.729-2.035 1.324-3.961 2.572-9.636 2.666-1.963-.23-3.552-.178-5.29-.116-1.43.052-2.91.105-4.848.003-1.335-.071-2.104-.882-3.458-2.424-1.803-2.055-4.219-4.648-9.369-5.022v4c3.295.299 4.796 1.887 6.356 3.667 1.487 1.694 3.175 3.615 6.256 3.782 2.118.114 3.76.052 5.208.001 2.491-.092 4.453-.161 7.855.683 2.608.644 12.099 9.674 14.774 14.323-.109.142-.219.282-.314.434-1.743 2.755-1.026 6.385 1.62 8.251.072.052.151.104.283.191.981.621 2.11.948 3.267.948a6.081 6.081 0 0 0 5.173-2.849 6.06 6.06 0 0 0 .805-4.603 6.1 6.1 0 0 0 -2.709-3.845 6.128 6.128 0 0 0 -4.809-.749c-2.56-4.188-8.652-10.455-13.189-13.792 1.813-.628 3.05-1.436 4.212-2.188 1.427-.93 2.614-1.69 4.857-2.067m3.88-26.926a2.096 2.096 0 0 1 1.783-.98c.4 0 .79.113 1.125.325.481.304.813.775.937 1.33a2.08 2.08 0 0 1 -.28 1.584c-.597.951-1.938 1.273-2.912.653l-.093-.062a2.105 2.105 0 0 1 -.56-2.85m0 23.463a2.096 2.096 0 0 1 1.783-.98c.4 0 .79.112 1.125.326.481.304.813.774.937 1.329a2.083 2.083 0 0 1 -.28 1.585c-.597.95-1.938 1.272-2.912.652l-.093-.062a2.105 2.105 0 0 1 -.56-2.85m0 26.304a2.099 2.099 0 0 1 1.783-.98c.4 0 .79.113 1.125.326.481.304.813.775.937 1.33a2.08 2.08 0 0 1 -.28 1.584c-.597.951-1.938 1.271-2.912.653l-.093-.062a2.107 2.107 0 0 1 -.56-2.851"/>
  </g>
- <path id="path1565" d="m108.53 116.927a6.11 6.11 0 0 0 -8.631-.662 6.12 6.12 0 0 0 -2.087 5.396c-1.949.701-4.258 1.366-5.328 1.332-.822-.043-1.302-.345-2.224-.971-1.172-.795-2.418-1.512-4.149-1.847 2.936-2.761 6.009-6.83 8.584-12.834a6.15 6.15 0 0 0 5.039-2.972c1.724-2.896.773-6.659-2.124-8.394a6.133 6.133 0 0 0 -3.134-.864 6.154 6.154 0 0 0 -5.261 2.986 6.079 6.079 0 0 0 -.678 4.636 6.075 6.075 0 0 0 2.302 3.429c-4.053 9.218-9.219 13.08-12.565 14.685a2.016 2.016 0 0 0 -.361.168c-1.186.531-2.05.704-2.558.808v4c.275-.03 1.884-.118 4.247-1.192 5.347-1.357 6.839-.354 8.407.709 1.021.692 2.291 1.554 4.263 1.655.099.006.204.009.308.009 2.11 0 5.172-1.022 7.021-1.723a6.132 6.132 0 0 0 4.285 1.75 6.112 6.112 0 0 0 3.983-1.476 6.072 6.072 0 0 0 2.119-4.176 6.072 6.072 0 0 0 -1.458-4.452m-15.873-16.776a2.114 2.114 0 0 1 3.632 2.165 2.097 2.097 0 0 1 -1.817 1.032c-.379 0-.755-.105-1.084-.301a2.092 2.092 0 0 1 -.964-1.294 2.101 2.101 0 0 1 .233-1.602m12.602 22.363a2.121 2.121 0 0 1 -2.981-.225 2.116 2.116 0 0 1 .231-2.981 2.08 2.08 0 0 1 1.373-.512 2.117 2.117 0 0 1 2.109 2.278 2.086 2.086 0 0 1 -.732 1.44" fill="#d3562c"/>
+ <path id="path1565" d="m108.53 116.927a6.11 6.11 0 0 0 -8.631-.662 6.12 6.12 0 0 0 -2.087 5.396c-1.949.701-4.258 1.366-5.328 1.332-.822-.043-1.302-.345-2.224-.971-1.172-.795-2.418-1.512-4.149-1.847 2.936-2.761 6.009-6.83 8.584-12.834a6.15 6.15 0 0 0 5.039-2.972c1.724-2.896.773-6.659-2.124-8.394a6.133 6.133 0 0 0 -3.134-.864 6.154 6.154 0 0 0 -5.261 2.986 6.079 6.079 0 0 0 -.678 4.636 6.075 6.075 0 0 0 2.302 3.429c-4.053 9.218-9.219 13.08-12.565 14.685a2.016 2.016 0 0 0 -.361.168c-1.186.531-2.05.704-2.558.808v4c.275-.03 1.884-.118 4.247-1.192 5.347-1.357 6.839-.354 8.407.709 1.021.692 2.291 1.554 4.263 1.655.099.006.204.009.308.009 2.11 0 5.172-1.022 7.021-1.723a6.132 6.132 0 0 0 4.285 1.75 6.112 6.112 0 0 0 3.983-1.476 6.072 6.072 0 0 0 2.119-4.176 6.072 6.072 0 0 0 -1.458-4.452m-15.873-16.776a2.114 2.114 0 0 1 3.632 2.165 2.097 2.097 0 0 1 -1.817 1.032c-.379 0-.755-.105-1.084-.301a2.092 2.092 0 0 1 -.964-1.294 2.101 2.101 0 0 1 .233-1.602m12.602 22.363a2.121 2.121 0 0 1 -2.981-.225 2.116 2.116 0 0 1 .231-2.981 2.08 2.08 0 0 1 1.373-.512 2.117 2.117 0 0 1 2.109 2.278 2.086 2.086 0 0 1 -.732 1.44m1.045-81.487a6.088 6.088 0 0 0 -2.708-3.844 6.12 6.12 0 0 0 -3.264-.944 6.076 6.076 0 0 0 -5.174 2.85 6.108 6.108 0 0 0 .144 6.758c-3.646 4.124-8.707 4.314-9.943 4.293-3.692-1.604-7.234-2.164-10.005-2.317v3.996c2.442.144 5.553.686 8.748 2.136.005.002.01.002.015.005 3.445 1.562 6.334 3.927 8.607 7.041a6.364 6.364 0 0 0 -.381.538c-1.796 2.854-.943 6.643 1.903 8.444.98.622 2.111.951 3.269.951a6.105 6.105 0 0 0 5.183-2.851c1.806-2.851.951-6.642-1.908-8.453-1.384-.872-3.092-1.114-4.667-.755-1.538-2.155-3.323-4.017-5.345-5.567 2.517-.778 5.401-2.268 7.78-5.095a6.18 6.18 0 0 0 1.77.266 6.08 6.08 0 0 0 5.172-2.848 6.053 6.053 0 0 0 .804-4.604m-10.57 22.647a2.128 2.128 0 0 1 2.916-.656 2.12 2.12 0 0 1 .66 2.919 2.115 2.115 0 0 1 -2.919.661 2.128 2.128 0 0 1 -.657-2.924m6.379-20.187c-.6.951-1.937 1.271-2.912.653l-.096-.062a2.107 2.107 0 0 1 -.557-2.851 2.093 2.093 0 0 1 1.784-.98 2.11 2.11 0 0 1 1.781 3.24" fill="#fffedb"/>
  <path id="path1567" d=""/>
  <path id="path1569" d="m106.304 40.031a6.088 6.088 0 0 0 -2.708-3.844 6.12 6.12 0 0 0 -3.264-.944 6.076 6.076 0 0 0 -5.174 2.85 6.108 6.108 0 0 0 .144 6.758c-3.646 4.124-8.707 4.314-9.943 4.293-3.692-1.604-7.234-2.164-10.005-2.317v3.996c2.442.144 5.553.686 8.748 2.136.005.002.01.002.015.005 3.445 1.562 6.334 3.927 8.607 7.041a6.206 6.206 0 0 0 -.381.538c-1.796 2.854-.943 6.643 1.903 8.444.98.622 2.111.951 3.269.951a6.105 6.105 0 0 0 5.183-2.851c1.806-2.851.951-6.642-1.908-8.453-1.384-.872-3.092-1.114-4.667-.755-1.538-2.155-3.323-4.017-5.345-5.567 2.517-.778 5.401-2.268 7.78-5.095a6.18 6.18 0 0 0 1.77.266 6.08 6.08 0 0 0 5.172-2.849 6.05 6.05 0 0 0 .804-4.603m-10.57 22.647a2.128 2.128 0 0 1 2.916-.656 2.12 2.12 0 0 1 .66 2.919 2.115 2.115 0 0 1 -2.919.661 2.128 2.128 0 0 1 -.657-2.924m6.379-20.187c-.6.951-1.937 1.271-2.912.653l-.096-.062a2.107 2.107 0 0 1 -.557-2.851 2.093 2.093 0 0 1 1.784-.98 2.11 2.11 0 0 1 1.781 3.24" fill="#d3562c"/>
  <path id="path1571" d="m115 82.011a6.036 6.036 0 0 0 2.11 2.649 6.098 6.098 0 0 0 3.55 1.14 6.081 6.081 0 0 0 5.173-2.849 6.063 6.063 0 0 0 .805-4.604 6.103 6.103 0 0 0 -2.709-3.844 6.128 6.128 0 0 0 -3.266-.944c-.125 0-.25.008-.375.018-.71-3.158-.919-7.769.035-11.265.113.011.225.024.337.024a6.08 6.08 0 0 0 5.173-2.848 6.062 6.062 0 0 0 .805-4.604 6.103 6.103 0 0 0 -2.709-3.844 6.128 6.128 0 0 0 -3.266-.944 6.079 6.079 0 0 0 -5.173 2.85 6.104 6.104 0 0 0 1.025 7.764c.021.02.048.037.071.059-1.349 4.518-1.145 10.324-.036 14.417-.144.132-.294.254-.426.399a6.327 6.327 0 0 0 -.634.825 6.2 6.2 0 0 0 -.71 1.578c-3.371.488-5.198 1.671-6.824 2.729-2.035 1.323-3.961 2.571-9.636 2.665-1.963-.23-3.552-.178-5.29-.116-1.43.052-2.91.105-4.848.003-1.335-.071-2.104-.882-3.458-2.424-1.803-2.055-4.219-4.648-9.369-5.022v4c3.295.298 4.796 1.887 6.356 3.667 1.487 1.694 3.175 3.615 6.256 3.782 2.118.114 3.76.052 5.208.001 2.491-.092 4.453-.161 7.855.683 2.608.644 12.099 9.674 14.774 14.323-.109.142-.219.282-.314.434-1.743 2.755-1.026 6.385 1.62 8.251.072.052.151.104.283.191.981.621 2.11.948 3.267.948a6.081 6.081 0 0 0 5.173-2.849 6.06 6.06 0 0 0 .805-4.603 6.1 6.1 0 0 0 -2.709-3.845 6.128 6.128 0 0 0 -4.809-.749c-2.56-4.188-8.652-10.455-13.189-13.792 1.813-.628 3.05-1.436 4.212-2.188 1.427-.929 2.614-1.689 4.857-2.066m3.88-26.926a2.096 2.096 0 0 1 1.783-.98c.4 0 .79.113 1.125.325.481.304.813.775.937 1.33a2.08 2.08 0 0 1 -.28 1.584c-.597.951-1.938 1.273-2.912.653l-.093-.062a2.105 2.105 0 0 1 -.56-2.85m0 23.463a2.096 2.096 0 0 1 1.783-.98c.4 0 .79.112 1.125.326.481.304.813.774.937 1.329a2.084 2.084 0 0 1 -.28 1.585c-.597.95-1.938 1.271-2.912.652l-.093-.062a2.105 2.105 0 0 1 -.56-2.85m0 26.304a2.099 2.099 0 0 1 1.783-.98c.4 0 .79.113 1.125.326.481.304.813.775.937 1.33a2.08 2.08 0 0 1 -.28 1.584c-.597.951-1.938 1.271-2.912.653l-.093-.062a2.107 2.107 0 0 1 -.56-2.851" fill="#d3562c"/>
@@ -556,17 +1091,10 @@
 			</div>
 		</section>
 
-		<!-- ── Done state ──────────────────────────────────────── -->
-		{#if step === 'done'}
-			<div class="done-banner" role="status">
-				<svg viewBox="0 0 20 20" fill="currentColor" width="20" height="20" aria-hidden="true">
-					<path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
-				</svg>
-				All services connected — RatingRelay is ready.
-			</div>
-		{/if}
 	</main>
 </div>
+
+{/if}
 
 <style>
 	/* ── Root & background ─────────────────────────────────────────────────── */
@@ -600,6 +1128,17 @@
 		gap: 0;
 	}
 
+	/* ── Relay main layout ─────────────────────────────────────────────────── */
+	.relay-main {
+		position: relative;
+		z-index: 1;
+		width: 100%;
+		max-width: 560px;
+		display: flex;
+		flex-direction: column;
+		gap: 1rem;
+	}
+
 	/* ── Header ────────────────────────────────────────────────────────────── */
 	.setup-header {
 		display: flex;
@@ -615,6 +1154,7 @@
 		padding: 10px 8px;
 		border: 1px solid oklch(0.5 0.18 38 / 0.4);
 		background: oklch(0.16 0.02 38 / 0.8);
+		flex-shrink: 0;
 	}
 
 	.logo-signal {
@@ -634,6 +1174,23 @@
 		50% { opacity: 1; }
 	}
 
+	.title-row {
+		display: flex;
+		align-items: baseline;
+		gap: 1rem;
+		flex-wrap: wrap;
+	}
+
+	.nav-link {
+		font-size: 0.75rem;
+		font-family: var(--font-heading);
+		font-weight: 500;
+		color: oklch(0.45 0.015 40);
+		text-decoration: none;
+		transition: color 0.15s;
+	}
+	.nav-link:hover { color: oklch(0.65 0.02 40); }
+
 	.setup-title {
 		font-family: var(--font-heading);
 		font-size: 1.5rem;
@@ -649,6 +1206,304 @@
 		color: oklch(0.55 0.02 40);
 		margin: 0;
 	}
+
+	/* ── Connected service pills ───────────────────────────────────────────── */
+	.conn-pills {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.375rem;
+		margin-top: 0.375rem;
+	}
+
+	.conn-pill {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
+		font-size: 0.6875rem;
+		padding: 0.2rem 0.5rem;
+		background: oklch(0.5 0.12 140 / 0.1);
+		border: 1px solid oklch(0.5 0.12 140 / 0.3);
+		color: oklch(0.65 0.12 140);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.lastfm-pill {
+		background: oklch(0.5 0.18 28 / 0.1);
+		border-color: oklch(0.5 0.18 28 / 0.3);
+		color: oklch(0.65 0.18 28);
+	}
+
+	.lb-pill {
+		background: oklch(0.4 0.15 280 / 0.1);
+		border-color: oklch(0.4 0.15 280 / 0.3);
+		color: oklch(0.6 0.12 280);
+	}
+
+	/* ── Relay cards ───────────────────────────────────────────────────────── */
+	.relay-card {
+		background: oklch(0.16 0.015 38);
+		border: 1px solid oklch(0.22 0.02 38);
+		display: flex;
+		flex-direction: column;
+	}
+
+	.relay-card-label {
+		font-size: 0.625rem;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		color: oklch(0.38 0.01 40);
+		padding: 0.625rem 1rem 0;
+		font-family: var(--font-heading);
+		font-weight: 700;
+	}
+
+	/* ── Source tabs ───────────────────────────────────────────────────────── */
+	.source-tabs {
+		display: flex;
+		gap: 0;
+		padding: 0.5rem 0.75rem 0;
+		border-bottom: 1px solid oklch(0.2 0.01 40);
+	}
+
+	.source-tab {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.375rem;
+		padding: 0.4rem 0.75rem;
+		font-size: 0.8rem;
+		font-family: var(--font-heading);
+		font-weight: 500;
+		color: oklch(0.45 0.015 40);
+		background: transparent;
+		border: none;
+		border-bottom: 2px solid transparent;
+		margin-bottom: -1px;
+		cursor: pointer;
+		transition: color 0.15s, border-color 0.15s;
+	}
+
+	.source-tab:hover {
+		color: oklch(0.7 0.02 40);
+	}
+
+	.source-tab.tab-active {
+		color: oklch(0.85 0.01 60);
+		border-bottom-color: var(--primary);
+	}
+
+	/* ── Source config row ─────────────────────────────────────────────────── */
+	.source-config {
+		display: flex;
+		align-items: center;
+		gap: 0.625rem;
+		padding: 0.875rem 1rem;
+		flex-wrap: wrap;
+	}
+
+	.config-label {
+		font-size: 0.8125rem;
+		color: oklch(0.52 0.015 40);
+		white-space: nowrap;
+	}
+
+	/* ── Relay select ──────────────────────────────────────────────────────── */
+	.relay-select {
+		background: oklch(0.12 0.01 38);
+		border: 1px solid oklch(0.28 0.02 38);
+		color: oklch(0.85 0.01 60);
+		padding: 0.35rem 0.625rem;
+		font-size: 0.8rem;
+		font-family: var(--font-sans);
+		outline: none;
+		cursor: pointer;
+		transition: border-color 0.2s;
+	}
+
+	.relay-select:focus {
+		border-color: oklch(0.5 0.15 38 / 0.7);
+	}
+
+	/* ── Toggle group ──────────────────────────────────────────────────────── */
+	.toggle-group {
+		display: flex;
+	}
+
+	.toggle-btn {
+		padding: 0.3rem 0.625rem;
+		font-size: 0.8rem;
+		font-family: var(--font-heading);
+		font-weight: 500;
+		background: oklch(0.12 0.01 38);
+		border: 1px solid oklch(0.28 0.02 38);
+		color: oklch(0.48 0.015 40);
+		cursor: pointer;
+		transition: background 0.15s, color 0.15s, border-color 0.15s;
+	}
+
+	.toggle-btn + .toggle-btn {
+		border-left: none;
+	}
+
+	.toggle-btn.toggle-active {
+		background: oklch(0.553 0.195 38 / 0.2);
+		border-color: oklch(0.553 0.195 38 / 0.5);
+		color: oklch(0.78 0.12 38);
+	}
+
+	/* ── Targets list ──────────────────────────────────────────────────────── */
+	.targets-list {
+		display: flex;
+		flex-direction: column;
+	}
+
+	.target-row {
+		display: flex;
+		align-items: center;
+		gap: 1rem;
+		padding: 0.75rem 1rem;
+		border-top: 1px solid oklch(0.2 0.01 40);
+		transition: background 0.15s;
+		flex-wrap: wrap;
+	}
+
+	.target-row.target-enabled {
+		background: oklch(0.553 0.195 38 / 0.04);
+	}
+
+	.target-check {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		cursor: pointer;
+		font-size: 0.8125rem;
+		font-family: var(--font-heading);
+		font-weight: 500;
+		color: oklch(0.6 0.015 40);
+		user-select: none;
+		min-width: 120px;
+	}
+
+	.target-check input[type="checkbox"] {
+		accent-color: var(--primary);
+		width: 14px;
+		height: 14px;
+		cursor: pointer;
+	}
+
+	.target-enabled .target-check {
+		color: oklch(0.85 0.01 60);
+	}
+
+	.target-config {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.target-hint {
+		font-size: 0.75rem;
+		color: oklch(0.35 0.01 40);
+		font-style: italic;
+	}
+
+	.fixed-action {
+		color: oklch(0.65 0.14 140);
+		font-style: normal;
+	}
+
+	/* ── Run button ────────────────────────────────────────────────────────── */
+	.run-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.5rem;
+		padding: 0.75rem 1.75rem;
+		font-size: 0.9375rem;
+		font-weight: 700;
+		font-family: var(--font-heading);
+		letter-spacing: 0.01em;
+		background: var(--primary);
+		color: var(--primary-foreground);
+		border: 1px solid var(--primary);
+		cursor: pointer;
+		transition: background 0.15s, opacity 0.15s;
+		align-self: center;
+		margin-top: 0.25rem;
+	}
+
+	.run-btn:hover:not(:disabled) {
+		background: oklch(from var(--primary) calc(l + 0.05) c h);
+	}
+
+	.run-btn:disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
+	}
+
+	/* ── Result panel ──────────────────────────────────────────────────────── */
+	.relay-result {
+		border: 1px solid oklch(0.28 0.01 40);
+		background: oklch(0.16 0.015 38);
+		padding: 0.875rem 1rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+		font-size: 0.8125rem;
+		animation: slide-up 0.3s ease both;
+	}
+
+	.result-ok {
+		border-color: oklch(0.45 0.12 140 / 0.5);
+		background: oklch(0.55 0.14 140 / 0.06);
+	}
+
+	.result-partial {
+		border-color: oklch(0.6 0.16 62 / 0.5);
+		background: oklch(0.6 0.16 62 / 0.06);
+	}
+
+	.result-error {
+		border-color: oklch(0.5 0.2 22 / 0.5);
+		background: oklch(0.5 0.2 22 / 0.06);
+		color: oklch(0.65 0.18 22);
+		flex-direction: row;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.result-summary {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		color: oklch(0.7 0.015 40);
+	}
+
+	.result-ok .result-summary { color: oklch(0.65 0.14 140); }
+	.result-partial .result-summary { color: oklch(0.7 0.14 62); }
+	.result-error .result-summary { color: oklch(0.65 0.18 22); }
+
+	.result-service {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		color: oklch(0.55 0.015 40);
+		padding-left: 1.5rem;
+	}
+
+	.result-svc-name {
+		font-family: var(--font-heading);
+		font-weight: 600;
+		color: oklch(0.68 0.015 40);
+		min-width: 90px;
+	}
+
+	.result-stat {
+		font-variant-numeric: tabular-nums;
+		font-size: 0.75rem;
+	}
+
+	.result-ok-stat { color: oklch(0.65 0.14 140); }
+	.result-err-stat { color: oklch(0.65 0.18 22); }
 
 	/* ── Progress rail ─────────────────────────────────────────────────────── */
 	.progress-rail {
@@ -701,7 +1556,7 @@
 		flex: 1;
 		height: 1px;
 		background: oklch(0.25 0.01 40);
-		margin-bottom: 16px; /* offset for label */
+		margin-bottom: 16px;
 		transition: background 0.4s;
 	}
 
@@ -840,11 +1695,6 @@
 		color: oklch(0.52 0.015 40);
 		line-height: 1.55;
 		margin: 0;
-	}
-
-	.card-instructions strong {
-		color: oklch(0.72 0.04 50);
-		font-weight: 600;
 	}
 
 	.card-instructions a {
@@ -1020,23 +1870,267 @@
 		box-shadow: 0 0 0 2px oklch(0.5 0.15 38 / 0.12);
 	}
 
-	/* ── Done banner ───────────────────────────────────────────────────────── */
-	.done-banner {
-		margin-top: 1.5rem;
-		display: flex;
-		align-items: center;
-		gap: 0.625rem;
-		padding: 0.875rem 1.125rem;
-		background: oklch(0.55 0.14 140 / 0.1);
-		border: 1px solid oklch(0.5 0.13 140 / 0.35);
-		color: oklch(0.7 0.14 140);
-		font-size: 0.8125rem;
-		font-weight: 500;
-		animation: slide-up 0.4s ease both;
-	}
-
 	@keyframes slide-up {
 		from { opacity: 0; transform: translateY(8px); }
 		to { opacity: 1; transform: translateY(0); }
+	}
+
+	/* ── Schedule section ──────────────────────────────────────────────────── */
+	.schedule-row {
+		display: flex;
+		align-items: center;
+		gap: 1rem;
+		padding: 0.75rem 1rem;
+		flex-wrap: wrap;
+	}
+
+	.schedule-toggle-label {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		font-size: 0.8125rem;
+		color: oklch(0.62 0.015 40);
+		cursor: pointer;
+		user-select: none;
+	}
+
+	.schedule-toggle-label input[type="checkbox"] {
+		accent-color: var(--primary);
+		width: 14px;
+		height: 14px;
+		cursor: pointer;
+	}
+
+	.schedule-freq {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	/* ── Jobs section ──────────────────────────────────────────────────────── */
+	.jobs-section {
+		display: flex;
+		flex-direction: column;
+		gap: 0;
+		margin-top: 0.5rem;
+	}
+
+	.jobs-section-label {
+		font-size: 0.625rem;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		color: oklch(0.38 0.01 40);
+		font-family: var(--font-heading);
+		font-weight: 700;
+		padding: 0.5rem 0 0.375rem;
+		border-top: 1px solid oklch(0.2 0.01 40);
+	}
+
+	.job-card {
+		display: block;
+		text-decoration: none;
+		color: inherit;
+		background: oklch(0.16 0.015 38);
+		border: 1px solid oklch(0.22 0.02 38);
+		margin-bottom: 1px;
+		animation: slide-up 0.25s ease both;
+		transition: border-color 0.15s;
+		cursor: pointer;
+	}
+
+	.job-card:hover {
+		border-color: oklch(0.32 0.04 40);
+	}
+
+	.job-card[data-status="running"] {
+		border-color: oklch(0.55 0.18 38 / 0.45);
+	}
+
+	.job-card[data-status="completed"] {
+		border-color: oklch(0.45 0.12 140 / 0.4);
+	}
+
+	.job-card[data-status="partial"] {
+		border-color: oklch(0.55 0.16 62 / 0.4);
+	}
+
+	.job-card[data-status="failed"] {
+		border-color: oklch(0.5 0.2 22 / 0.4);
+	}
+
+	.job-card[data-status="cancelled"] {
+		opacity: 0.5;
+	}
+
+	.job-card-top {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+		padding: 0.7rem 1rem;
+		flex-wrap: wrap;
+	}
+
+	.job-card-left {
+		display: flex;
+		align-items: center;
+		gap: 0.625rem;
+		min-width: 0;
+		flex: 1;
+	}
+
+	.job-status-dot {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		flex-shrink: 0;
+	}
+
+	.status-queued    { background: oklch(0.55 0.14 55); }
+	.status-scheduled { background: oklch(0.52 0.12 240); }
+	.status-running   {
+		background: var(--primary);
+		box-shadow: 0 0 6px var(--primary);
+		animation: blink 1.2s ease-in-out infinite;
+	}
+	.status-completed { background: oklch(0.6 0.15 140); }
+	.status-partial   { background: oklch(0.65 0.16 62); }
+	.status-failed    { background: oklch(0.55 0.2 22); }
+	.status-cancelled { background: oklch(0.35 0.01 40); }
+
+	.job-card-info {
+		display: flex;
+		flex-direction: column;
+		gap: 0.15rem;
+		min-width: 0;
+	}
+
+	.job-title {
+		font-size: 0.8125rem;
+		font-family: var(--font-heading);
+		font-weight: 500;
+		color: oklch(0.78 0.015 50);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.job-recur-hint {
+		font-size: 0.7rem;
+		color: oklch(0.45 0.012 40);
+	}
+
+	.job-card-right {
+		display: flex;
+		align-items: center;
+		gap: 0.625rem;
+		flex-shrink: 0;
+	}
+
+	.job-progress {
+		display: flex;
+		align-items: center;
+		gap: 0.375rem;
+		font-size: 0.75rem;
+		font-variant-numeric: tabular-nums;
+		color: oklch(0.62 0.015 40);
+	}
+
+	.job-status-text {
+		font-size: 0.7rem;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: oklch(0.42 0.01 40);
+	}
+
+	.job-done-stats {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		font-size: 0.8rem;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.stat-ok  { color: oklch(0.65 0.14 140); }
+	.stat-err { color: oklch(0.65 0.18 22); }
+
+	.job-cancel-btn {
+		padding: 0.2rem 0.5rem;
+		font-size: 0.7rem;
+		font-family: var(--font-heading);
+		font-weight: 500;
+		background: transparent;
+		border: 1px solid oklch(0.3 0.01 40);
+		color: oklch(0.45 0.01 40);
+		cursor: pointer;
+		transition: border-color 0.15s, color 0.15s;
+	}
+
+	.job-cancel-btn:hover {
+		border-color: oklch(0.5 0.18 22 / 0.6);
+		color: oklch(0.65 0.18 22);
+	}
+
+	/* ── Live event list ───────────────────────────────────────────────────── */
+	.job-events-list {
+		border-top: 1px solid oklch(0.2 0.01 40);
+		max-height: 200px;
+		overflow-y: auto;
+		padding: 0.375rem 0;
+	}
+
+	.job-event-row {
+		display: flex;
+		align-items: baseline;
+		gap: 0.375rem;
+		padding: 0.175rem 1rem;
+		font-size: 0.75rem;
+		color: oklch(0.55 0.015 40);
+		font-variant-numeric: tabular-nums;
+		flex-wrap: nowrap;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.job-event-row.event-err {
+		color: oklch(0.52 0.015 40);
+	}
+
+	.event-icon {
+		font-size: 0.65rem;
+		flex-shrink: 0;
+		color: oklch(0.6 0.14 140);
+	}
+
+	.event-err .event-icon {
+		color: oklch(0.6 0.18 22);
+	}
+
+	.event-track {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		min-width: 0;
+		flex: 1;
+		color: oklch(0.65 0.015 50);
+	}
+
+	.event-arrow {
+		color: oklch(0.35 0.01 40);
+		flex-shrink: 0;
+	}
+
+	.event-target {
+		flex-shrink: 0;
+		color: oklch(0.48 0.01 40);
+	}
+
+	.event-error-msg {
+		flex-shrink: 0;
+		color: oklch(0.55 0.15 22);
+		font-style: italic;
+		max-width: 160px;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 </style>

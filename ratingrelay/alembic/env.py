@@ -13,6 +13,9 @@ from ratingrelay.settings import get_settings
 # Import all models so SQLModel.metadata is fully populated before autogenerate
 import ratingrelay.models.models  # noqa: F401
 import ratingrelay.models.services  # noqa: F401
+import ratingrelay.models.jobs  # noqa: F401
+import ratingrelay.models.sync  # noqa: F401
+import ratingrelay.models.mappings  # noqa: F401
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

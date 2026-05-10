@@ -99,6 +99,10 @@
 		}
 		if (svc === 'lastfm') return 'Last.fm loved';
 		if (svc === 'listenbrainz') return `ListenBrainz ${cfg.feedback_type}d`;
+		if (svc === 'reset') {
+			const label: Record<string, string> = { plex: 'Plex', lastfm: 'Last.fm', listenbrainz: 'ListenBrainz' };
+			return `Reset · ${label[cfg.target_service as string] ?? cfg.target_service}`;
+		}
 		return svc;
 	}
 
@@ -160,7 +164,7 @@
 				<div class="job-title-row">
 					<span class="job-status-dot {statusColor(job.status)}"></span>
 					<h1 class="job-title">
-						{summarizeSource(job.source_config)} → {summarizeTargets(job.targets_config)}
+						{summarizeSource(job.source_config)}{job.targets_config.length > 0 ? ` → ${summarizeTargets(job.targets_config)}` : ''}
 					</h1>
 				</div>
 

@@ -200,9 +200,10 @@
 
 	// ── Relay home state ──────────────────────────────────────────────────────
 
-	type ServiceId = 'plex' | 'lastfm' | 'listenbrainz';
+	type ServiceId = 'plex' | 'lastfm' | 'listenbrainz' | 'reset';
 
 	let selectedSource = $state<ServiceId>('plex');
+	let resetTargetService = $state<'plex' | 'lastfm' | 'listenbrainz'>('plex');
 
 	let plexSourceConfig = $state({ ratingThreshold: 8, comparison: 'gte' as 'gte' | 'lte' });
 	let lbzSourceConfig = $state({ feedbackType: 'love' as 'love' | 'hate' });
@@ -248,8 +249,14 @@
 			};
 		} else if (selectedSource === 'lastfm') {
 			source = { service: 'lastfm' };
-		} else {
+		} else if (selectedSource === 'listenbrainz') {
 			source = { service: 'listenbrainz', feedback_type: lbzSourceConfig.feedbackType };
+		} else {
+			source = { service: 'reset', target_service: resetTargetService };
+		}
+
+		if (selectedSource === 'reset') {
+			return { source, targets: [] };
 		}
 
 		const targets: object[] = [];
@@ -328,7 +335,7 @@
 	let jobs = $state<JobData[]>([]);
 
 	let canQueue = $derived(
-		!relaying && (plexTargetEnabled || lastfmTargetEnabled || lbzTargetEnabled)
+		!relaying && (selectedSource === 'reset' || plexTargetEnabled || lastfmTargetEnabled || lbzTargetEnabled)
 	);
 
 	async function queueJob() {
@@ -400,6 +407,11 @@
 		if (svc === 'listenbrainz') {
 			const fb = cfg.feedback_type as string;
 			return `ListenBrainz ${fb}d`;
+		}
+		if (svc === 'reset') {
+			const target = cfg.target_service as string;
+			const label: Record<string, string> = { plex: 'Plex', lastfm: 'Last.fm', listenbrainz: 'ListenBrainz' };
+			return `Reset · ${label[target] ?? target}`;
 		}
 		return svc;
 	}
@@ -526,6 +538,16 @@
 						ListenBrainz
 					</button>
 				{/if}
+				<button
+					class="source-tab source-tab-reset"
+					class:tab-active={selectedSource === 'reset'}
+					onclick={() => selectedSource = 'reset'}
+				>
+					<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="13" height="13" aria-hidden="true">
+						<path d="M8 2a6 6 0 1 0 4.5 2M8 2V5m0-3h3" stroke-linecap="round" stroke-linejoin="round"/>
+					</svg>
+					Reset
+				</button>
 			</div>
 
 			<!-- Source config -->
@@ -558,11 +580,53 @@
 						>Hated</button>
 					</div>
 					<span class="config-label">recordings</span>
+				{:else if selectedSource === 'reset'}
+					<div class="reset-config">
+						<div class="reset-service-picker">
+							{#if plex.status === 'connected'}
+								<button
+									class="reset-svc-btn"
+									class:reset-svc-active={resetTargetService === 'plex'}
+									onclick={() => resetTargetService = 'plex'}
+								>
+									<svg viewBox="0 0 512 512" width="13" height="13" aria-hidden="true"><rect width="512" height="512" rx="15%" fill="#282a2d"/><path d="M256 70H148l108 186-108 186h108l108-186z" fill="#e5a00d"/></svg>
+									Plex
+								</button>
+							{/if}
+							{#if lastfm.status === 'connected'}
+								<button
+									class="reset-svc-btn"
+									class:reset-svc-active={resetTargetService === 'lastfm'}
+									onclick={() => resetTargetService = 'lastfm'}
+								>
+									<svg viewBox="0 0 24 24" fill="currentColor" width="13" height="13" aria-hidden="true"><path d="M10.584 17.21l-.88-2.392s-1.43 1.6-3.573 1.6c-1.898 0-3.244-1.65-3.244-4.29 0-3.38 1.703-4.594 3.38-4.594 2.42 0 3.19 1.565 3.85 3.576l.88 2.75c.88 2.673 2.53 4.815 7.315 4.815 3.41 0 5.73-1.045 5.73-3.8 0-2.227-1.265-3.38-3.63-3.93l-1.76-.385c-1.21-.275-1.57-.77-1.57-1.593 0-.935.737-1.483 1.95-1.483 1.318 0 2.03.494 2.14 1.67l2.75-.33c-.22-2.47-1.925-3.48-4.755-3.48-2.49 0-4.82.935-4.82 3.93 0 1.87.907 3.05 3.19 3.6l1.87.44c1.375.33 1.87.88 1.87 1.76 0 1.046-.99 1.483-2.862 1.483-2.75 0-3.9-1.43-4.562-3.38l-.91-2.75c-1.155-3.52-3-4.87-6.655-4.87C1.87 5.528 0 8.278 0 12.238c0 3.82 1.87 6.234 6.04 6.234 3.135 0 4.544-1.262 4.544-1.262z"/></svg>
+									Last.fm
+								</button>
+							{/if}
+							{#if listenbrainz.status === 'connected'}
+								<button
+									class="reset-svc-btn"
+									class:reset-svc-active={resetTargetService === 'listenbrainz'}
+									onclick={() => resetTargetService = 'listenbrainz'}
+								>
+									<svg viewBox="9,0,128,160" width="13" height="13" aria-hidden="true"><path d="m75.354 7.823v144l61-35v-74z" fill="#eb743b"/><path d="m70.354 7.823-61 35v74l61 35z" fill="#353070"/></svg>
+									ListenBrainz
+								</button>
+							{/if}
+						</div>
+						<div class="reset-warning">
+							<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="13" height="13" aria-hidden="true">
+								<path d="M8 2L1.5 14h13L8 2zm0 5v3m0 2v.5" stroke-linecap="round" stroke-linejoin="round"/>
+							</svg>
+							This will permanently remove all ratings from the selected service and cannot be undone.
+						</div>
+					</div>
 				{/if}
 			</div>
 		</section>
 
 		<!-- ── TO section ─────────────────────────────────────────────────── -->
+		{#if selectedSource !== 'reset'}
 		<section class="relay-card">
 			<div class="relay-card-label">TO</div>
 
@@ -662,10 +726,12 @@
 				{/if}
 			</div>
 		</section>
+		{/if}
 
 		<!-- ── Queue button ─────────────────────────────────────────────────── -->
 		<button
 			class="run-btn"
+			class:run-btn-reset={selectedSource === 'reset'}
 			onclick={queueJob}
 			disabled={!canQueue}
 			aria-busy={relaying}
@@ -673,6 +739,11 @@
 			{#if relaying}
 				<span class="status-spinner" aria-hidden="true"></span>
 				Queueing…
+			{:else if selectedSource === 'reset'}
+				<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="15" height="15" aria-hidden="true">
+					<path d="M8 2a6 6 0 1 0 4.5 2M8 2V5m0-3h3" stroke-linecap="round" stroke-linejoin="round"/>
+				</svg>
+				Queue Reset
 			{:else}
 				<svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16" aria-hidden="true">
 					<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd"/>
@@ -703,7 +774,7 @@
 								<span class="job-status-dot {statusColor(job.status)}"></span>
 								<div class="job-card-info">
 									<span class="job-title">
-										{summarizeSource(job.source_config)} → {summarizeTargets(job.targets_config)}
+										{summarizeSource(job.source_config)}{job.targets_config.length > 0 ? ` → ${summarizeTargets(job.targets_config)}` : ''}
 									</span>
 									{#if job.recurring && job.interval_minutes}
 										<span class="job-recur-hint">
@@ -1291,6 +1362,61 @@
 		border-bottom-color: var(--primary);
 	}
 
+	.source-tab-reset { color: oklch(0.48 0.08 22); }
+	.source-tab-reset:hover { color: oklch(0.65 0.14 22); }
+	.source-tab-reset.tab-active {
+		color: oklch(0.7 0.16 22);
+		border-bottom-color: oklch(0.6 0.18 22);
+	}
+
+	/* ── Reset config ──────────────────────────────────────────────────────── */
+	.reset-config {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+		padding: 0.875rem 1rem;
+	}
+
+	.reset-service-picker {
+		display: flex;
+		gap: 0.5rem;
+		flex-wrap: wrap;
+	}
+
+	.reset-svc-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		padding: 0.35rem 0.75rem;
+		font-size: 0.8125rem;
+		font-family: var(--font-heading);
+		font-weight: 500;
+		background: oklch(0.12 0.01 38);
+		border: 1px solid oklch(0.28 0.02 38);
+		color: oklch(0.52 0.015 40);
+		cursor: pointer;
+		transition: border-color 0.15s, color 0.15s;
+	}
+	.reset-svc-btn:hover { border-color: oklch(0.38 0.02 38); color: oklch(0.68 0.015 40); }
+	.reset-svc-btn.reset-svc-active {
+		border-color: oklch(0.55 0.18 22 / 0.55);
+		color: oklch(0.7 0.16 22);
+		background: oklch(0.5 0.18 22 / 0.08);
+	}
+
+	.reset-warning {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.5rem;
+		font-size: 0.75rem;
+		color: oklch(0.58 0.14 22);
+		background: oklch(0.5 0.18 22 / 0.08);
+		border: 1px solid oklch(0.5 0.18 22 / 0.25);
+		padding: 0.5rem 0.625rem;
+		line-height: 1.4;
+	}
+	.reset-warning svg { flex-shrink: 0; margin-top: 1px; }
+
 	/* ── Source config row ─────────────────────────────────────────────────── */
 	.source-config {
 		display: flex;
@@ -1438,6 +1564,15 @@
 	.run-btn:disabled {
 		opacity: 0.4;
 		cursor: not-allowed;
+	}
+
+	.run-btn-reset {
+		background: oklch(0.48 0.18 22 / 0.85);
+		border-color: oklch(0.52 0.2 22);
+		color: oklch(0.95 0.02 22);
+	}
+	.run-btn-reset:hover:not(:disabled) {
+		background: oklch(0.52 0.2 22 / 0.9);
 	}
 
 	/* ── Result panel ──────────────────────────────────────────────────────── */

@@ -18,8 +18,13 @@ class ListenBrainzFromConfig(BaseModel):
     feedback_type: Literal["love", "hate"] = "love"
 
 
+class ResetFromConfig(BaseModel):
+    service: Literal["reset"] = "reset"
+    target_service: Literal["plex", "lastfm", "listenbrainz"] = "plex"
+
+
 FromConfig = Annotated[
-    Union[PlexFromConfig, LastFMFromConfig, ListenBrainzFromConfig],
+    Union[PlexFromConfig, LastFMFromConfig, ListenBrainzFromConfig, ResetFromConfig],
     Field(discriminator="service"),
 ]
 

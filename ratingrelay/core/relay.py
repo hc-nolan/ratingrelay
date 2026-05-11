@@ -37,8 +37,9 @@ from ratingrelay.settings import get_settings, logger
 
 settings = get_settings()
 
-# Callback type: (track_dict, target_service_name, success, error_or_None)
-TrackCallback = Callable[[dict, str, bool, Optional[str]], Awaitable[None]]
+# Callback type: (track_dict, target_service_name, success, error_or_None, skipped)
+# skipped=True means the track was already synced; success/error are ignored in that case.
+TrackCallback = Callable[[dict, str, bool, Optional[str], bool], Awaitable[None]]
 
 
 async def _noop_fetch(count: int) -> None:
@@ -46,7 +47,7 @@ async def _noop_fetch(count: int) -> None:
 
 
 async def _noop_track(
-    track: dict, target: str, success: bool, error: Optional[str]
+    track: dict, target: str, success: bool, error: Optional[str], skipped: bool = False
 ) -> None:
     pass
 
@@ -124,11 +125,11 @@ def _lookup_recording_mbid(
 
 
 # ---------------------------------------------------------------------------
-# Source fetchers
+# Credential helpers
 # ---------------------------------------------------------------------------
 
 
-async def fetch_plex(db: AsyncSession, config: PlexFromConfig) -> list[dict]:
+async def _resolve_plex_creds(db: AsyncSession) -> tuple[str, str]:
     cred = await get_credential(db, ServiceName.plex)
     token = settings.plex_token or (cred.token if cred else None)
     server_url = (
@@ -138,6 +139,64 @@ async def fetch_plex(db: AsyncSession, config: PlexFromConfig) -> list[dict]:
     )
     if not token or not server_url:
         raise ValueError("Plex not configured")
+    return token, server_url
+
+
+async def _resolve_lastfm_network(db: AsyncSession) -> "pylast.LastFMNetwork":
+    cred = await get_credential(db, ServiceName.lastfm)
+    api_key = settings.lastfm_token or (cred.token if cred else None)
+    api_secret = settings.lastfm_secret or (cred.secret if cred else None)
+    username = settings.lastfm_username or (cred.username if cred else None)
+    password_hash = (
+        pylast.md5(settings.lastfm_password) if settings.lastfm_password else None
+    ) or (cred.password_hash if cred else None)
+    if not api_key or not api_secret or not username or not password_hash:
+        raise ValueError("Last.fm not configured")
+    return await run_sync(
+        partial(
+            pylast.LastFMNetwork,
+            api_key=api_key,
+            api_secret=api_secret,
+            username=username,
+            password_hash=password_hash,
+        )
+    )
+
+
+async def _resolve_lbz_creds(db: AsyncSession) -> tuple[str, str]:
+    cred = await get_credential(db, ServiceName.listenbrainz)
+    token = settings.listenbrainz_token or (cred.token if cred else None)
+    username = settings.listenbrainz_username or (cred.username if cred else None)
+    if not token or not username:
+        raise ValueError("ListenBrainz not configured")
+    return token, username
+
+
+async def _fetch_lbz_feedback(client: ListenBrainz, username: str, score: int) -> list[dict]:
+    PAGE_SIZE = 100
+    all_feedback: list[dict] = []
+    offset = 0
+    while True:
+        resp = await run_sync(
+            partial(client.get_user_feedback, username, score, True, PAGE_SIZE, offset)
+        )
+        if resp is None:
+            break
+        batch = resp.get("feedback", [])
+        all_feedback.extend(batch)
+        if len(batch) < PAGE_SIZE:
+            break
+        offset += PAGE_SIZE
+    return all_feedback
+
+
+# ---------------------------------------------------------------------------
+# Source fetchers
+# ---------------------------------------------------------------------------
+
+
+async def fetch_plex(db: AsyncSession, config: PlexFromConfig) -> list[dict]:
+    token, server_url = await _resolve_plex_creds(db)
 
     server = await run_sync(lambda: PlexServer(server_url, token))
     section = await run_sync(
@@ -153,10 +212,7 @@ async def fetch_plex(db: AsyncSession, config: PlexFromConfig) -> list[dict]:
 
     result = []
     for t in matched:
-        try:
-            artist_name = t.artist().title
-        except Exception:
-            artist_name = t.grandparentTitle or ""
+        artist_name = t.grandparentTitle or ""
         track_mbid = None
         for guid in t.guids:
             if guid.id.startswith("mbid://"):
@@ -174,26 +230,7 @@ async def fetch_plex(db: AsyncSession, config: PlexFromConfig) -> list[dict]:
 
 
 async def fetch_lastfm(db: AsyncSession, config: LastFMFromConfig) -> list[dict]:
-    cred = await get_credential(db, ServiceName.lastfm)
-    api_key = settings.lastfm_token or (cred.token if cred else None)
-    api_secret = settings.lastfm_secret or (cred.secret if cred else None)
-    username = settings.lastfm_username or (cred.username if cred else None)
-    password_hash = (
-        pylast.md5(settings.lastfm_password) if settings.lastfm_password else None
-    ) or (cred.password_hash if cred else None)
-
-    if not api_key or not api_secret or not username or not password_hash:
-        raise ValueError("Last.fm not configured")
-
-    network = await run_sync(
-        partial(
-            pylast.LastFMNetwork,
-            api_key=api_key,
-            api_secret=api_secret,
-            username=username,
-            password_hash=password_hash,
-        )
-    )
+    network = await _resolve_lastfm_network(db)
     user = await run_sync(network.get_authenticated_user)
     loved = await run_sync(lambda: user.get_loved_tracks(limit=None))
 
@@ -206,31 +243,11 @@ async def fetch_lastfm(db: AsyncSession, config: LastFMFromConfig) -> list[dict]
 async def fetch_listenbrainz(
     db: AsyncSession, config: ListenBrainzFromConfig
 ) -> list[dict]:
-    cred = await get_credential(db, ServiceName.listenbrainz)
-    token = settings.listenbrainz_token or (cred.token if cred else None)
-    username = settings.listenbrainz_username or (cred.username if cred else None)
-
-    if not token or not username:
-        raise ValueError("ListenBrainz not configured")
-
+    token, username = await _resolve_lbz_creds(db)
     score = 1 if config.feedback_type == "love" else -1
     client = ListenBrainz()
     client.set_auth_token(token)
-
-    all_feedback: list[dict] = []
-    offset = 0
-    count = 100
-    while True:
-        resp = await run_sync(
-            partial(client.get_user_feedback, username, score, True, count, offset)
-        )
-        if resp is None:
-            break
-        batch = resp.get("feedback", [])
-        all_feedback.extend(batch)
-        if len(batch) < count:
-            break
-        offset += count
+    all_feedback = await _fetch_lbz_feedback(client, username, score)
 
     return [
         {
@@ -253,17 +270,13 @@ async def write_to_plex(
     config: PlexToConfig,
     source_service: str = "unknown",
     on_track: TrackCallback = _noop_track,
+    dry_run: bool = False,
 ) -> tuple[int, int, int]:
-    cred = await get_credential(db, ServiceName.plex)
-    token = settings.plex_token or (cred.token if cred else None)
-    server_url = (
-        str(settings.plex_server_url).rstrip("/")
-        if settings.plex_server_url
-        else (cred.plex_server_url if cred else None)
-    )
-    if not token or not server_url:
+    try:
+        token, server_url = await _resolve_plex_creds(db)
+    except ValueError:
         for track in tracks:
-            await on_track(track, "plex", False, "Plex not configured")
+            await on_track(track, "plex", False, "Plex not configured", False)
         return 0, len(tracks), 0
 
     already_synced = await _load_synced(db, source_service, "plex")
@@ -277,20 +290,19 @@ async def write_to_plex(
 
     lookup: dict[tuple[str, str], list] = {}
     for pt in all_plex:
-        try:
-            artist = pt.artist().title
-        except Exception:
-            artist = pt.grandparentTitle or ""
+        artist = pt.grandparentTitle or ""
         key = (_normalize(artist), _normalize(pt.title))
         lookup.setdefault(key, []).append(pt)
 
     rating = config.rating
     ok = err = skipped = 0
     for track in tracks:
-        if _sync_key(track) in already_synced:
-            skipped += 1
-            continue
         norm_key = _sync_key(track)
+        if norm_key in already_synced:
+            skipped += 1
+            if dry_run:
+                await on_track(track, "plex", False, None, True)
+            continue
         if norm_key in mappings:
             search_artist, search_title = mappings[norm_key][0], mappings[norm_key][1]
         else:
@@ -299,20 +311,25 @@ async def write_to_plex(
         key = (_normalize(search_artist), _normalize(search_title))
         plex_matches = lookup.get(key, [])
         if not plex_matches:
-            await on_track(track, "plex", False, "No match found in Plex library")
+            await on_track(track, "plex", False, "No match found in Plex library", False)
             err += 1
             continue
         for pt in plex_matches:
-            try:
-                await run_sync(partial(pt.rate, rating))
-                await on_track(track, "plex", True, None)
-                await _record_sync(db, source_service, "plex", track)
-                already_synced.add(_sync_key(track))
+            if dry_run:
+                await on_track(track, "plex", True, None, False)
+                already_synced.add(norm_key)
                 ok += 1
-            except Exception as exc:
-                logger.error("Failed to rate Plex track '%s': %s", pt.title, exc)
-                await on_track(track, "plex", False, str(exc))
-                err += 1
+            else:
+                try:
+                    await run_sync(partial(pt.rate, rating))
+                    await on_track(track, "plex", True, None, False)
+                    await _record_sync(db, source_service, "plex", track)
+                    already_synced.add(norm_key)
+                    ok += 1
+                except Exception as exc:
+                    logger.error("Failed to rate Plex track '%s': %s", pt.title, exc)
+                    await on_track(track, "plex", False, str(exc), False)
+                    err += 1
 
     return ok, err, skipped
 
@@ -323,60 +340,52 @@ async def write_to_lastfm(
     config: LastFMToConfig,
     source_service: str = "unknown",
     on_track: TrackCallback = _noop_track,
+    dry_run: bool = False,
 ) -> tuple[int, int, int]:
-    cred = await get_credential(db, ServiceName.lastfm)
-    api_key = settings.lastfm_token or (cred.token if cred else None)
-    api_secret = settings.lastfm_secret or (cred.secret if cred else None)
-    username = settings.lastfm_username or (cred.username if cred else None)
-    password_hash = (
-        pylast.md5(settings.lastfm_password) if settings.lastfm_password else None
-    ) or (cred.password_hash if cred else None)
-
-    if not api_key or not api_secret or not username or not password_hash:
+    try:
+        network = await _resolve_lastfm_network(db)
+    except ValueError:
         for track in tracks:
-            await on_track(track, "lastfm", False, "Last.fm not configured")
+            await on_track(track, "lastfm", False, "Last.fm not configured", False)
         return 0, len(tracks), 0
 
     already_synced = await _load_synced(db, source_service, "lastfm")
     mappings = await _load_mappings(db, "lastfm")
 
-    network = await run_sync(
-        partial(
-            pylast.LastFMNetwork,
-            api_key=api_key,
-            api_secret=api_secret,
-            username=username,
-            password_hash=password_hash,
-        )
-    )
-
     ok = err = skipped = 0
     for track in tracks:
-        if _sync_key(track) in already_synced:
-            skipped += 1
-            continue
         norm_key = _sync_key(track)
+        if norm_key in already_synced:
+            skipped += 1
+            if dry_run:
+                await on_track(track, "lastfm", False, None, True)
+            continue
         if norm_key in mappings:
             artist, title = mappings[norm_key][0], mappings[norm_key][1]
         else:
             artist = track.get("artist", "")
             title = track.get("title", "")
         if not artist or not title:
-            await on_track(track, "lastfm", False, "Missing artist or title")
+            await on_track(track, "lastfm", False, "Missing artist or title", False)
             err += 1
             continue
-        try:
-            lfm_track = pylast.Track(artist, title, network)
-            await run_sync(lfm_track.love)
-            await asyncio.sleep(0.3)
-            await on_track(track, "lastfm", True, None)
-            await _record_sync(db, source_service, "lastfm", track)
-            already_synced.add(_sync_key(track))
+        if dry_run:
+            await on_track(track, "lastfm", True, None, False)
+            already_synced.add(norm_key)
             ok += 1
-        except Exception as exc:
-            logger.error("LFM love failed '%s – %s': %s", artist, title, exc)
-            await on_track(track, "lastfm", False, str(exc))
-            err += 1
+        else:
+            try:
+                lfm_track = pylast.Track(artist, title, network)
+                await run_sync(lfm_track.love)
+                await asyncio.sleep(0.3)
+                await on_track(track, "lastfm", True, None, False)
+                await _record_sync(db, source_service, "lastfm", track)
+                already_synced.add(norm_key)
+                ok += 1
+            except Exception as exc:
+                logger.error("LFM love failed '%s – %s': %s", artist, title, exc)
+                await on_track(track, "lastfm", False, str(exc), False)
+                err += 1
 
     return ok, err, skipped
 
@@ -387,12 +396,13 @@ async def write_to_listenbrainz(
     config: ListenBrainzToConfig,
     source_service: str = "unknown",
     on_track: TrackCallback = _noop_track,
+    dry_run: bool = False,
 ) -> tuple[int, int, int]:
     cred = await get_credential(db, ServiceName.listenbrainz)
     token = settings.listenbrainz_token or (cred.token if cred else None)
     if not token:
         for track in tracks:
-            await on_track(track, "listenbrainz", False, "ListenBrainz not configured")
+            await on_track(track, "listenbrainz", False, "ListenBrainz not configured", False)
         return 0, len(tracks), 0
 
     already_synced = await _load_synced(db, source_service, "listenbrainz")
@@ -404,15 +414,16 @@ async def write_to_listenbrainz(
 
     ok = err = skipped = 0
     for track in tracks:
-        if _sync_key(track) in already_synced:
-            skipped += 1
-            continue
         norm_key = _sync_key(track)
+        if norm_key in already_synced:
+            skipped += 1
+            if dry_run:
+                await on_track(track, "listenbrainz", False, None, True)
+            continue
         mapping = mappings.get(norm_key)
         mbid = track.get("recording_mbid", "")
         if not mbid:
             if mapping and mapping[2]:
-                # Mapping provides a direct recording MBID
                 mbid = mapping[2]
             else:
                 track_mbid = track.get("track_mbid")
@@ -422,21 +433,24 @@ async def write_to_listenbrainz(
                     await run_sync(partial(_lookup_recording_mbid, track_mbid, artist, title))
                 ) or ""
         if not mbid:
-            await on_track(
-                track, "listenbrainz", False, "No MusicBrainz recording ID found"
-            )
+            await on_track(track, "listenbrainz", False, "No MusicBrainz recording ID found", False)
             err += 1
             continue
-        try:
-            await _lbz_submit(client, feedback_score, mbid)
-            await on_track(track, "listenbrainz", True, None)
-            await _record_sync(db, source_service, "listenbrainz", track, recording_mbid=mbid)
-            already_synced.add(_sync_key(track))
+        if dry_run:
+            await on_track(track, "listenbrainz", True, None, False)
+            already_synced.add(norm_key)
             ok += 1
-        except Exception as exc:
-            logger.error("LBZ feedback failed for %s: %s", mbid, exc)
-            await on_track(track, "listenbrainz", False, str(exc))
-            err += 1
+        else:
+            try:
+                await _lbz_submit(client, feedback_score, mbid)
+                await on_track(track, "listenbrainz", True, None, False)
+                await _record_sync(db, source_service, "listenbrainz", track, recording_mbid=mbid)
+                already_synced.add(norm_key)
+                ok += 1
+            except Exception as exc:
+                logger.error("LBZ feedback failed for %s: %s", mbid, exc)
+                await on_track(track, "listenbrainz", False, str(exc), False)
+                err += 1
 
     return ok, err, skipped
 
@@ -466,19 +480,9 @@ async def _lbz_submit(client: "ListenBrainz", score: int, mbid: str) -> None:
 async def reset_plex(
     db: AsyncSession,
     on_fetch_complete: Optional[Callable[[int], Awaitable[None]]] = None,
-    on_track: Optional[TrackCallback] = None,
+    on_track: TrackCallback = _noop_track,
 ) -> tuple[int, int]:
-    _on_track: TrackCallback = on_track if on_track is not None else _noop_track
-    cred = await get_credential(db, ServiceName.plex)
-    token = settings.plex_token or (cred.token if cred else None)
-    server_url = (
-        str(settings.plex_server_url).rstrip("/")
-        if settings.plex_server_url
-        else (cred.plex_server_url if cred else None)
-    )
-    if not token or not server_url:
-        raise ValueError("Plex not configured")
-
+    token, server_url = await _resolve_plex_creds(db)
     server = await run_sync(lambda: PlexServer(server_url, token))
     section = await run_sync(lambda: server.library.section(settings.plex_music_library))
     all_tracks = await run_sync(lambda: section.searchTracks())
@@ -489,18 +493,14 @@ async def reset_plex(
 
     ok = err = 0
     for t in rated:
-        try:
-            artist_name = t.artist().title
-        except Exception:
-            artist_name = t.grandparentTitle or ""
-        track = {"artist": artist_name, "title": t.title}
+        track = {"artist": t.grandparentTitle or "", "title": t.title}
         try:
             await run_sync(partial(t.rate, None))
-            await _on_track(track, "plex", True, None)
+            await on_track(track, "plex", True, None, False)
             ok += 1
         except Exception as exc:
             logger.error("Plex reset failed for '%s': %s", t.title, exc)
-            await _on_track(track, "plex", False, str(exc))
+            await on_track(track, "plex", False, str(exc), False)
             err += 1
     return ok, err
 
@@ -508,29 +508,9 @@ async def reset_plex(
 async def reset_lastfm(
     db: AsyncSession,
     on_fetch_complete: Optional[Callable[[int], Awaitable[None]]] = None,
-    on_track: Optional[TrackCallback] = None,
+    on_track: TrackCallback = _noop_track,
 ) -> tuple[int, int]:
-    _on_track: TrackCallback = on_track if on_track is not None else _noop_track
-    cred = await get_credential(db, ServiceName.lastfm)
-    api_key = settings.lastfm_token or (cred.token if cred else None)
-    api_secret = settings.lastfm_secret or (cred.secret if cred else None)
-    username = settings.lastfm_username or (cred.username if cred else None)
-    password_hash = (
-        pylast.md5(settings.lastfm_password) if settings.lastfm_password else None
-    ) or (cred.password_hash if cred else None)
-
-    if not api_key or not api_secret or not username or not password_hash:
-        raise ValueError("Last.fm not configured")
-
-    network = await run_sync(
-        partial(
-            pylast.LastFMNetwork,
-            api_key=api_key,
-            api_secret=api_secret,
-            username=username,
-            password_hash=password_hash,
-        )
-    )
+    network = await _resolve_lastfm_network(db)
     user = await run_sync(network.get_authenticated_user)
     loved = await run_sync(lambda: user.get_loved_tracks(limit=None))
     tracks = [
@@ -549,11 +529,11 @@ async def reset_lastfm(
             lfm_track = pylast.Track(artist, title, network)
             await run_sync(lfm_track.unlove)
             await asyncio.sleep(0.3)
-            await _on_track(track, "lastfm", True, None)
+            await on_track(track, "lastfm", True, None, False)
             ok += 1
         except Exception as exc:
             logger.error("LFM unlove failed '%s – %s': %s", artist, title, exc)
-            await _on_track(track, "lastfm", False, str(exc))
+            await on_track(track, "lastfm", False, str(exc), False)
             err += 1
     return ok, err
 
@@ -561,33 +541,15 @@ async def reset_lastfm(
 async def reset_listenbrainz(
     db: AsyncSession,
     on_fetch_complete: Optional[Callable[[int], Awaitable[None]]] = None,
-    on_track: Optional[TrackCallback] = None,
+    on_track: TrackCallback = _noop_track,
 ) -> tuple[int, int]:
-    _on_track: TrackCallback = on_track if on_track is not None else _noop_track
-    cred = await get_credential(db, ServiceName.listenbrainz)
-    token = settings.listenbrainz_token or (cred.token if cred else None)
-    username = settings.listenbrainz_username or (cred.username if cred else None)
-
-    if not token or not username:
-        raise ValueError("ListenBrainz not configured")
-
+    token, username = await _resolve_lbz_creds(db)
     client = ListenBrainz()
     client.set_auth_token(token)
 
     all_feedback: list[dict] = []
     for score in [1, -1]:
-        offset = 0
-        while True:
-            resp = await run_sync(
-                partial(client.get_user_feedback, username, score, True, 100, offset)
-            )
-            if resp is None:
-                break
-            batch = resp.get("feedback", [])
-            all_feedback.extend(batch)
-            if len(batch) < 100:
-                break
-            offset += 100
+        all_feedback.extend(await _fetch_lbz_feedback(client, username, score))
 
     if on_fetch_complete is not None:
         await on_fetch_complete(len(all_feedback))
@@ -600,16 +562,16 @@ async def reset_listenbrainz(
             "title": f.get("track_metadata", {}).get("track_name", ""),
         }
         if not mbid:
-            await _on_track(track, "listenbrainz", False, "No recording MBID")
+            await on_track(track, "listenbrainz", False, "No recording MBID", False)
             err += 1
             continue
         try:
             await _lbz_submit(client, 0, mbid)
-            await _on_track(track, "listenbrainz", True, None)
+            await on_track(track, "listenbrainz", True, None, False)
             ok += 1
         except Exception as exc:
             logger.error("LBZ reset failed for %s: %s", mbid, exc)
-            await _on_track(track, "listenbrainz", False, str(exc))
+            await on_track(track, "listenbrainz", False, str(exc), False)
             err += 1
     return ok, err
 
@@ -624,25 +586,24 @@ async def execute_relay(
     source: object,
     targets: list,
     on_fetch_complete: Optional[Callable[[int], Awaitable[None]]] = None,
-    on_track: Optional[TrackCallback] = None,
+    on_track: TrackCallback = _noop_track,
+    dry_run: bool = False,
 ) -> dict:
     """
     Fetch tracks from source and relay to all targets.
 
     Returns {"tracks_fetched": N, "results": [{"service": ..., "ok": N, "err": N, "skipped": N}, ...]}
     """
-    _on_track: TrackCallback = on_track if on_track is not None else _noop_track
-
     # Reset mode — wipe all ratings from the target service, no targets needed
     if isinstance(source, ResetFromConfig):
         target_svc = source.target_service
         logger.info("Relay: reset mode for %s", target_svc)
         if target_svc == "plex":
-            ok, err = await reset_plex(db, on_fetch_complete, _on_track)
+            ok, err = await reset_plex(db, on_fetch_complete, on_track)
         elif target_svc == "lastfm":
-            ok, err = await reset_lastfm(db, on_fetch_complete, _on_track)
+            ok, err = await reset_lastfm(db, on_fetch_complete, on_track)
         else:
-            ok, err = await reset_listenbrainz(db, on_fetch_complete, _on_track)
+            ok, err = await reset_listenbrainz(db, on_fetch_complete, on_track)
 
         # Clear sync records so tracks can be re-synced after reset
         await db.execute(
@@ -673,13 +634,13 @@ async def execute_relay(
     ok = err = skipped = 0
     for target in targets:
         if isinstance(target, PlexToConfig):
-            ok, err, skipped = await write_to_plex(db, tracks, target, source_service, _on_track)
+            ok, err, skipped = await write_to_plex(db, tracks, target, source_service, on_track, dry_run)
             results.append({"service": "plex", "ok": ok, "err": err, "skipped": skipped})
         elif isinstance(target, LastFMToConfig):
-            ok, err, skipped = await write_to_lastfm(db, tracks, target, source_service, _on_track)
+            ok, err, skipped = await write_to_lastfm(db, tracks, target, source_service, on_track, dry_run)
             results.append({"service": "lastfm", "ok": ok, "err": err, "skipped": skipped})
         elif isinstance(target, ListenBrainzToConfig):
-            ok, err, skipped = await write_to_listenbrainz(db, tracks, target, source_service, _on_track)
+            ok, err, skipped = await write_to_listenbrainz(db, tracks, target, source_service, on_track, dry_run)
             results.append({"service": "listenbrainz", "ok": ok, "err": err, "skipped": skipped})
         else:
             logger.warning("Unknown target type: %s", type(target))

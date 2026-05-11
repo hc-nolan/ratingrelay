@@ -10,14 +10,13 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from pydantic import TypeAdapter
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ratingrelay.core.relay import execute_relay
 from ratingrelay.db import session_maker
 from ratingrelay.models.jobs import Job, TrackEvent
-from ratingrelay.schemas.relay import FromConfig, ToConfig
+from ratingrelay.schemas.relay import source_adapter as _source_adapter, targets_adapter as _targets_adapter
 from ratingrelay.settings import logger
 
 # ---------------------------------------------------------------------------
@@ -25,9 +24,6 @@ from ratingrelay.settings import logger
 # ---------------------------------------------------------------------------
 
 _listeners: dict[str, list[asyncio.Queue]] = {}
-
-_source_adapter: TypeAdapter = TypeAdapter(FromConfig)
-_targets_adapter: TypeAdapter = TypeAdapter(list[ToConfig])
 
 
 def subscribe(job_id: str) -> "asyncio.Queue[dict]":
@@ -109,7 +105,7 @@ async def run_job(job_id: str) -> None:
 
         # 3. on_track callback
         async def on_track(
-            track: dict, target: str, success: bool, error: Optional[str]
+            track: dict, target: str, success: bool, error: Optional[str], skipped: bool = False
         ) -> None:
             nonlocal tracks_ok, tracks_err
 
@@ -122,12 +118,12 @@ async def run_job(job_id: str) -> None:
                 error=error,
             )
             db.add(event)
-            await db.commit()
 
-            if success:
-                tracks_ok += 1
-            else:
-                tracks_err += 1
+            if not skipped:
+                if success:
+                    tracks_ok += 1
+                else:
+                    tracks_err += 1
 
             await broadcast(
                 job_id,
@@ -152,7 +148,7 @@ async def run_job(job_id: str) -> None:
             targets = _targets_adapter.validate_json(job.targets_config)
 
             # 5. Execute
-            result = await execute_relay(db, source, targets, on_fetch_complete, on_track)
+            result = await execute_relay(db, source, targets, on_fetch_complete, on_track, job.dry_run)
 
             # 6. Determine final status
             total_ok = sum(r["ok"] for r in result["results"])
@@ -173,8 +169,8 @@ async def run_job(job_id: str) -> None:
             db.add(job)
             await db.commit()
 
-            # Schedule next run if recurring
-            if job.recurring and job.interval_minutes:
+            # Schedule next run if recurring (never for dry-run jobs)
+            if job.recurring and job.interval_minutes and not job.dry_run:
                 next_run = datetime.now(timezone.utc) + timedelta(
                     minutes=job.interval_minutes
                 )
@@ -199,7 +195,7 @@ async def run_job(job_id: str) -> None:
             db.add(job)
             await db.commit()
 
-        # 8. Broadcast done
+        # Broadcast done
         await db.refresh(job)
         await broadcast(
             job_id,

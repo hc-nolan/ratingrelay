@@ -14,20 +14,17 @@ from typing import AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ratingrelay.core.worker import broadcast, subscribe, unsubscribe
 from ratingrelay.db import get_async_session
 from ratingrelay.models.jobs import Job, TrackEvent
-from ratingrelay.schemas.relay import FromConfig, ToConfig
+from ratingrelay.schemas.relay import FromConfig, ToConfig, source_adapter as _source_adapter, targets_adapter as _targets_adapter
 from ratingrelay.settings import logger
 
 router = APIRouter(prefix="/api/relay", tags=["jobs"])
-
-_source_adapter: TypeAdapter = TypeAdapter(FromConfig)
-_targets_adapter: TypeAdapter = TypeAdapter(list[ToConfig])
 
 _TERMINAL_STATUSES = {"completed", "partial", "failed", "cancelled"}
 _ACTIVE_STATUSES = {"queued", "running", "scheduled"}
@@ -38,6 +35,7 @@ class JobCreateRequest(BaseModel):
     targets: list[ToConfig]
     recurring: bool = False
     interval_minutes: int | None = None
+    dry_run: bool = False
 
 
 def _job_to_dict(job: Job) -> dict:
@@ -56,6 +54,7 @@ def _job_to_dict(job: Job) -> dict:
         "tracks_ok": job.tracks_ok,
         "tracks_err": job.tracks_err,
         "tracks_skipped": job.tracks_skipped,
+        "dry_run": job.dry_run,
     }
 
 
@@ -72,28 +71,33 @@ async def create_job(
     db: AsyncSession = Depends(get_async_session),
 ) -> dict:
     """Queue a new relay job. Returns 409 if an equivalent active job exists."""
+    if body.dry_run and body.recurring:
+        raise HTTPException(status_code=400, detail="dry_run and recurring cannot both be true")
+
     source_json = _source_adapter.dump_json(body.source).decode()
     targets_json = _targets_adapter.dump_json(body.targets).decode()
     new_key = _canonical_key(source_json, targets_json)
 
-    # Duplicate check
-    result = await db.execute(
-        select(Job).where(Job.status.in_(list(_ACTIVE_STATUSES)))
-    )
-    active_jobs = result.scalars().all()
-    for existing in active_jobs:
-        existing_key = _canonical_key(existing.source_config, existing.targets_config)
-        if existing_key == new_key:
-            raise HTTPException(
-                status_code=409,
-                detail=f"An equivalent job is already {existing.status} (id={existing.id})",
-            )
+    # Duplicate check — skip entirely if either side is a dry-run job
+    if not body.dry_run:
+        result = await db.execute(
+            select(Job).where(Job.status.in_(list(_ACTIVE_STATUSES)), Job.dry_run.is_(False))
+        )
+        active_jobs = result.scalars().all()
+        for existing in active_jobs:
+            existing_key = _canonical_key(existing.source_config, existing.targets_config)
+            if existing_key == new_key:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"An equivalent job is already {existing.status} (id={existing.id})",
+                )
 
     job = Job(
         source_config=source_json,
         targets_config=targets_json,
         recurring=body.recurring,
         interval_minutes=body.interval_minutes,
+        dry_run=body.dry_run,
     )
     db.add(job)
     await db.commit()

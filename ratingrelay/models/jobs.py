@@ -24,6 +24,7 @@ class Job(SQLModel, table=True):
     tracks_ok: int = Field(default=0)
     tracks_err: int = Field(default=0)
     tracks_skipped: int = Field(default=0)
+    dry_run: bool = Field(default=False)
 
 
 class TrackEvent(SQLModel, table=True):

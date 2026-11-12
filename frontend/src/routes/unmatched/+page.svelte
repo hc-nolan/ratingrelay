@@ -27,14 +27,19 @@
 	// Per-track form state: keyed by `${artist}||${title}||${target_service}`
 	type FormKey = string;
 	let expanded = $state<Set<FormKey>>(new Set());
-	let formState = $state<Record<FormKey, {
-		mappedArtist: string;
-		mappedTitle: string;
-		recordingMbid: string;
-		targetService: string;
-		saving: boolean;
-		saveError: string;
-	}>>({});
+	let formState = $state<
+		Record<
+			FormKey,
+			{
+				mappedArtist: string;
+				mappedTitle: string;
+				recordingMbid: string;
+				targetService: string;
+				saving: boolean;
+				saveError: string;
+			}
+		>
+	>({});
 
 	function trackKey(t: UnmatchedTrack): FormKey {
 		return `${t.artist}||${t.title}||${t.target_service}`;
@@ -56,8 +61,8 @@
 						recordingMbid: '',
 						targetService: t.target_service === 'all' ? 'all' : t.target_service,
 						saving: false,
-						saveError: '',
-					},
+						saveError: ''
+					}
 				};
 			}
 		}
@@ -70,7 +75,7 @@
 		try {
 			const [ua, um] = await Promise.all([
 				fetch('/api/relay/unmatched'),
-				fetch('/api/relay/mappings'),
+				fetch('/api/relay/mappings')
 			]);
 			if (!ua.ok || !um.ok) throw new Error('Failed to load');
 			unmatched = await ua.json();
@@ -98,8 +103,8 @@
 					mapped_artist: form.mappedArtist,
 					mapped_title: form.mappedTitle,
 					recording_mbid: form.recordingMbid || null,
-					target_service: form.targetService,
-				}),
+					target_service: form.targetService
+				})
 			});
 			if (!res.ok) {
 				const err = await res.json().catch(() => ({ detail: 'Save failed' }));
@@ -109,9 +114,7 @@
 			const mapping: Mapping = await res.json();
 			mappings = [mapping, ...mappings];
 			// Mark the unmatched track as mapped
-			unmatched = unmatched.map(u =>
-				trackKey(u) === k ? { ...u, has_mapping: true } : u
-			);
+			unmatched = unmatched.map((u) => (trackKey(u) === k ? { ...u, has_mapping: true } : u));
 			// Collapse the form
 			const next = new Set(expanded);
 			next.delete(k);
@@ -127,7 +130,7 @@
 		try {
 			const res = await fetch(`/api/relay/mappings/${id}`, { method: 'DELETE' });
 			if (!res.ok) return;
-			mappings = mappings.filter(m => m.id !== id);
+			mappings = mappings.filter((m) => m.id !== id);
 			// Re-check unmatched tracks
 			await load();
 		} catch {
@@ -135,10 +138,15 @@
 		}
 	}
 
-	$effect(() => { load(); });
+	$effect(() => {
+		load();
+	});
 
 	const serviceLabel: Record<string, string> = {
-		plex: 'Plex', lastfm: 'Last.fm', listenbrainz: 'ListenBrainz', all: 'All services'
+		plex: 'Plex',
+		lastfm: 'Last.fm',
+		listenbrainz: 'ListenBrainz',
+		all: 'All services'
 	};
 </script>
 
@@ -150,11 +158,17 @@
 	<div class="bg-noise" aria-hidden="true"></div>
 
 	<main class="page-main">
-
 		<div class="top-bar">
 			<a href="/" class="back-link">
 				<svg viewBox="0 0 16 16" fill="currentColor" width="12" height="12" aria-hidden="true">
-					<path d="M10 3L5 8l5 5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+					<path
+						d="M10 3L5 8l5 5"
+						stroke="currentColor"
+						stroke-width="1.5"
+						fill="none"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					/>
 				</svg>
 				Home
 			</a>
@@ -162,7 +176,9 @@
 
 		<div class="page-heading">
 			<h1 class="page-title">Unmatched Tracks</h1>
-			<p class="page-subtitle">Tracks that couldn't be matched in a target service. Define mappings to correct the search.</p>
+			<p class="page-subtitle">
+				Tracks that couldn't be matched in a target service. Define mappings to correct the search.
+			</p>
 		</div>
 
 		{#if loading}
@@ -170,141 +186,185 @@
 		{:else if error}
 			<div class="error-state">{error}</div>
 		{:else}
+			<!-- Unmatched section -->
+			<div class="section-card">
+				<div class="section-label">
+					Needs attention
+					{#if unmatched.filter((u) => !u.has_mapping).length > 0}
+						<span class="badge">{unmatched.filter((u) => !u.has_mapping).length}</span>
+					{/if}
+				</div>
 
-		<!-- Unmatched section -->
-		<div class="section-card">
-			<div class="section-label">
-				Needs attention
-				{#if unmatched.filter(u => !u.has_mapping).length > 0}
-					<span class="badge">{unmatched.filter(u => !u.has_mapping).length}</span>
+				{#if unmatched.filter((u) => !u.has_mapping).length === 0}
+					<div class="empty-state-inner">No unresolved unmatched tracks. Nice!</div>
+				{:else}
+					{#each unmatched.filter((u) => !u.has_mapping) as track}
+						{@const k = trackKey(track)}
+						{@const form = formState[k]}
+						{@const isOpen = expanded.has(k)}
+						<div class="track-row">
+							<button class="track-summary" onclick={() => toggleExpand(track)}>
+								<span class="track-info">
+									<span class="track-name">{track.artist} – {track.title}</span>
+									<span class="track-meta">
+										<span class="service-chip"
+											>{serviceLabel[track.target_service] ?? track.target_service}</span
+										>
+										<span class="fail-count">{track.count}× failed</span>
+									</span>
+								</span>
+								<span class="expand-arrow" class:rotated={isOpen} aria-hidden="true">›</span>
+							</button>
+
+							{#if isOpen && form}
+								<div class="mapping-form">
+									<div class="form-hint">
+										Override the artist and title to search for in {serviceLabel[
+											track.target_service
+										] ?? track.target_service}.
+									</div>
+
+									<div class="form-row">
+										<label class="form-label" for="ma-{k}">Search artist</label>
+										<input
+											id="ma-{k}"
+											class="form-input"
+											bind:value={form.mappedArtist}
+											placeholder={track.artist}
+										/>
+									</div>
+									<div class="form-row">
+										<label class="form-label" for="mt-{k}">Search title</label>
+										<input
+											id="mt-{k}"
+											class="form-input"
+											bind:value={form.mappedTitle}
+											placeholder={track.title}
+										/>
+									</div>
+
+									{#if track.target_service === 'listenbrainz'}
+										<div class="form-row">
+											<label class="form-label" for="mbid-{k}"
+												>Recording MBID <span class="optional">(optional, skips search)</span
+												></label
+											>
+											<input
+												id="mbid-{k}"
+												class="form-input"
+												bind:value={form.recordingMbid}
+												placeholder="e.g. 3a1f4c2e-…"
+											/>
+										</div>
+									{/if}
+
+									<div class="form-row">
+										<label class="form-label" for="svc-{k}">Apply to</label>
+										<select id="svc-{k}" class="form-select" bind:value={form.targetService}>
+											<option value="all">All services</option>
+											<option value="plex">Plex only</option>
+											<option value="lastfm">Last.fm only</option>
+											<option value="listenbrainz">ListenBrainz only</option>
+										</select>
+									</div>
+
+									{#if form.saveError}
+										<div class="form-error">{form.saveError}</div>
+									{/if}
+
+									<div class="form-actions">
+										<button
+											class="btn-secondary"
+											onclick={() => toggleExpand(track)}
+											disabled={form.saving}
+										>
+											Cancel
+										</button>
+										<button
+											class="btn-primary"
+											onclick={() => saveMapping(track)}
+											disabled={form.saving}
+										>
+											{form.saving ? 'Saving…' : 'Save mapping'}
+										</button>
+									</div>
+								</div>
+							{/if}
+						</div>
+					{/each}
 				{/if}
 			</div>
 
-			{#if unmatched.filter(u => !u.has_mapping).length === 0}
-				<div class="empty-state-inner">No unresolved unmatched tracks. Nice!</div>
-			{:else}
-				{#each unmatched.filter(u => !u.has_mapping) as track}
-					{@const k = trackKey(track)}
-					{@const form = formState[k]}
-					{@const isOpen = expanded.has(k)}
-					<div class="track-row">
-						<button class="track-summary" onclick={() => toggleExpand(track)}>
+			<!-- Already-mapped section -->
+			{#if unmatched.filter((u) => u.has_mapping).length > 0}
+				<div class="section-card resolved-section">
+					<div class="section-label">Resolved (mapping exists)</div>
+					{#each unmatched.filter((u) => u.has_mapping) as track}
+						<div class="track-row track-row-resolved">
 							<span class="track-info">
-								<span class="track-name">{track.artist} – {track.title}</span>
+								<span class="track-name resolved-name">{track.artist} – {track.title}</span>
 								<span class="track-meta">
-									<span class="service-chip">{serviceLabel[track.target_service] ?? track.target_service}</span>
-									<span class="fail-count">{track.count}× failed</span>
+									<span class="service-chip"
+										>{serviceLabel[track.target_service] ?? track.target_service}</span
+									>
 								</span>
 							</span>
-							<span class="expand-arrow" class:rotated={isOpen} aria-hidden="true">›</span>
-						</button>
+							<span class="resolved-badge">mapped ✓</span>
+						</div>
+					{/each}
+				</div>
+			{/if}
 
-						{#if isOpen && form}
-							<div class="mapping-form">
-								<div class="form-hint">Override the artist and title to search for in {serviceLabel[track.target_service] ?? track.target_service}.</div>
+			<!-- Mappings section -->
+			<div class="section-card">
+				<div class="section-label">
+					All mappings
+					{#if mappings.length > 0}
+						<span class="badge badge-muted">{mappings.length}</span>
+					{/if}
+				</div>
 
-								<div class="form-row">
-									<label class="form-label" for="ma-{k}">Search artist</label>
-									<input id="ma-{k}" class="form-input" bind:value={form.mappedArtist} placeholder={track.artist} />
-								</div>
-								<div class="form-row">
-									<label class="form-label" for="mt-{k}">Search title</label>
-									<input id="mt-{k}" class="form-input" bind:value={form.mappedTitle} placeholder={track.title} />
-								</div>
-
-								{#if track.target_service === 'listenbrainz'}
-									<div class="form-row">
-										<label class="form-label" for="mbid-{k}">Recording MBID <span class="optional">(optional, skips search)</span></label>
-										<input id="mbid-{k}" class="form-input" bind:value={form.recordingMbid} placeholder="e.g. 3a1f4c2e-…" />
-									</div>
-								{/if}
-
-								<div class="form-row">
-									<label class="form-label" for="svc-{k}">Apply to</label>
-									<select id="svc-{k}" class="form-select" bind:value={form.targetService}>
-										<option value="all">All services</option>
-										<option value="plex">Plex only</option>
-										<option value="lastfm">Last.fm only</option>
-										<option value="listenbrainz">ListenBrainz only</option>
-									</select>
-								</div>
-
-								{#if form.saveError}
-									<div class="form-error">{form.saveError}</div>
-								{/if}
-
-								<div class="form-actions">
-									<button class="btn-secondary" onclick={() => toggleExpand(track)} disabled={form.saving}>
-										Cancel
-									</button>
-									<button class="btn-primary" onclick={() => saveMapping(track)} disabled={form.saving}>
-										{form.saving ? 'Saving…' : 'Save mapping'}
-									</button>
+				{#if mappings.length === 0}
+					<div class="empty-state-inner">No mappings defined yet.</div>
+				{:else}
+					{#each mappings as m}
+						<div class="mapping-row">
+							<div class="mapping-info">
+								<div class="mapping-original">{m.source_artist} – {m.source_title}</div>
+								<div class="mapping-arrow">↓</div>
+								<div class="mapping-override">
+									{m.mapped_artist} – {m.mapped_title}
+									{#if m.recording_mbid}
+										<span class="mbid-hint">mbid: {m.recording_mbid}</span>
+									{/if}
 								</div>
 							</div>
-						{/if}
-					</div>
-				{/each}
-			{/if}
-		</div>
-
-		<!-- Already-mapped section -->
-		{#if unmatched.filter(u => u.has_mapping).length > 0}
-			<div class="section-card resolved-section">
-				<div class="section-label">Resolved (mapping exists)</div>
-				{#each unmatched.filter(u => u.has_mapping) as track}
-					<div class="track-row track-row-resolved">
-						<span class="track-info">
-							<span class="track-name resolved-name">{track.artist} – {track.title}</span>
-							<span class="track-meta">
-								<span class="service-chip">{serviceLabel[track.target_service] ?? track.target_service}</span>
-							</span>
-						</span>
-						<span class="resolved-badge">mapped ✓</span>
-					</div>
-				{/each}
-			</div>
-		{/if}
-
-		<!-- Mappings section -->
-		<div class="section-card">
-			<div class="section-label">
-				All mappings
-				{#if mappings.length > 0}
-					<span class="badge badge-muted">{mappings.length}</span>
+							<div class="mapping-right">
+								<span class="service-chip"
+									>{serviceLabel[m.target_service] ?? m.target_service}</span
+								>
+								<button
+									class="delete-btn"
+									onclick={() => deleteMapping(m.id)}
+									title="Delete mapping"
+								>
+									<svg
+										viewBox="0 0 16 16"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="1.5"
+										width="13"
+										height="13"
+									>
+										<path d="M3 4h10M6 4V2h4v2M5 4l.5 9h5L11 4" />
+									</svg>
+								</button>
+							</div>
+						</div>
+					{/each}
 				{/if}
 			</div>
-
-			{#if mappings.length === 0}
-				<div class="empty-state-inner">No mappings defined yet.</div>
-			{:else}
-				{#each mappings as m}
-					<div class="mapping-row">
-						<div class="mapping-info">
-							<div class="mapping-original">{m.source_artist} – {m.source_title}</div>
-							<div class="mapping-arrow">↓</div>
-							<div class="mapping-override">
-								{m.mapped_artist} – {m.mapped_title}
-								{#if m.recording_mbid}
-									<span class="mbid-hint">mbid: {m.recording_mbid}</span>
-								{/if}
-							</div>
-						</div>
-						<div class="mapping-right">
-							<span class="service-chip">{serviceLabel[m.target_service] ?? m.target_service}</span>
-							<button class="delete-btn" onclick={() => deleteMapping(m.id)} title="Delete mapping">
-								<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="13" height="13">
-									<path d="M3 4h10M6 4V2h4v2M5 4l.5 9h5L11 4"/>
-								</svg>
-							</button>
-						</div>
-					</div>
-				{/each}
-			{/if}
-		</div>
-
 		{/if}
-
 	</main>
 </div>
 
@@ -356,9 +416,13 @@
 		text-decoration: none;
 		transition: color 0.15s;
 	}
-	.back-link:hover { color: oklch(0.7 0.02 40); }
+	.back-link:hover {
+		color: oklch(0.7 0.02 40);
+	}
 
-	.page-heading { margin-bottom: 0.5rem; }
+	.page-heading {
+		margin-bottom: 0.5rem;
+	}
 
 	.page-title {
 		font-size: 1.125rem;
@@ -375,13 +439,16 @@
 		margin: 0;
 	}
 
-	.empty-state, .error-state {
+	.empty-state,
+	.error-state {
 		padding: 3rem 0;
 		text-align: center;
 		font-size: 0.875rem;
 		color: oklch(0.4 0.01 40);
 	}
-	.error-state { color: oklch(0.6 0.18 22); }
+	.error-state {
+		color: oklch(0.6 0.18 22);
+	}
 
 	/* ── Section cards ────────────────────────────────────────────────────── */
 	.section-card {
@@ -429,7 +496,9 @@
 	.track-row {
 		border-bottom: 1px solid oklch(0.185 0.01 40);
 	}
-	.track-row:last-child { border-bottom: none; }
+	.track-row:last-child {
+		border-bottom: none;
+	}
 
 	.track-summary {
 		display: flex;
@@ -445,7 +514,9 @@
 		gap: 0.75rem;
 		transition: background 0.1s;
 	}
-	.track-summary:hover { background: oklch(0.18 0.015 38); }
+	.track-summary:hover {
+		background: oklch(0.18 0.015 38);
+	}
 
 	.track-row-resolved .track-summary,
 	.track-row-resolved {
@@ -469,7 +540,9 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 	}
-	.resolved-name { color: oklch(0.48 0.01 40); }
+	.resolved-name {
+		color: oklch(0.48 0.01 40);
+	}
 
 	.track-meta {
 		display: flex;
@@ -500,7 +573,9 @@
 		transition: transform 0.15s;
 		line-height: 1;
 	}
-	.expand-arrow.rotated { transform: rotate(90deg); }
+	.expand-arrow.rotated {
+		transform: rotate(90deg);
+	}
 
 	.resolved-badge {
 		font-size: 0.65rem;
@@ -546,7 +621,8 @@
 		color: oklch(0.38 0.01 40);
 	}
 
-	.form-input, .form-select {
+	.form-input,
+	.form-select {
 		background: oklch(0.18 0.015 38);
 		border: 1px solid oklch(0.26 0.02 38);
 		color: oklch(0.78 0.015 50);
@@ -557,10 +633,13 @@
 		outline: none;
 		transition: border-color 0.15s;
 	}
-	.form-input:focus, .form-select:focus {
+	.form-input:focus,
+	.form-select:focus {
 		border-color: oklch(0.55 0.16 38 / 0.6);
 	}
-	.form-select { cursor: pointer; }
+	.form-select {
+		cursor: pointer;
+	}
 
 	.form-error {
 		font-size: 0.75rem;
@@ -583,13 +662,18 @@
 		border: 1px solid oklch(0.55 0.16 38 / 0.5);
 		color: oklch(0.78 0.12 38);
 		cursor: pointer;
-		transition: background 0.15s, color 0.15s;
+		transition:
+			background 0.15s,
+			color 0.15s;
 	}
 	.btn-primary:hover:not(:disabled) {
 		background: oklch(0.55 0.16 38 / 0.3);
 		color: oklch(0.88 0.12 38);
 	}
-	.btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
+	.btn-primary:disabled {
+		opacity: 0.45;
+		cursor: not-allowed;
+	}
 
 	.btn-secondary {
 		padding: 0.375rem 0.75rem;
@@ -600,13 +684,18 @@
 		border: 1px solid oklch(0.26 0.01 40);
 		color: oklch(0.45 0.01 40);
 		cursor: pointer;
-		transition: border-color 0.15s, color 0.15s;
+		transition:
+			border-color 0.15s,
+			color 0.15s;
 	}
 	.btn-secondary:hover:not(:disabled) {
 		border-color: oklch(0.38 0.01 40);
 		color: oklch(0.6 0.01 40);
 	}
-	.btn-secondary:disabled { opacity: 0.45; cursor: not-allowed; }
+	.btn-secondary:disabled {
+		opacity: 0.45;
+		cursor: not-allowed;
+	}
 
 	/* ── Mapping rows ─────────────────────────────────────────────────────── */
 	.mapping-row {
@@ -617,7 +706,9 @@
 		padding: 0.625rem 1rem;
 		border-bottom: 1px solid oklch(0.185 0.01 40);
 	}
-	.mapping-row:last-child { border-bottom: none; }
+	.mapping-row:last-child {
+		border-bottom: none;
+	}
 
 	.mapping-info {
 		display: flex;
@@ -672,7 +763,11 @@
 		align-items: center;
 		transition: color 0.15s;
 	}
-	.delete-btn:hover { color: oklch(0.65 0.18 22); }
+	.delete-btn:hover {
+		color: oklch(0.65 0.18 22);
+	}
 
-	.resolved-section { opacity: 0.7; }
+	.resolved-section {
+		opacity: 0.7;
+	}
 </style>

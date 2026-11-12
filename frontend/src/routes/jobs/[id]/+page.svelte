@@ -1,35 +1,11 @@
 <script lang="ts">
 	import type { PageData } from './$types';
+	import type { JobData, TrackEvent } from '$lib/types/jobs';
+	import { summarizeSource, summarizeTargets, statusColor, frequencyOptions } from '$lib/relay';
 
 	let { data }: { data: PageData } = $props();
 
 	const TERMINAL = new Set(['completed', 'partial', 'failed', 'cancelled']);
-
-	interface TrackEvent {
-		artist: string;
-		title: string;
-		target: string;
-		success: boolean;
-		error?: string | null;
-	}
-
-	interface JobData {
-		id: string;
-		status: string;
-		source_config: Record<string, unknown>;
-		targets_config: Record<string, unknown>[];
-		recurring: boolean;
-		interval_minutes?: number;
-		run_at?: string;
-		created_at: string;
-		started_at?: string;
-		completed_at?: string;
-		tracks_fetched: number;
-		tracks_ok: number;
-		tracks_err: number;
-		tracks_skipped: number;
-		events?: TrackEvent[];
-	}
 
 	let job = $state<JobData | null>(data.job ?? null);
 	let events = $state<TrackEvent[]>(
@@ -90,50 +66,14 @@
 	}
 
 	// ── Display helpers ────────────────────────────────────────────────────────
-	function summarizeSource(cfg: Record<string, unknown>): string {
-		const svc = cfg.service as string;
-		if (svc === 'plex') {
-			const cmp = cfg.comparison === 'gte' ? '≥' : '≤';
-			const rating = (cfg.rating_threshold as number) / 2;
-			return `Plex ${cmp} ${rating}★`;
-		}
-		if (svc === 'lastfm') return 'Last.fm loved';
-		if (svc === 'listenbrainz') return `ListenBrainz ${cfg.feedback_type}d`;
-		if (svc === 'reset') {
-			const label: Record<string, string> = { plex: 'Plex', lastfm: 'Last.fm', listenbrainz: 'ListenBrainz' };
-			return `Reset · ${label[cfg.target_service as string] ?? cfg.target_service}`;
-		}
-		return svc;
-	}
-
-	function summarizeTargets(cfgs: Record<string, unknown>[]): string {
-		return cfgs.map(c => {
-			const s = c.service as string;
-			if (s === 'plex') return 'Plex';
-			if (s === 'lastfm') return 'Last.fm';
-			if (s === 'listenbrainz') return 'ListenBrainz';
-			return s;
-		}).join(' + ');
-	}
-
-	function statusColor(status: string): string {
-		const map: Record<string, string> = {
-			queued: 'status-queued', scheduled: 'status-scheduled', running: 'status-running',
-			completed: 'status-completed', partial: 'status-partial',
-			failed: 'status-failed', cancelled: 'status-cancelled',
-		};
-		return map[status] ?? 'status-queued';
-	}
-
 	function fmtTime(iso: string | undefined): string {
 		if (!iso) return '—';
 		return new Date(iso).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
 	}
 
-	const frequencyOptions: Record<number, string> = {
-		60: 'every hour', 360: 'every 6 hours', 720: 'every 12 hours',
-		1440: 'daily', 10080: 'weekly',
-	};
+	function freqLabel(minutes: number | undefined): string {
+		return frequencyOptions.find((o) => o.value === minutes)?.label ?? `every ${minutes}m`;
+	}
 </script>
 
 <svelte:head>
@@ -144,11 +84,17 @@
 	<div class="bg-noise" aria-hidden="true"></div>
 
 	<main class="page-main">
-
 		<div class="top-bar">
 			<a href="/" class="back-link">
 				<svg viewBox="0 0 16 16" fill="currentColor" width="12" height="12" aria-hidden="true">
-					<path d="M10 3L5 8l5 5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+					<path
+						d="M10 3L5 8l5 5"
+						stroke="currentColor"
+						stroke-width="1.5"
+						fill="none"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					/>
 				</svg>
 				Home
 			</a>
@@ -157,119 +103,132 @@
 		{#if !job}
 			<div class="not-found">Job not found.</div>
 		{:else}
-
-		<!-- Header card -->
-		<div class="job-header-card" data-status={job.status}>
-			<div class="job-header-top">
-				<div class="job-title-row">
-					<span class="job-status-dot {statusColor(job.status)}"></span>
-					<h1 class="job-title">
-						{summarizeSource(job.source_config)}{job.targets_config.length > 0 ? ` → ${summarizeTargets(job.targets_config)}` : ''}
-					</h1>
-				</div>
-
-				{#if job.status === 'queued' || job.status === 'scheduled'}
-					<button class="cancel-btn" onclick={cancelJob} disabled={cancelling}>
-						{cancelling ? 'Cancelling…' : 'Cancel job'}
-					</button>
-				{/if}
-			</div>
-
-			<!-- Meta row -->
-			<div class="job-meta">
-				<span class="meta-chip status-chip" data-status={job.status}>
-					{job.status}
-				</span>
-				{#if job.recurring && job.interval_minutes}
-					<span class="meta-chip">
-						{frequencyOptions[job.interval_minutes] ?? `every ${job.interval_minutes}m`}
-					</span>
-				{/if}
-				<span class="meta-time">Started {fmtTime(job.started_at)}</span>
-				{#if job.completed_at}
-					<span class="meta-time">Finished {fmtTime(job.completed_at)}</span>
-				{/if}
-			</div>
-
-			<!-- Progress stats -->
-			<div class="stats-row">
-				<div class="stat-block">
-					<span class="stat-value">{job.tracks_fetched}</span>
-					<span class="stat-label">Fetched</span>
-				</div>
-				<div class="stat-divider"></div>
-				<div class="stat-block">
-					<span class="stat-value stat-ok">{job.tracks_ok}</span>
-					<span class="stat-label">Synced</span>
-				</div>
-				<div class="stat-divider"></div>
-				<div class="stat-block">
-					<span class="stat-value stat-err">{job.tracks_err}</span>
-					<span class="stat-label">Errors</span>
-				</div>
-				<div class="stat-divider"></div>
-				<div class="stat-block">
-					<span class="stat-value stat-skip">{job.tracks_skipped}</span>
-					<span class="stat-label">Skipped</span>
-				</div>
-
-				{#if job.status === 'running' && job.tracks_fetched > 0}
-					<div class="progress-bar-wrap">
-						<div
-							class="progress-bar-fill"
-							style:width="{Math.min(100, ((job.tracks_ok + job.tracks_err) / job.tracks_fetched) * 100)}%"
-						></div>
+			<!-- Header card -->
+			<div class="job-header-card" data-status={job.status}>
+				<div class="job-header-top">
+					<div class="job-title-row">
+						<span class="job-status-dot {statusColor(job.status)}"></span>
+						<h1 class="job-title">
+							{summarizeSource(job.source_config)}{job.targets_config.length > 0
+								? ` → ${summarizeTargets(job.targets_config)}`
+								: ''}
+						</h1>
 					</div>
-				{:else if job.status === 'running'}
-					<div class="fetching-hint">
-						<span class="status-spinner" aria-hidden="true"></span>
-						Fetching tracks…
-					</div>
-				{/if}
-			</div>
 
-			{#if cancelError}
-				<div class="cancel-error">{cancelError}</div>
-			{/if}
-		</div>
-
-		<!-- Event log -->
-		<div class="log-card">
-			<div class="log-card-label">
-				Track log
-				{#if events.length > 0}
-					<span class="log-count">{events.length}</span>
-				{/if}
-				{#if job.status === 'running'}
-					<span class="status-spinner log-spinner" aria-hidden="true"></span>
-				{/if}
-			</div>
-
-			{#if events.length === 0}
-				<div class="log-empty">
-					{#if job.status === 'running' || job.status === 'queued'}
-						Waiting for tracks…
-					{:else}
-						No track events recorded.
+					{#if job.status === 'queued' || job.status === 'scheduled'}
+						<button class="cancel-btn" onclick={cancelJob} disabled={cancelling}>
+							{cancelling ? 'Cancelling…' : 'Cancel job'}
+						</button>
 					{/if}
 				</div>
-			{:else}
-				<div class="log-list">
-					{#each events as evt}
-						<div class="log-row" class:log-err={!evt.success}>
-							<span class="log-icon">{evt.success ? '✓' : '✗'}</span>
-							<span class="log-track">{evt.artist} – {evt.title}</span>
-							<span class="log-arrow">→</span>
-							<span class="log-target">{evt.target}</span>
-							{#if !evt.success && evt.error}
-								<span class="log-error-msg">({evt.error})</span>
-							{/if}
-						</div>
-					{/each}
-				</div>
-			{/if}
-		</div>
 
+				<!-- Meta row -->
+				<div class="job-meta">
+					<span class="meta-chip status-chip" data-status={job.status}>
+						{job.status}
+					</span>
+					{#if job.dry_run}
+						<span class="meta-chip meta-chip-dry">DRY RUN</span>
+					{/if}
+					{#if job.recurring && job.interval_minutes}
+						<span class="meta-chip">
+							{freqLabel(job.interval_minutes)}
+						</span>
+					{/if}
+					<span class="meta-time">Started {fmtTime(job.started_at)}</span>
+					{#if job.completed_at}
+						<span class="meta-time">Finished {fmtTime(job.completed_at)}</span>
+					{/if}
+				</div>
+
+				<!-- Progress stats -->
+				<div class="stats-row">
+					<div class="stat-block">
+						<span class="stat-value">{job.tracks_fetched}</span>
+						<span class="stat-label">Fetched</span>
+					</div>
+					<div class="stat-divider"></div>
+					<div class="stat-block">
+						<span class="stat-value stat-ok">{job.tracks_ok}</span>
+						<span class="stat-label">{job.dry_run ? 'Would sync' : 'Synced'}</span>
+					</div>
+					<div class="stat-divider"></div>
+					<div class="stat-block">
+						<span class="stat-value stat-err">{job.tracks_err}</span>
+						<span class="stat-label">Errors</span>
+					</div>
+					<div class="stat-divider"></div>
+					<div class="stat-block">
+						<span class="stat-value stat-skip">{job.tracks_skipped}</span>
+						<span class="stat-label">Skipped</span>
+					</div>
+
+					{#if job.status === 'running' && job.tracks_fetched > 0}
+						<div class="progress-bar-wrap">
+							<div
+								class="progress-bar-fill"
+								style:width="{Math.min(
+									100,
+									((job.tracks_ok + job.tracks_err) / job.tracks_fetched) * 100
+								)}%"
+							></div>
+						</div>
+					{:else if job.status === 'running'}
+						<div class="fetching-hint">
+							<span class="status-spinner" aria-hidden="true"></span>
+							Fetching tracks…
+						</div>
+					{/if}
+				</div>
+
+				{#if cancelError}
+					<div class="cancel-error">{cancelError}</div>
+				{/if}
+			</div>
+
+			<!-- Event log -->
+			<div class="log-card">
+				<div class="log-card-label">
+					Track log
+					{#if events.length > 0}
+						<span class="log-count">{events.length}</span>
+					{/if}
+					{#if job.status === 'running'}
+						<span class="status-spinner log-spinner" aria-hidden="true"></span>
+					{/if}
+				</div>
+
+				{#if events.length === 0}
+					<div class="log-empty">
+						{#if job.status === 'running' || job.status === 'queued'}
+							Waiting for tracks…
+						{:else}
+							No track events recorded.
+						{/if}
+					</div>
+				{:else}
+					<div class="log-list">
+						{#each events as evt}
+							{@const skipped = !evt.success && !evt.error}
+							<div
+								class="log-row"
+								class:log-err={!evt.success && !!evt.error}
+								class:log-skip={skipped}
+							>
+								<span class="log-icon">{evt.success ? '✓' : skipped ? '–' : '✗'}</span>
+								<span class="log-track">{evt.artist} – {evt.title}</span>
+								<span class="log-arrow">→</span>
+								<span class="log-target">{evt.target}</span>
+								{#if skipped}
+									<span class="log-skip-msg">(already synced)</span>
+								{:else if evt.error}
+									<span class="log-error-msg">({evt.error})</span>
+								{/if}
+							</div>
+						{/each}
+					</div>
+				{/if}
+			</div>
 		{/if}
 	</main>
 </div>
@@ -344,11 +303,21 @@
 		transition: border-color 0.3s;
 	}
 
-	.job-header-card[data-status="running"]   { border-color: oklch(0.55 0.18 38 / 0.45); }
-	.job-header-card[data-status="completed"] { border-color: oklch(0.45 0.12 140 / 0.4); }
-	.job-header-card[data-status="partial"]   { border-color: oklch(0.55 0.16 62 / 0.4); }
-	.job-header-card[data-status="failed"]    { border-color: oklch(0.5 0.2 22 / 0.4); }
-	.job-header-card[data-status="cancelled"] { opacity: 0.6; }
+	.job-header-card[data-status='running'] {
+		border-color: oklch(0.55 0.18 38 / 0.45);
+	}
+	.job-header-card[data-status='completed'] {
+		border-color: oklch(0.45 0.12 140 / 0.4);
+	}
+	.job-header-card[data-status='partial'] {
+		border-color: oklch(0.55 0.16 62 / 0.4);
+	}
+	.job-header-card[data-status='failed'] {
+		border-color: oklch(0.5 0.2 22 / 0.4);
+	}
+	.job-header-card[data-status='cancelled'] {
+		opacity: 0.6;
+	}
 
 	.job-header-top {
 		display: flex;
@@ -373,21 +342,38 @@
 		flex-shrink: 0;
 	}
 
-	.status-queued    { background: oklch(0.55 0.14 55); }
-	.status-scheduled { background: oklch(0.52 0.12 240); }
-	.status-running   {
+	.status-queued {
+		background: oklch(0.55 0.14 55);
+	}
+	.status-scheduled {
+		background: oklch(0.52 0.12 240);
+	}
+	.status-running {
 		background: var(--primary);
 		box-shadow: 0 0 6px var(--primary);
 		animation: blink 1.2s ease-in-out infinite;
 	}
-	.status-completed { background: oklch(0.6 0.15 140); }
-	.status-partial   { background: oklch(0.65 0.16 62); }
-	.status-failed    { background: oklch(0.55 0.2 22); }
-	.status-cancelled { background: oklch(0.35 0.01 40); }
+	.status-completed {
+		background: oklch(0.6 0.15 140);
+	}
+	.status-partial {
+		background: oklch(0.65 0.16 62);
+	}
+	.status-failed {
+		background: oklch(0.55 0.2 22);
+	}
+	.status-cancelled {
+		background: oklch(0.35 0.01 40);
+	}
 
 	@keyframes blink {
-		0%, 100% { opacity: 0.5; }
-		50% { opacity: 1; }
+		0%,
+		100% {
+			opacity: 0.5;
+		}
+		50% {
+			opacity: 1;
+		}
 	}
 
 	.job-title {
@@ -412,7 +398,9 @@
 		color: oklch(0.48 0.01 40);
 		cursor: pointer;
 		flex-shrink: 0;
-		transition: border-color 0.15s, color 0.15s;
+		transition:
+			border-color 0.15s,
+			color 0.15s;
 	}
 
 	.cancel-btn:hover:not(:disabled) {
@@ -420,7 +408,10 @@
 		color: oklch(0.65 0.18 22);
 	}
 
-	.cancel-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+	.cancel-btn:disabled {
+		opacity: 0.45;
+		cursor: not-allowed;
+	}
 
 	.job-meta {
 		display: flex;
@@ -443,10 +434,26 @@
 		color: oklch(0.48 0.01 40);
 	}
 
-	.meta-chip[data-status="running"]   { border-color: oklch(0.5 0.15 38 / 0.4); color: oklch(0.65 0.12 38); }
-	.meta-chip[data-status="completed"] { border-color: oklch(0.45 0.12 140 / 0.4); color: oklch(0.62 0.14 140); }
-	.meta-chip[data-status="partial"]   { border-color: oklch(0.5 0.14 62 / 0.4); color: oklch(0.65 0.14 62); }
-	.meta-chip[data-status="failed"]    { border-color: oklch(0.45 0.18 22 / 0.4); color: oklch(0.62 0.18 22); }
+	.meta-chip[data-status='running'] {
+		border-color: oklch(0.5 0.15 38 / 0.4);
+		color: oklch(0.65 0.12 38);
+	}
+	.meta-chip[data-status='completed'] {
+		border-color: oklch(0.45 0.12 140 / 0.4);
+		color: oklch(0.62 0.14 140);
+	}
+	.meta-chip[data-status='partial'] {
+		border-color: oklch(0.5 0.14 62 / 0.4);
+		color: oklch(0.65 0.14 62);
+	}
+	.meta-chip[data-status='failed'] {
+		border-color: oklch(0.45 0.18 22 / 0.4);
+		color: oklch(0.62 0.18 22);
+	}
+	.meta-chip-dry {
+		border-color: oklch(0.52 0.12 240 / 0.5);
+		color: oklch(0.62 0.1 240);
+	}
 
 	.meta-time {
 		font-size: 0.7rem;
@@ -480,9 +487,15 @@
 		line-height: 1;
 	}
 
-	.stat-ok   { color: oklch(0.65 0.14 140); }
-	.stat-err  { color: oklch(0.65 0.18 22); }
-	.stat-skip { color: oklch(0.55 0.015 40); }
+	.stat-ok {
+		color: oklch(0.65 0.14 140);
+	}
+	.stat-err {
+		color: oklch(0.65 0.18 22);
+	}
+	.stat-skip {
+		color: oklch(0.55 0.015 40);
+	}
 
 	.stat-label {
 		font-size: 0.625rem;
@@ -532,7 +545,9 @@
 	}
 
 	@keyframes spin {
-		to { transform: rotate(360deg); }
+		to {
+			transform: rotate(360deg);
+		}
 	}
 
 	.cancel-error {
@@ -602,9 +617,16 @@
 		border-bottom: 1px solid oklch(0.185 0.01 40);
 	}
 
-	.log-row:last-child { border-bottom: none; }
+	.log-row:last-child {
+		border-bottom: none;
+	}
 
-	.log-row.log-err { background: oklch(0.5 0.18 22 / 0.04); }
+	.log-row.log-err {
+		background: oklch(0.5 0.18 22 / 0.04);
+	}
+	.log-row.log-skip {
+		opacity: 0.5;
+	}
 
 	.log-icon {
 		font-size: 0.65rem;
@@ -613,7 +635,12 @@
 		min-width: 10px;
 	}
 
-	.log-err .log-icon { color: oklch(0.6 0.18 22); }
+	.log-err .log-icon {
+		color: oklch(0.6 0.18 22);
+	}
+	.log-skip .log-icon {
+		color: oklch(0.45 0.01 40);
+	}
 
 	.log-track {
 		overflow: hidden;
@@ -642,5 +669,11 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	.log-skip-msg {
+		flex-shrink: 0;
+		color: oklch(0.42 0.01 40);
+		font-style: italic;
 	}
 </style>

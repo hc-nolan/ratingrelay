@@ -7,14 +7,14 @@ POST   /api/relay/mappings           — create a mapping
 DELETE /api/relay/mappings/{id}      — delete a mapping
 """
 
-import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ratingrelay.core.relay import _normalize
 from ratingrelay.db import get_async_session
 from ratingrelay.models.jobs import TrackEvent
 from ratingrelay.models.mappings import TrackMapping
@@ -25,10 +25,6 @@ _NO_MATCH_ERRORS = {
     "No match found in Plex library",
     "No MusicBrainz recording ID found",
 }
-
-
-def _normalize(s: str) -> str:
-    return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", "", s.lower())).strip()
 
 
 def _sync_key(artist: str, title: str) -> str:
@@ -42,6 +38,11 @@ class MappingCreate(BaseModel):
     mapped_title: str
     recording_mbid: str | None = None
     target_service: str = "all"
+
+    @field_validator("recording_mbid", mode="before")
+    @classmethod
+    def empty_string_to_none(cls, v: object) -> object:
+        return None if v == "" else v
 
 
 def _mapping_to_dict(m: TrackMapping) -> dict:
@@ -139,7 +140,7 @@ async def create_mapping(
         source_title=body.source_title,
         mapped_artist=body.mapped_artist,
         mapped_title=body.mapped_title,
-        recording_mbid=body.recording_mbid or None,
+        recording_mbid=body.recording_mbid,
         target_service=body.target_service,
     )
     db.add(mapping)

@@ -1,6 +1,6 @@
 from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, TypeAdapter
 
 
 class PlexFromConfig(BaseModel):
@@ -64,3 +64,7 @@ class RelayResponse(BaseModel):
     status: Literal["completed", "partial", "error"]
     tracks_fetched: int
     results: list[TargetResult]
+
+
+source_adapter: TypeAdapter[FromConfig] = TypeAdapter(FromConfig)
+targets_adapter: TypeAdapter[list[ToConfig]] = TypeAdapter(list[ToConfig])

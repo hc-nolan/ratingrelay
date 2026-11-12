@@ -50,12 +50,7 @@ async def listenbrainz_auth_status(
     if not token or not username:
         return ListenBrainzStatusResponse(status="needs-auth")
 
-    try:
-        await run_sync(partial(_validate_token, username, token))
-        return ListenBrainzStatusResponse(status="connected", username=username)
-    except Exception as exc:
-        logger.warning("ListenBrainz token validation failed: %s", exc)
-        return ListenBrainzStatusResponse(status="needs-auth")
+    return ListenBrainzStatusResponse(status="connected", username=username)
 
 
 @router.post("/auth", response_model=ListenBrainzStatusResponse)

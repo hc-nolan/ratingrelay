@@ -9,4 +9,25 @@ wheels/
 # Virtual environments
 .venv
 
+# Local configuration and secrets. Never commit these.
+.config
+*.env
+
+# Databases
 *.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Frontend
+node_modules/
+frontend/build/
+frontend/.svelte-kit/
+
+# Editor / OS
+.DS_Store

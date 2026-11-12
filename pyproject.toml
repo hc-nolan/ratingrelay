@@ -30,6 +30,10 @@ asyncio_mode = "auto"
 ignore = ["tests"]
 disable = ["C0114","C0115","C0116","W1203","R0903","W0613", "C0103"]
 
+# Ratchet upward as the code is cleaned up; never lower it.
+[tool.pylint.REPORTS]
+fail-under = 9.0
+
 [tool.fastapi]
 entrypoint = "ratingrelay.main:app"
 

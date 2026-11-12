@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     Attributes:
         model_config: Change the value of `env_file` to use a custom environment variable file.
         frontend_dir: Directory that the Svelte frontend builds to
+        host: Interface the API binds to
+        port: Port the API listens on
         base_url: URL to be used for requests to the application
         database: Path to the database file
         log_level: Logging level
@@ -27,6 +29,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".config")
 
     frontend_dir: str = "frontend/build"
+    host: str = "0.0.0.0"
+    port: int = 8000
     base_url: str = "http://localhost:8000"
     database: str = "ratingrelay.db"
     log_level: str = "INFO"

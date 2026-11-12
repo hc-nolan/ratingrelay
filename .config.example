@@ -1,0 +1,47 @@
+# RatingRelay settings.
+#
+# Copy to `.config` (gitignored) and edit. Values here are read by
+# pydantic-settings in ratingrelay/settings.py; environment variables of the
+# same name override this file.
+#
+# Every service credential below is OPTIONAL. Anything left out is expected to
+# be entered in the web UI and stored in the database; a value set here takes
+# precedence over the database one (useful for dev and for headless runs).
+
+# --- App ---------------------------------------------------------------
+# Where the API listens. Keep base_url in sync: it is what Plex redirects to
+# during OAuth, so it must be reachable from the browser, not just locally.
+host = "0.0.0.0"
+port = 8100
+base_url = "http://localhost:8100"
+
+# Directory holding the built SvelteKit bundle (only used when serving the
+# frontend from FastAPI; the dev server is on :5173).
+frontend_dir = "frontend/build"
+
+# SQLite file. Relative paths resolve from the working directory.
+database = "ratingrelay.db"
+
+log_level = "INFO"
+timezone = "America/Toronto"
+
+# Server-side session secret. Generate with: openssl rand -hex 32
+secret = "CHANGE-ME"
+
+# --- Plex --------------------------------------------------------------
+# Full URL including port, e.g. http://192.168.0.10:32400
+# plex_server_url = ""
+plex_music_library = "Music"
+# plex_token = ""
+
+# --- Last.fm -----------------------------------------------------------
+# API credentials: https://www.last.fm/api/account/create
+# lastfm_token = ""      # API key
+# lastfm_secret = ""
+# lastfm_username = ""
+# lastfm_password = ""
+
+# --- ListenBrainz ------------------------------------------------------
+# Token: https://listenbrainz.org/settings/
+# listenbrainz_token = ""
+# listenbrainz_username = ""

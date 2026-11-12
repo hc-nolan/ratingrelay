@@ -25,7 +25,7 @@ export const load: PageLoad = async ({ fetch }) => {
 	const [plex, lastfm, listenbrainz] = await Promise.all([
 		fetchServiceStatus(fetch, '/api/plex/auth/status'),
 		fetchServiceStatus(fetch, '/api/lastfm/auth/status'),
-		fetchServiceStatus(fetch, '/api/listenbrainz/auth/status'),
+		fetchServiceStatus(fetch, '/api/listenbrainz/auth/status')
 	]);
 
 	const authStatus = { plex, lastfm, listenbrainz } as AuthCheckResult;

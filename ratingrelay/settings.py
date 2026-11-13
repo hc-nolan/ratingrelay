@@ -21,7 +21,11 @@ class Settings(BaseSettings):
         database: Path to the database file
         log_level: Logging level
         timezone: Timezone in IANA format
-        secret: Secret to use for authentication. Should be a securely generated 64+ char string.
+        secret: Extra entropy mixed into the session cookie signature. Sessions are
+            signed with this plus the Plex token, so the default is no longer the
+            only thing standing between a stranger and the library.
+        auth: Require a Plex login for the API. Off only for a relay reachable
+            from its own machine.
         test_limit: Request limit used when running tests
     """
 
@@ -36,6 +40,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     timezone: str = "America/Toronto"
     secret: str = "AUTHSECRET"
+    auth: bool = True
     test_limit: Optional[int] = 10
     # Below settings are all optional. If not found, you will be prompted
     # to enter them in the frontend.

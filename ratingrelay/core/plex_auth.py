@@ -10,10 +10,31 @@ retrieved or the TTL is exceeded.
 import logging
 from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 
-from plexapi.myplex import MyPlexPinLogin
+from plexapi.myplex import MyPlexAccount, MyPlexPinLogin
 
 log = logging.getLogger("ratingrelay")
+
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
+def public_url(base_url: str, request_base_url: str, path: str) -> str:
+    """Where a browser (not this process) should be sent to reach us.
+
+    ``base_url`` is authoritative whenever it names a real address: that is the
+    deployed case, and a configured answer must win. When it is still the
+    localhost default, the browser is not necessarily on this machine — the dev
+    server binds every interface, so the app can be open on a laptop elsewhere on
+    the LAN. A localhost redirect would send that browser to its own localhost
+    and the login would silently die, so fall back to the origin the request
+    arrived on.
+    """
+    configured = base_url.rstrip("/")
+    if urlparse(configured).hostname not in _LOCAL_HOSTS:
+        return f"{configured}{path}"
+    return f"{request_base_url.rstrip('/')}{path}"
+
 
 # TTL for an unconfirmed session (plexapi default timeout is 120 s)
 _SESSION_TTL = timedelta(minutes=5)

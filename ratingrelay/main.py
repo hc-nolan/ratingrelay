@@ -6,10 +6,10 @@ from alembic import command
 from alembic.config import Config
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
 
-import logging
 
+from ratingrelay.core.session import session_guard
+from ratingrelay.routes.auth import router as auth_router
 from ratingrelay.routes.lastfm import router as lastfm_router
 from ratingrelay.routes.listenbrainz import router as listenbrainz_router
 from ratingrelay.routes.plex import router as plex_router
@@ -35,14 +35,17 @@ async def run_migrations() -> None:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(_app: FastAPI):
     await run_migrations()
     asyncio.create_task(worker_loop())
     yield
 
 
 app = FastAPI(lifespan=lifespan)
+app.middleware("http")(session_guard())
 
+
+app.include_router(auth_router)
 app.include_router(plex_router)
 app.include_router(lastfm_router)
 app.include_router(listenbrainz_router)

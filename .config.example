@@ -29,7 +29,13 @@ log_level = "INFO"
 timezone = "America/Toronto"
 
 # Server-side session secret. Generate with: openssl rand -hex 32
+# Sessions are signed with this *and* the Plex token, so rotating either one
+# signs every browser out.
 secret = "CHANGE-ME"
+
+# Require a Plex login for the API. Only turn this off when the relay is
+# reachable from nothing but its own machine.
+auth = true
 
 # --- Plex --------------------------------------------------------------
 # Full URL including port, e.g. http://192.168.0.10:32400

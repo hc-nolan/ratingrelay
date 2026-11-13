@@ -1,6 +1,5 @@
 import asyncio
 from typing import Callable, TypeVar
-from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
@@ -8,7 +7,17 @@ from plexapi.myplex import MyPlexAccount
 from plexapi.server import PlexServer
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ratingrelay.core.plex_auth import create_session, iter_sessions, remove_session
+from ratingrelay.core.plex_auth import (
+    create_session,
+    iter_sessions,
+    public_url,
+    remove_session,
+)
+from ratingrelay.core.session import (
+    SESSION_COOKIE,
+    SESSION_MAX_AGE,
+    issue_session,
+)
 from ratingrelay.core.thread import run_sync
 from ratingrelay.db import get_async_session
 from ratingrelay.db.credentials import get_credential, upsert_credential
@@ -36,24 +45,14 @@ router = APIRouter(prefix="/api/plex", tags=["plex"])
 _CALLBACK_ATTEMPTS = 6
 _CALLBACK_DELAY = 1.0
 
-_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
-
 
 def _callback_url(request: Request) -> str:
-    """Where Plex should send the popup back to.
-
-    ``base_url`` is authoritative whenever it names a real address: that is the
-    deployed case, and a configured answer must win. When it is still the
-    localhost default, the browser is not necessarily on this machine — the dev
-    server binds every interface, so the app can be open on a laptop elsewhere on
-    the LAN. A localhost redirect would send that browser to its own localhost
-    and the login would silently die, so fall back to the origin the request
-    arrived on.
-    """
-    configured = settings.base_url.rstrip("/")
-    if urlparse(configured).hostname not in _LOCAL_HOSTS:
-        return f"{configured}/api/plex/auth/callback"
-    return f"{str(request.base_url).rstrip('/')}/api/plex/auth/callback"
+    """Where Plex should send the popup back to."""
+    return public_url(
+        settings.base_url,
+        str(request.base_url),
+        "/api/plex/auth/callback",
+    )
 
 # Minimal HTML page served inside the OAuth popup after Plex redirects back.
 # Sends a postMessage to the opener and immediately closes itself.
@@ -145,6 +144,7 @@ async def plex_auth_init(request: Request) -> PlexAuthInitResponse:
 
 @router.get("/auth/callback", response_class=HTMLResponse)
 async def plex_auth_callback(
+    request: Request,
     db: AsyncSession = Depends(get_async_session),
 ) -> HTMLResponse:
     """
@@ -182,6 +182,7 @@ async def plex_auth_callback(
 
     remove_session(confirmed_pin_id)
 
+    response = HTMLResponse(_POPUP_CLOSE_HTML)
     try:
         account = await run_sync(lambda: MyPlexAccount(token=confirmed_token))
         await upsert_credential(
@@ -191,10 +192,22 @@ async def plex_auth_callback(
             username=account.username,
         )
         logger.info("Plex authenticated as %s", account.username)
+        # Setting up also signs you in: whoever completed this popup holds the
+        # token that now protects the API, so asking them to log in again
+        # immediately would be pure ceremony.
+        response.set_cookie(
+            SESSION_COOKIE,
+            issue_session(str(account.id), confirmed_token),
+            max_age=SESSION_MAX_AGE,
+            httponly=True,
+            samesite="lax",
+            secure=request.url.scheme == "https",
+            path="/",
+        )
     except Exception as exc:
         logger.error("Failed to store Plex credentials: %s", exc)
 
-    return HTMLResponse(_POPUP_CLOSE_HTML)
+    return response
 
 
 @router.get("/servers", response_model=PlexServersResponse)

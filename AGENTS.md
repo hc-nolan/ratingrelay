@@ -48,7 +48,7 @@ app.py                 uvicorn entrypoint, reads host/port from settings
 ratingrelay/
   main.py              FastAPI app, lifespan, routers, SPA fallback
   settings.py          pydantic-settings; get_settings() + module logger
-  core/                relay.py (pipeline), worker.py (job queue), thread.py (run_sync), plex_auth.py
+  core/                relay.py (pipeline), worker.py (job queue), thread.py (run_sync), plex_auth.py, session.py (login + guard)
   db/                  engine, session factory, get_async_session(), credential helpers
   models/              SQLModel tables: services, jobs, sync, mappings
   routes/              one module per service + jobs/unmatched/relay
@@ -104,6 +104,15 @@ These are the point of the tool. v1 got them right; keep them that way.
 - **Sessions**: inject `Depends(get_async_session)`. Never build sessions ad hoc.
 - **Credentials**: one `ServiceCredential` row per service, read through
   `ratingrelay.db.credentials`. Settings take precedence over the DB row.
+- **Auth is the Plex account, not a password store**: the API needs a session
+  (`core/session.py`, signed with `settings.secret` + the Plex token) once a Plex
+  credential exists. `/api/auth/*` is always open; a fresh install is open so setup
+  can run; `auth = false` in `.config` turns enforcement off deliberately. Never
+  add a second identity — one user, one library.
+- **Jobs are data, not events**: progress lives in the `job` and `track_event` rows.
+  The worker commits per track so the SSE stream can tail the database; there is no
+  in-process registry to keep in sync. A run is stopped by `job.cancel_requested` at
+  a track boundary, never by killing the task.
 - **Schemas**: request/response models live in `ratingrelay/schemas/`, one file per
   service. Never reuse SQLModel table classes as API schemas.
 - **Migrations**: Alembic, always autogenerate then review. Existing databases must

@@ -124,3 +124,76 @@ gate, so an expired cookie degrades to a login screen instead of a blank page.
   through `core/credentials`.
 - A cancelled job writes nothing new; the records it already wrote stay, because
   they describe writes that really did happen.
+
+## What landed
+
+Both gaps, in two commits (`a94b949` for cancellation and the stream, this one
+for the login).
+
+**Cancellation (gap 8).** `job.cancel_requested` (`b1c2d3e4f5a6`) plus a worker
+that reads it at a track boundary:
+
+- `DELETE /api/relay/jobs/{id}` on a running job sets the flag and answers 200
+  with `cancel_requested: true`; the job keeps running until the worker reaches
+  the boundary, then stops with status `cancelled` and its counters intact.
+- The flag is checked *after* the track's event and sync record are committed,
+  so a cancel never discards a write that really happened.
+- A cancel that arrives while the process is dying is honoured on startup: the
+  stale-job reset marks it `cancelled` instead of resuming it.
+- Cancelling during the Plex fetch is only observed when the fetch returns,
+  because the fetch is one await inside the source. That is a documented limit,
+  not a silent one.
+
+**The stream (gap 8).** `GET /api/relay/jobs/{id}/stream` tails the database
+instead of an in-process `dict[str, list[asyncio.Queue]]`:
+
+- it polls the job row and `track_event` once a second, replays what it has not
+  seen (a count is a stable cursor because `track_event` is append-only), emits
+  `status` when the row changes, a keepalive comment every 15 s, and `done` at a
+  terminal status;
+- `_listeners`, `subscribe`, `unsubscribe` and `broadcast` are gone, so the
+  worker no longer needs the API's event loop and a restarted or second API
+  process sees the same events;
+- track events are committed per track as a consequence, which also means a
+  crash mid-run keeps the history of what it wrote. The job row carries its own
+  counters, so the stream cannot invent numbers the worker did not produce.
+
+**The login (gap 7).** `core/session.py` + `routes/auth.py`:
+
+| Route | What it does |
+| --- | --- |
+| `POST /api/auth/plex/init` | opens a Plex PIN, returns `pin_id` + `auth_url` |
+| `GET /api/auth/plex/poll?pin_id=` | waits for confirmation, compares the Plex account **id** with the owner's, sets the cookie or 403s |
+| `GET /api/auth/plex/done` | the popup's landing page; closes itself |
+| `GET /api/auth/status` | `{required, authenticated, username}` |
+| `POST /api/auth/logout` | clears the cookie |
+
+The guard is a middleware built by `session_guard()` in `core/session.py`, wired
+in `main.py`, tested with the factory injected. Setup also signs you in: the
+Plex credential callback sets the cookie, so completing the wizard never lands
+on a login screen immediately afterwards.
+
+Frontend: `$lib/session.ts` (the only place that speaks to `/api/auth/*`),
+`$lib/components/LoginGate.svelte` (shadcn `Card` + `Button`), and the root
+layout, which gates on `/api/auth/status`, re-checks on tab focus, and calls
+`invalidateAll()` after signing in so the pages that fetched while unsigned try
+again.
+
+**Tests.** 176 passing (was 148): 3 worker-cancel, 5 job-stream, 20 auth.
+
+**Live verification (2026-11-13).** After the restart on the live DB:
+`GET /api/auth/status` → `{"required": true, "authenticated": false, ...}`;
+`GET /api/relay/unmatched` unsigned → **401**; and with a cookie issued
+server-side for the stored Plex token the app loads normally and the job rail,
+the flow canvas and `/unmatched` all answer 200. The PIN round trip itself is
+covered by the stub tests — the real plex.tv call is the same `checkLogin()` the
+setup wizard has been doing live since v2.
+
+**Two honest notes.**
+
+1. Cancelling a fetch-heavy job still means waiting for the fetch. Plex has no
+   cancellation token and the engine is deliberately not request-shaped.
+2. The login is Plex-only. If plex.tv is unreachable, an already-signed-in
+   browser keeps working (the cookie is stateless), but there is no way to sign
+   in afresh, and no local password fallback. For a single-user tool that beats
+   another password store.

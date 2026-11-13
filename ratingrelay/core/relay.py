@@ -6,7 +6,6 @@ without going through FastAPI's dependency injection.
 """
 
 import asyncio
-import re
 from functools import partial
 from typing import Awaitable, Callable, Optional
 
@@ -21,6 +20,8 @@ mbz.set_useragent("RatingRelay", "2.0", "https://github.com/hnolan/ratingrelay2"
 
 from ratingrelay.core.thread import run_sync
 from ratingrelay.db.credentials import get_credential
+from ratingrelay.engine.normalize import normalize as _normalize
+from ratingrelay.engine.normalize import track_key
 from ratingrelay.models.mappings import TrackMapping
 from ratingrelay.models.services import ServiceName
 from ratingrelay.models.sync import SyncRecord
@@ -52,12 +53,8 @@ async def _noop_track(
     pass
 
 
-def _normalize(s: str) -> str:
-    return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", "", s.lower())).strip()
-
-
 def _sync_key(track: dict) -> str:
-    return f"{_normalize(track.get('artist', ''))}||{_normalize(track.get('title', ''))}"
+    return track_key(track.get("artist", ""), track.get("title", ""))
 
 
 async def _load_synced(db: AsyncSession, source_service: str, target_service: str) -> set[str]:

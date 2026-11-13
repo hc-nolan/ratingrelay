@@ -14,8 +14,8 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ratingrelay.core.relay import _normalize
 from ratingrelay.db import get_async_session
+from ratingrelay.engine.normalize import track_key
 from ratingrelay.models.jobs import TrackEvent
 from ratingrelay.models.mappings import TrackMapping
 
@@ -28,7 +28,7 @@ _NO_MATCH_ERRORS = {
 
 
 def _sync_key(artist: str, title: str) -> str:
-    return f"{_normalize(artist)}||{_normalize(title)}"
+    return track_key(artist, title)
 
 
 class MappingCreate(BaseModel):

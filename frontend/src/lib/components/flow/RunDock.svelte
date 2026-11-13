@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Button } from '$lib/components/ui/button';
 	import { Checkbox } from '$lib/components/ui/checkbox';
+	import { NativeSelect } from '$lib/components/ui/native-select';
 	import { repeatOptions } from '$lib/relay';
 	import { cn } from '$lib/utils';
 	import FlowNode from './FlowNode.svelte';
@@ -34,14 +35,11 @@
 		{#if mode === 'run'}
 			<label class="flex items-center gap-2 text-sm text-muted-foreground">
 				<span>Repeat</span>
-				<select
-					class="h-8 rounded-md border border-border bg-background px-2 text-sm text-foreground"
-					bind:value={repeat}
-				>
+				<NativeSelect bind:value={repeat}>
 					{#each repeatOptions as opt (opt.value)}
 						<option value={opt.value}>{opt.label}</option>
 					{/each}
-				</select>
+				</NativeSelect>
 			</label>
 		{/if}
 

@@ -8,7 +8,7 @@
 
 {#snippet plex(s: number)}
 	<svg viewBox="0 0 512 512" width={s} height={s} aria-hidden="true">
-		<rect width="512" height="512" rx="15%" fill="#282a2d" />
+		<rect width="512" height="512" rx="15%" fill="#211a15" />
 		<path d="M256 70H148l108 186-108 186h108l108-186z" fill="#e5a00d" />
 	</svg>
 {/snippet}
@@ -24,7 +24,7 @@
 {#snippet listenbrainz(s: number)}
 	<svg viewBox="9,0,128,160" width={s} height={s} aria-hidden="true">
 		<path d="m75.354 7.823v144l61-35v-74z" fill="#eb743b" />
-		<path d="m70.354 7.823-61 35v74l61 35z" fill="#353070" />
+		<path d="m70.354 7.823-61 35v74l61 35z" fill="#2b1c14" />
 	</svg>
 {/snippet}
 

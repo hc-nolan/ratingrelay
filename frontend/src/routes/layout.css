@@ -8,7 +8,9 @@
 @plugin '@tailwindcss/typography';
 
 /*
- * Studio console: warm charcoal, one cyan accent, hairline borders, dark only.
+ * Studio console: warm charcoal, one bronze accent, hairline borders, dark
+ * only. Nothing here is blue: an accent that leans cool (cyan, blue) fights
+ * the neutrals and reads as a different, colder app.
  *
  * Everything a page needs is a token here. A page that reaches for a literal
  * colour (bg-emerald-500, text-white) is a bug: status colours live in --ok,
@@ -21,8 +23,8 @@
 	--card-foreground: oklch(0.947 0.005 60);
 	--popover: oklch(0.218 0.012 45);
 	--popover-foreground: oklch(0.947 0.005 60);
-	--primary: oklch(0.735 0.122 197);
-	--primary-foreground: oklch(0.185 0.028 215);
+	--primary: oklch(0.71 0.126 58);
+	--primary-foreground: oklch(0.17 0.014 45);
 	--secondary: oklch(0.264 0.012 45);
 	--secondary-foreground: oklch(0.947 0.005 60);
 	--muted: oklch(0.248 0.012 45);
@@ -33,14 +35,14 @@
 	--destructive-foreground: oklch(0.99 0.004 60);
 	--border: oklch(1 0 0 / 9%);
 	--input: oklch(1 0 0 / 13%);
-	--ring: oklch(0.735 0.122 197 / 55%);
+	--ring: oklch(0.71 0.126 58 / 55%);
 
 	/* Status. One meaning each; no page picks its own green. */
 	--ok: oklch(0.745 0.148 158);
-	--warn: oklch(0.798 0.136 79);
-	--info: oklch(0.735 0.122 197);
+	--warn: oklch(0.85 0.145 92);
+	--info: oklch(0.71 0.126 58);
 
-	--chart-1: oklch(0.735 0.122 197);
+	--chart-1: oklch(0.71 0.126 58);
 	--chart-2: oklch(0.745 0.148 158);
 	--chart-3: oklch(0.798 0.136 79);
 	--chart-4: oklch(0.664 0.192 22.5);
@@ -49,12 +51,12 @@
 	--radius: 0.625rem;
 	--sidebar: oklch(0.19 0.01 46);
 	--sidebar-foreground: oklch(0.947 0.005 60);
-	--sidebar-primary: oklch(0.735 0.122 197);
-	--sidebar-primary-foreground: oklch(0.185 0.028 215);
+	--sidebar-primary: oklch(0.71 0.126 58);
+	--sidebar-primary-foreground: oklch(0.17 0.014 45);
 	--sidebar-accent: oklch(0.248 0.012 45);
-	--sidebar-accent-foreground: oklch(0.945 0.004 255);
+	--sidebar-accent-foreground: oklch(0.945 0.004 60);
 	--sidebar-border: oklch(1 0 0 / 9%);
-	--sidebar-ring: oklch(0.735 0.122 197 / 55%);
+	--sidebar-ring: oklch(0.71 0.126 58 / 55%);
 	color-scheme: dark;
 }
 
@@ -125,6 +127,45 @@
 	}
 	::selection {
 		@apply bg-primary/30 text-foreground;
+	}
+
+	select option,
+	select optgroup {
+		background-color: var(--popover);
+		color: var(--popover-foreground);
+	}
+}
+
+/*
+ * A native <select> is the right control for a 2-5 option list, but the browser
+ * paints the menu itself, in its own cool dark grey — the one cold surface left
+ * in an otherwise warm app. Where the browser has the customisable picker, the
+ * menu is the page's to style and takes our popover.
+ *
+ * Deliberately unlayered: @tailwindcss/forms sets `appearance: none` on every
+ * select inside the base layer, and a layered rule cannot beat it. Our own
+ * chevron is what stays visible, so the browser's picker icon is hidden.
+ */
+@supports (appearance: base-select) {
+	select {
+		appearance: base-select;
+		/* @tailwindcss/forms paints a chevron as a background image; with
+		   base-select there is a picker icon as well, and we draw our own. */
+		background-image: none;
+	}
+	select::picker-icon {
+		display: none;
+	}
+	::picker(select) {
+		border: 1px solid var(--border);
+		border-radius: var(--radius-md);
+		background-color: var(--popover);
+		color: var(--popover-foreground);
+		box-shadow: 0 12px 32px -16px oklch(0 0 0 / 70%);
+		margin-block: 4px;
+	}
+	select option:checked {
+		background-color: var(--accent);
 	}
 }
 

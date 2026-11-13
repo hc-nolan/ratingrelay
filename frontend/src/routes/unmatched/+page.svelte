@@ -5,6 +5,7 @@
 	import CandidatePicker from '$lib/components/CandidatePicker.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
+	import { NativeSelect } from '$lib/components/ui/native-select';
 	import ServiceMark from '$lib/components/flow/ServiceMark.svelte';
 	import type { Candidate } from '$lib/types/relay';
 	import type { SourceId } from '$lib/types/relay';
@@ -403,12 +404,12 @@
 													{/if}
 													<label class="block">
 														<span class="text-xs text-muted-foreground">Apply to</span>
-														<select class="control mt-1 w-full" bind:value={form.targetService}>
+														<NativeSelect class="mt-1 w-full" bind:value={form.targetService}>
 															<option value="all">All services</option>
 															<option value="plex">Plex only</option>
 															<option value="lastfm">Last.fm only</option>
 															<option value="listenbrainz">ListenBrainz only</option>
-														</select>
+														</NativeSelect>
 													</label>
 												</div>
 

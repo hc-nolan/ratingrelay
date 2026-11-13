@@ -45,6 +45,11 @@ After completing the code, ask the user if they want a playground link. Only cal
   primitives still apply. There is no light theme and no theme switch — do not
   add one; new UI uses the tokens (`bg-card`, `text-muted-foreground`,
   `border-border`), never literal colours.
+- **Nothing blue.** The neutrals and the single accent are both warm (the accent
+  is a bronze at hue ~58). Cyan, blue and the browser's own cool dark menus read
+  as a colder app on top of warm charcoal — the last one is why `layout.css`
+  opts every `<select>` into `appearance: base-select` and styles
+  `::picker(select)` with `--popover`.
 - **Home is a flow builder**, not a form: `src/lib/components/flow/` owns the
   nodes, the connector and the run dock; `AppHeader` and `ActivityRail` frame
   every signed-in page. The page keeps state and API calls.

@@ -22,6 +22,7 @@ from ratingrelay.core.credentials import (
 )
 from ratingrelay.db.store import SqlSyncStore
 from ratingrelay.engine import pipeline
+from ratingrelay.engine.retry import attempt
 from ratingrelay.engine.services.lastfm import LastFmClient
 from ratingrelay.engine.services.listenbrainz import ListenBrainzClient
 from ratingrelay.engine.services.plex import PlexLibrary
@@ -286,7 +287,9 @@ async def _reset_recorded(
             ok += 1
             continue
         try:
-            await target.undo(record)
+            await attempt(
+                lambda: target.undo(record), f"{target_svc} undo for '{record.key}'"
+            )
         except Exception as exc:  # noqa: BLE001 - reported per track
             logger.error("Reset %s failed for '%s': %s", target_svc, record.key, exc)
             await on_track(

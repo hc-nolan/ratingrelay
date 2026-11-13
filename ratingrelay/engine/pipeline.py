@@ -10,11 +10,16 @@ The pipeline owns four decisions so that nothing above it has to repeat them:
 
 Everything service-specific lives behind the :class:`Source` and :class:`Target`
 protocols, so the same pipeline serves the API, the job worker and the CLI.
+
+Every network call the pipeline makes — fetch, plan, commit, undo — goes through
+:func:`ratingrelay.engine.retry.attempt`, which retries a transport failure a
+bounded number of times (see that module for why only ``OSError`` is retried).
 """
 
 from typing import Optional, Sequence
 
 from ratingrelay.engine.plan import WritePlan
+from ratingrelay.engine.retry import attempt
 from ratingrelay.engine.services import Source, Target
 from ratingrelay.engine.store import ProgressSink, SyncedTrack, SyncStore
 from ratingrelay.engine.types import (
@@ -70,7 +75,17 @@ async def _apply(
 ) -> TrackOutcome:
     """Decide and (unless dry run) perform the write for one track on one target."""
     record = synced.get(track.key)
-    plan: WritePlan = await target.plan(_with_known_mbid(track, record))
+    try:
+        plan: WritePlan = await attempt(
+            lambda: target.plan(_with_known_mbid(track, record)),
+            f"{target.service} plan for '{track.title}'",
+        )
+    except OSError as exc:
+        # A target we cannot ask is this track's failure, not the run's.
+        logger.error("Planning against %s failed for '%s': %s", target.service, track.title, exc)
+        return TrackOutcome(
+            track, target.service, OutcomeStatus.FAILED, Reason.WRITE_FAILED, str(exc)
+        )
 
     # The same intent this target already holds is what "already synced" means
     # now: a changed rating or a withdrawn love is a different intent, and gets
@@ -92,7 +107,9 @@ async def _apply(
         return outcome
 
     try:
-        await plan.commit()
+        await attempt(
+            plan.commit, f"{target.service} write for '{track.title}'"
+        )
     except Exception as exc:  # noqa: BLE001 - one failed write must not stop the run
         logger.error("Write to %s failed for '%s': %s", target.service, track.title, exc)
         return plan.to_outcome(OutcomeStatus.FAILED, Reason.WRITE_FAILED, str(exc))
@@ -148,7 +165,10 @@ async def _undo(
         )
 
     try:
-        await target.undo(record)
+        await attempt(
+            lambda: target.undo(record),
+            f"{target.service} undo for '{record.key}'",
+        )
     except ValueError as exc:  # the record changed under us; same promise
         return TrackOutcome(
             track, target.service, OutcomeStatus.SKIPPED, Reason.UNRECORDED_TARGET, str(exc)
@@ -257,7 +277,9 @@ async def run(
     dry_run: bool = False,
 ) -> RunReport:
     """Fetch from *source*, then relay to every target."""
-    tracks = await source.fetch()
+    tracks = await attempt(
+        source.fetch, f"{source.service} fetch"
+    )
     await progress.fetch_complete(len(tracks))
     logger.info("Relay: fetched %d tracks from %s", len(tracks), source.service)
     return await run_tracks(

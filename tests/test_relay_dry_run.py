@@ -89,7 +89,7 @@ async def test_lastfm_dry_run_suppresses_write(db):
     """dry_run=True: on_track called with success=True, no SyncRecord written."""
     calls = []
 
-    async def capture(track, target, success, error, skipped=False):
+    async def capture(track, target, success, error, skipped=False, outcome=None):
         calls.append((track, target, success, error, skipped))
 
     creds_patch, pylast_patch = _lastfm_patches()
@@ -117,7 +117,7 @@ async def test_lastfm_dry_run_skipped_track_fires_on_track(db):
 
     calls = []
 
-    async def capture(track, target, success, error, skipped=False):
+    async def capture(track, target, success, error, skipped=False, outcome=None):
         calls.append((track, target, success, error, skipped))
 
     creds_patch, pylast_patch = _lastfm_patches()
@@ -139,10 +139,10 @@ async def test_lastfm_real_run_after_dry_run_writes_same_tracks(db):
     calls_dry: list = []
     calls_real: list = []
 
-    async def capture_dry(track, target, success, error, skipped=False):
+    async def capture_dry(track, target, success, error, skipped=False, outcome=None):
         calls_dry.append((success, skipped))
 
-    async def capture_real(track, target, success, error, skipped=False):
+    async def capture_real(track, target, success, error, skipped=False, outcome=None):
         calls_real.append((success, skipped))
 
     creds_patch, pylast_patch = _lastfm_patches()
@@ -162,7 +162,7 @@ async def test_lastfm_dry_run_unmatched_is_error(db):
     """Missing artist/title appears as error even in dry-run (faithful simulation)."""
     calls = []
 
-    async def capture(track, target, success, error, skipped=False):
+    async def capture(track, target, success, error, skipped=False, outcome=None):
         calls.append((success, error, skipped))
 
     bad_track = {"artist": "", "title": ""}
@@ -186,7 +186,7 @@ async def test_listenbrainz_dry_run_suppresses_write(db):
     """dry_run=True with known MBID: on_track called, no SyncRecord, no submit."""
     calls = []
 
-    async def capture(track, target, success, error, skipped=False):
+    async def capture(track, target, success, error, skipped=False, outcome=None):
         calls.append((track, target, success, error, skipped))
 
     track_with_mbid = {**TRACK_A, "recording_mbid": "aaaaaaaa-0000-0000-0000-000000000001"}
@@ -214,7 +214,7 @@ async def test_listenbrainz_dry_run_skipped_fires_on_track(db):
 
     calls = []
 
-    async def capture(track, target, success, error, skipped=False):
+    async def capture(track, target, success, error, skipped=False, outcome=None):
         calls.append((success, skipped))
 
     creds_patch, lbz_patch = _listenbrainz_patches()

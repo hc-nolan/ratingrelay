@@ -26,6 +26,10 @@ from ratingrelay.engine.types import (
     Reason,
     Track,
 )
+from ratingrelay.settings import logger
+
+# Plex's own rating comparison operators, as its filter syntax spells them.
+_RATING_OPERATORS = {"gte": "userRating>>=", "lte": "userRating<<="}
 
 
 def _plex_mbid(plex_track) -> Optional[str]:
@@ -55,6 +59,18 @@ def _to_candidate(plex_track) -> Candidate:
     )
 
 
+def _passes_rating(rating: Optional[float], threshold: float, comparison: str) -> bool:
+    """Whether a rating meets *threshold* in the *comparison* direction.
+
+    Unrated tracks count as 0 and never pass: "rate nothing above 8" must not
+    turn into "rate the whole library".
+    """
+    value = rating or 0
+    if value <= 0:
+        return False
+    return value >= threshold if comparison == "gte" else value <= threshold
+
+
 class PlexLibrary:
     """An async facade over one Plex library.
 
@@ -80,6 +96,15 @@ class PlexLibrary:
         section = await self.section()
         return await run_sync(lambda: list(section.searchTracks()))
 
+    async def search(self, **filters) -> list:
+        """Ask the server for the tracks matching *filters*.
+
+        The filters are Plex's own, so the server does the work: the whole
+        library is never fetched just to be filtered here.
+        """
+        section = await self.section()
+        return await run_sync(lambda: list(section.searchTracks(**filters)))
+
     async def index(self) -> dict[str, object]:
         """``{ratingKey: plexapi track}``, built once per run."""
         if self._tracks is None:
@@ -89,13 +114,21 @@ class PlexLibrary:
     async def rated(self, threshold: float, comparison: str) -> list:
         """Tracks whose rating passes *threshold* in the *comparison* direction.
 
-        The filter runs in Python today; asking Plex for ``userRating>>=`` is the
-        next slice, and it changes only this method.
+        Plex applies the comparison server-side (``userRating>>=``); the local
+        check after it is a guard, not the filter, in case a server ignores an
+        operator we did not expect it to know.
         """
-        tracks = await self.tracks()
-        if comparison == "gte":
-            return [t for t in tracks if (t.userRating or 0) >= threshold]
-        return [t for t in tracks if 0 < (t.userRating or 0) <= threshold]
+        operator = _RATING_OPERATORS[comparison]
+        try:
+            tracks = await self.search(**{operator: threshold})
+        except Exception as exc:  # noqa: BLE001 - an unknown operator must not fail the run
+            logger.warning(
+                "Plex rejected the %s filter (%s); falling back to a local filter",
+                operator,
+                exc,
+            )
+            tracks = await self.tracks()
+        return [t for t in tracks if _passes_rating(t.userRating, threshold, comparison)]
 
     async def candidates(self) -> tuple[Candidate, ...]:
         return tuple(_to_candidate(track) for track in await self.tracks())

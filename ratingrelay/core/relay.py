@@ -26,7 +26,7 @@ from ratingrelay.engine.services.lastfm import LastFmClient
 from ratingrelay.engine.services.listenbrainz import ListenBrainzClient
 from ratingrelay.engine.services.plex import PlexLibrary
 from ratingrelay.engine.store import ProgressSink
-from ratingrelay.engine.types import OutcomeStatus, RunReport, TrackOutcome
+from ratingrelay.engine.types import OutcomeStatus, Reason, RunReport, TrackOutcome
 from ratingrelay.schemas.relay import (
     LastFMFromConfig,
     LastFMToConfig,
@@ -40,7 +40,13 @@ from ratingrelay.settings import logger
 
 # Callback type: (track_dict, target_service_name, success, error_or_None, skipped)
 # skipped=True means the track was already synced; success/error are ignored in that case.
-TrackCallback = Callable[[dict, str, bool, Optional[str], bool], Awaitable[None]]
+# A callback receives the display dict, the target service, whether the target
+# now holds what the source wanted, an error string for the UI, whether a dry
+# run skipped the write, and the typed outcome behind all of it. The outcome is
+# what the API stores: the strings are for humans, the outcome is for logic.
+TrackCallback = Callable[
+    [dict, str, bool, Optional[str], bool, Optional["TrackOutcome"]], Awaitable[None]
+]
 
 
 async def _noop_fetch(count: int) -> None:
@@ -48,7 +54,12 @@ async def _noop_fetch(count: int) -> None:
 
 
 async def _noop_track(
-    track: dict, target: str, success: bool, error: Optional[str], skipped: bool = False
+    track: dict,
+    target: str,
+    success: bool,
+    error: Optional[str],
+    skipped: bool = False,
+    outcome: Optional[TrackOutcome] = None,
 ) -> None:
     pass
 
@@ -87,6 +98,7 @@ class CallbackProgress:
             written,
             None if written or skipped else outcome.detail,
             skipped,
+            outcome,
         )
 
 
@@ -137,7 +149,7 @@ async def _write(
         target = await adapters.target_for(db, config)
     except ValueError as exc:
         for track in tracks:
-            await on_track(track, target_service(config), False, str(exc), False)
+            await on_track(track, target_service(config), False, str(exc), False, None)
         return 0, len(tracks), 0
 
     sync_store, _ = adapters.stores(db)
@@ -161,7 +173,7 @@ async def write_to_plex(
     db: AsyncSession,
     tracks: list[dict],
     config: PlexToConfig,
-    source_service: str = "unknown",
+    source_service: str,
     on_track: TrackCallback = _noop_track,
     dry_run: bool = False,
 ) -> tuple[int, int, int]:
@@ -172,7 +184,7 @@ async def write_to_lastfm(
     db: AsyncSession,
     tracks: list[dict],
     config: LastFMToConfig,
-    source_service: str = "unknown",
+    source_service: str,
     on_track: TrackCallback = _noop_track,
     dry_run: bool = False,
 ) -> tuple[int, int, int]:
@@ -183,7 +195,7 @@ async def write_to_listenbrainz(
     db: AsyncSession,
     tracks: list[dict],
     config: ListenBrainzToConfig,
-    source_service: str = "unknown",
+    source_service: str,
     on_track: TrackCallback = _noop_track,
     dry_run: bool = False,
 ) -> tuple[int, int, int]:
@@ -191,11 +203,129 @@ async def write_to_listenbrainz(
 
 
 # ---------------------------------------------------------------------------
-# Reset functions — clear every rating on one service
+# Reset functions
 #
-# Still a whole-service wipe: it must be narrowed to "undo only what we wrote"
-# before this leaves the plan. Kept as-is so this commit changes no behaviour.
+# There are two resets, and they are different promises:
+#
+# * ``_reset_recorded`` (the default) undoes exactly the writes this tool made to
+#   the target, record by record, and drops each record it reverts. It cannot
+#   touch a rating the user set themselves, because it never looks at the target
+#   for things to clear — it looks at what we did.
+# * ``_reset_service`` clears every rating on the service. It is a destructive
+#   whole-service wipe, so it only runs when the request says ``all``.
 # ---------------------------------------------------------------------------
+
+
+_RESET_TARGET_CONFIGS = {
+    "plex": PlexToConfig(service="plex"),
+    "lastfm": LastFMToConfig(service="lastfm"),
+    "listenbrainz": ListenBrainzToConfig(service="listenbrainz"),
+}
+
+
+def _reset_result(service: str, ok: int, err: int) -> dict:
+    return {
+        "tracks_fetched": ok + err,
+        "results": [{"service": service, "ok": ok, "err": err, "skipped": 0}],
+    }
+
+
+async def _reset_recorded(
+    db: AsyncSession,
+    target_svc: str,
+    on_fetch_complete: Optional[Callable[[int], Awaitable[None]]],
+    *,
+    on_track: TrackCallback,
+    dry_run: bool,
+) -> dict:
+    """Undo what this tool wrote to one target, leaving everything else alone."""
+    store = SqlSyncStore(db)
+    records = await store.records_for_target(target_svc)
+
+    if on_fetch_complete is not None:
+        await on_fetch_complete(len(records))
+
+    try:
+        target = await adapters.target_for(db, _RESET_TARGET_CONFIGS[target_svc])
+    except ValueError as exc:
+        for _, record in records:
+            await on_track(
+                adapters.track_to_dict(record.track), target_svc, False, str(exc), False
+            )
+        return _reset_result(target_svc, 0, len(records))
+
+    ok = err = 0
+    for source_service, record in records:
+        data = adapters.track_to_dict(record.track)
+        reverted = TrackOutcome(
+            record.track, target_svc, OutcomeStatus.REVERTED, Reason.WITHDRAWN
+        )
+        if dry_run:
+            await on_track(data, target_svc, True, None, True, reverted)
+            ok += 1
+            continue
+        try:
+            await target.undo(record)
+        except ValueError as exc:
+            # The record does not say what we wrote, so clearing anything could
+            # remove a rating the user made. Leave it, and say why.
+            await on_track(
+                data,
+                target_svc,
+                False,
+                str(exc),
+                False,
+                TrackOutcome(
+                    record.track,
+                    target_svc,
+                    OutcomeStatus.SKIPPED,
+                    Reason.UNRECORDED_TARGET,
+                    str(exc),
+                ),
+            )
+            err += 1
+            continue
+        except Exception as exc:  # noqa: BLE001 - reported per track
+            logger.error("Reset %s failed for '%s': %s", target_svc, record.key, exc)
+            await on_track(
+                data,
+                target_svc,
+                False,
+                str(exc),
+                False,
+                TrackOutcome(
+                    record.track, target_svc, OutcomeStatus.FAILED, Reason.WRITE_FAILED, str(exc)
+                ),
+            )
+            err += 1
+            continue
+        await store.forget(source_service, target_svc, record.key)
+        await on_track(data, target_svc, True, None, False, reverted)
+        ok += 1
+    return _reset_result(target_svc, ok, err)
+
+
+async def _reset_service(
+    db: AsyncSession,
+    target_svc: str,
+    on_fetch_complete: Optional[Callable[[int], Awaitable[None]]],
+    *,
+    on_track: TrackCallback,
+) -> dict:
+    """Whole-service wipe: clear every rating, ours or not. Only on request."""
+    if target_svc == "plex":
+        ok, err = await reset_plex(db, on_fetch_complete, on_track)
+    elif target_svc == "lastfm":
+        ok, err = await reset_lastfm(db, on_fetch_complete, on_track)
+    else:
+        ok, err = await reset_listenbrainz(db, on_fetch_complete, on_track)
+
+    # Nothing on the target is ours any more, so the record of our writes goes.
+    await SqlSyncStore(db).forget_target(target_svc)
+    return _reset_result(target_svc, ok, err)
+
+
+# The three functions below are the whole-service wipe behind ``_reset_service``.
 
 
 async def reset_plex(
@@ -293,10 +423,11 @@ async def execute_relay(
     """
     Fetch tracks from source and relay to all targets.
 
-    Returns {"tracks_fetched": N, "results": [{"service": ..., "ok": N, "err": N, "skipped": N}, ...]}
+    Returns {"tracks_fetched": N,
+             "results": [{"service": ..., "ok": N, "err": N, "skipped": N}, ...]}
     """
     if isinstance(source, ResetFromConfig):
-        return await _execute_reset(db, source, on_fetch_complete, on_track)
+        return await _execute_reset(db, source, on_fetch_complete, on_track, dry_run)
 
     engine_source = await adapters.source_for(db, source)
     source_service: str = engine_source.service
@@ -334,7 +465,9 @@ async def execute_relay(
         else:
             detail = next(message for name, message in unconfigured if name == service)
             for track in tracks:
-                await on_track(adapters.track_to_dict(track), service, False, detail, False)
+                await on_track(
+                    adapters.track_to_dict(track), service, False, detail, False, None
+                )
             ok, err, skipped = 0, len(tracks), 0
         results.append({"service": service, "ok": ok, "err": err, "skipped": skipped})
 
@@ -346,20 +479,16 @@ async def _execute_reset(
     source: ResetFromConfig,
     on_fetch_complete: Optional[Callable[[int], Awaitable[None]]],
     on_track: TrackCallback,
+    dry_run: bool = False,
 ) -> dict:
     target_svc = source.target_service
-    logger.info("Relay: reset mode for %s", target_svc)
-    if target_svc == "plex":
-        ok, err = await reset_plex(db, on_fetch_complete, on_track)
-    elif target_svc == "lastfm":
-        ok, err = await reset_lastfm(db, on_fetch_complete, on_track)
-    else:
-        ok, err = await reset_listenbrainz(db, on_fetch_complete, on_track)
+    mode = "wipe" if source.all else "undo"
+    logger.info("Relay: reset (%s) for %s", mode, target_svc)
 
-    # Clear the record of what we wrote, so the tracks can be written again.
-    await SqlSyncStore(db).forget_target(target_svc)
-    logger.info("Reset %s: %d cleared, %d errors", target_svc, ok, err)
-    return {
-        "tracks_fetched": ok + err,
-        "results": [{"service": target_svc, "ok": ok, "err": err, "skipped": 0}],
-    }
+    if source.all:
+        return await _reset_service(
+            db, target_svc, on_fetch_complete, on_track=on_track
+        )
+    return await _reset_recorded(
+        db, target_svc, on_fetch_complete, on_track=on_track, dry_run=dry_run
+    )

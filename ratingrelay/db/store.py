@@ -66,6 +66,31 @@ class SqlSyncStore:
         )
         await self._db.commit()
 
+    async def records_for_target(
+        self, target_service: str
+    ) -> list[tuple[str, SyncedTrack]]:
+        """Every record for a target, paired with the source that produced it.
+
+        Reset needs this shape: it undoes per record (whatever the source was)
+        and then forgets it under the pair the row was written with.
+        """
+        result = await self._db.execute(
+            select(SyncRecord).where(SyncRecord.target_service == target_service)
+        )
+        return [
+            (
+                row.source_service,
+                SyncedTrack(
+                    key=row.normalized_key,
+                    recording_mbid=row.recording_mbid,
+                    intent=row.intent,
+                    rating=row.rating,
+                    target_key=row.target_key,
+                ),
+            )
+            for row in result.scalars().all()
+        ]
+
     async def _delete_key(
         self, source_service: str, target_service: str, key: str
     ) -> None:

@@ -1,13 +1,13 @@
 """
 Unmatched tracks and manual mapping API routes.
 
-GET    /api/relay/unmatched          — list tracks that failed with "no match" errors
+GET    /api/relay/unmatched          — list tracks the engine could not match
 GET    /api/relay/mappings           — list all mappings
 POST   /api/relay/mappings           — create a mapping
 DELETE /api/relay/mappings/{id}      — delete a mapping
 """
 
-from datetime import datetime, timezone
+import json
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, field_validator
@@ -16,15 +16,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ratingrelay.db import get_async_session
 from ratingrelay.engine.normalize import track_key
+from ratingrelay.engine.types import Reason
 from ratingrelay.models.jobs import TrackEvent
 from ratingrelay.models.mappings import TrackMapping
 
 router = APIRouter(prefix="/api/relay", tags=["mappings"])
 
-_NO_MATCH_ERRORS = {
-    "No match found in Plex library",
-    "No MusicBrainz recording ID found",
-}
+# Selected on the engine's reason, never on the error string: the string is
+# display text and may be reworded, the reason is the contract.
+_UNMATCHED_REASONS = (
+    Reason.NO_MATCH.value,
+    Reason.AMBIGUOUS_MATCH.value,
+    Reason.NO_RECORDING_MBID.value,
+    Reason.MISSING_METADATA.value,
+)
 
 
 def _sync_key(artist: str, title: str) -> str:
@@ -68,8 +73,7 @@ async def list_unmatched(
     """
     result = await db.execute(
         select(TrackEvent)
-        .where(TrackEvent.success == False)  # noqa: E712
-        .where(TrackEvent.error.in_(list(_NO_MATCH_ERRORS)))
+        .where(TrackEvent.reason.in_(list(_UNMATCHED_REASONS)))
         .order_by(TrackEvent.created_at.desc())
     )
     events = result.scalars().all()
@@ -97,7 +101,9 @@ async def list_unmatched(
                 "artist": ev.artist,
                 "title": ev.title,
                 "target_service": ev.target_service,
+                "reason": ev.reason,
                 "error": ev.error,
+                "candidates": json.loads(ev.candidates) if ev.candidates else [],
                 "count": 0,
                 "has_mapping": has_mapping,
             }

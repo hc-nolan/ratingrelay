@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ratingrelay.core.relay import execute_relay
 from ratingrelay.db import session_maker
+from ratingrelay.engine.types import TrackOutcome
 from ratingrelay.models.jobs import Job, TrackEvent
 from ratingrelay.schemas.relay import source_adapter as _source_adapter, targets_adapter as _targets_adapter
 from ratingrelay.settings import logger
@@ -24,6 +25,15 @@ from ratingrelay.settings import logger
 # ---------------------------------------------------------------------------
 
 _listeners: dict[str, list[asyncio.Queue]] = {}
+
+
+def _candidates_json(outcome: Optional[TrackOutcome]) -> Optional[str]:
+    """The ambiguous candidates attached to an outcome, as JSON for the UI."""
+    if outcome is None or not outcome.matches:
+        return None
+    return json.dumps(
+        [{"artist": match.artist, "title": match.title} for match in outcome.matches]
+    )
 
 
 def subscribe(job_id: str) -> "asyncio.Queue[dict]":
@@ -105,7 +115,12 @@ async def run_job(job_id: str) -> None:
 
         # 3. on_track callback
         async def on_track(
-            track: dict, target: str, success: bool, error: Optional[str], skipped: bool = False
+            track: dict,
+            target: str,
+            success: bool,
+            error: Optional[str],
+            skipped: bool = False,
+            outcome: Optional[TrackOutcome] = None,
         ) -> None:
             nonlocal tracks_ok, tracks_err
 
@@ -116,6 +131,9 @@ async def run_job(job_id: str) -> None:
                 target_service=target,
                 success=success,
                 error=error,
+                outcome=outcome.status.value if outcome else None,
+                reason=outcome.reason.value if outcome and outcome.reason else None,
+                candidates=_candidates_json(outcome),
             )
             db.add(event)
 
@@ -134,6 +152,9 @@ async def run_job(job_id: str) -> None:
                     "target": target,
                     "success": success,
                     "error": error,
+                    "outcome": event.outcome,
+                    "reason": event.reason,
+                    "candidates": json.loads(event.candidates) if event.candidates else [],
                 },
             )
             await broadcast(

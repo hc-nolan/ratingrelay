@@ -36,3 +36,9 @@ class TrackEvent(SQLModel, table=True):
     target_service: str = Field(default="")
     success: bool = Field(default=True)
     error: Optional[str] = Field(default=None)
+    # The engine's typed outcome behind the event: written|reverted|skipped|
+    # unmatched|failed, and the reason it made that decision. Queries should
+    # select on reason, never on the human-readable error text.
+    outcome: Optional[str] = Field(default=None)
+    reason: Optional[str] = Field(default=None)
+    candidates: Optional[str] = Field(default=None)   # JSON list, when ambiguous

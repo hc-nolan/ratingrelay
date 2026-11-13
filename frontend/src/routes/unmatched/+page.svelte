@@ -1,12 +1,29 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
+	import { SvelteSet } from 'svelte/reactivity';
+
+	interface Candidate {
+		artist: string;
+		title: string;
+	}
+
 	interface UnmatchedTrack {
 		artist: string;
 		title: string;
 		target_service: string;
+		reason: string;
 		error: string;
+		candidates: Candidate[];
 		count: number;
 		has_mapping: boolean;
 	}
+
+	const reasonLabel: Record<string, string> = {
+		no_match: 'No match',
+		ambiguous_match: 'Ambiguous',
+		no_recording_mbid: 'No MBID',
+		missing_metadata: 'Missing artist/title'
+	};
 
 	interface Mapping {
 		id: string;
@@ -26,7 +43,8 @@
 
 	// Per-track form state: keyed by `${artist}||${title}||${target_service}`
 	type FormKey = string;
-	let expanded = $state<Set<FormKey>>(new Set());
+	// SvelteSet is reactive on its own; wrapping it in $state double-tracks it.
+	const expanded = new SvelteSet<FormKey>();
 	let formState = $state<
 		Record<
 			FormKey,
@@ -47,11 +65,10 @@
 
 	function toggleExpand(t: UnmatchedTrack) {
 		const k = trackKey(t);
-		const next = new Set(expanded);
-		if (next.has(k)) {
-			next.delete(k);
+		if (expanded.has(k)) {
+			expanded.delete(k);
 		} else {
-			next.add(k);
+			expanded.add(k);
 			if (!formState[k]) {
 				formState = {
 					...formState,
@@ -66,7 +83,6 @@
 				};
 			}
 		}
-		expanded = next;
 	}
 
 	async function load() {
@@ -116,9 +132,7 @@
 			// Mark the unmatched track as mapped
 			unmatched = unmatched.map((u) => (trackKey(u) === k ? { ...u, has_mapping: true } : u));
 			// Collapse the form
-			const next = new Set(expanded);
-			next.delete(k);
-			expanded = next;
+			expanded.delete(k);
 		} catch {
 			form.saveError = 'Network error';
 		} finally {
@@ -159,7 +173,7 @@
 
 	<main class="page-main">
 		<div class="top-bar">
-			<a href="/" class="back-link">
+			<a href={resolve('/')} class="back-link">
 				<svg viewBox="0 0 16 16" fill="currentColor" width="12" height="12" aria-hidden="true">
 					<path
 						d="M10 3L5 8l5 5"
@@ -198,7 +212,7 @@
 				{#if unmatched.filter((u) => !u.has_mapping).length === 0}
 					<div class="empty-state-inner">No unresolved unmatched tracks. Nice!</div>
 				{:else}
-					{#each unmatched.filter((u) => !u.has_mapping) as track}
+					{#each unmatched.filter((u) => !u.has_mapping) as track (trackKey(track))}
 						{@const k = trackKey(track)}
 						{@const form = formState[k]}
 						{@const isOpen = expanded.has(k)}
@@ -210,6 +224,9 @@
 										<span class="service-chip"
 											>{serviceLabel[track.target_service] ?? track.target_service}</span
 										>
+										{#if reasonLabel[track.reason]}
+											<span class="fail-count">{reasonLabel[track.reason]}</span>
+										{/if}
 										<span class="fail-count">{track.count}× failed</span>
 									</span>
 								</span>
@@ -299,7 +316,7 @@
 			{#if unmatched.filter((u) => u.has_mapping).length > 0}
 				<div class="section-card resolved-section">
 					<div class="section-label">Resolved (mapping exists)</div>
-					{#each unmatched.filter((u) => u.has_mapping) as track}
+					{#each unmatched.filter((u) => u.has_mapping) as track (trackKey(track))}
 						<div class="track-row track-row-resolved">
 							<span class="track-info">
 								<span class="track-name resolved-name">{track.artist} – {track.title}</span>
@@ -327,7 +344,7 @@
 				{#if mappings.length === 0}
 					<div class="empty-state-inner">No mappings defined yet.</div>
 				{:else}
-					{#each mappings as m}
+					{#each mappings as m (m.id)}
 						<div class="mapping-row">
 							<div class="mapping-info">
 								<div class="mapping-original">{m.source_artist} – {m.source_title}</div>

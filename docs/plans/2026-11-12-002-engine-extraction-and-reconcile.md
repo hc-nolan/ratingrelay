@@ -138,7 +138,7 @@ rewritten, matching intent → skipped, legacy row → rewritten, no-record → 
 dry run → reported but not undone) and `tests/test_db_store.py` (round trip, upsert,
 scoping, forget, mapping precedence).
 
-### S4 — Narrow reset, server-side Plex filter, typed outcomes
+### S4 — Narrow reset, server-side Plex filter, typed outcomes (done)
 
 Reset iterates `SyncRecord` rows for the target and undoes exactly those, deleting each
 record it reverts. Whole-service wipe moves behind an explicit `reset --all`-style
@@ -150,16 +150,34 @@ with `userRating>>=`/`userRating<<=`. `TrackEvent` gains `outcome`/`reason`/
 Exit: API tests assert unmatched entries carry reason + candidates; a Plex fake
 asserts the rating filter reached the client.
 
+What landed, and where:
+
+| Concern | File | Notes |
+| --- | --- | --- |
+| Narrow reset | `ratingrelay/core/relay.py` (`_reset_recorded`) | Walks `SqlSyncStore.records_for_target(target)`, calls `Target.undo` per row, forgets each row it reverted. A `ValueError` means the row does not say what we wrote, so it is reported and kept. |
+| Whole-service wipe | `_reset_service`, `ResetFromConfig.all` | Only runs when the request says `all=True`; the default is `False` and a test pins that. |
+| Reset enumeration | `ratingrelay/db/store.py` (`records_for_target`) | Returns `(source_service, SyncedTrack)` because a reset undoes per record but forgets per source/target pair. |
+| Plex filter | `ratingrelay/engine/services/plex.py` (`rated`) | `searchTracks(**{"userRating>>=": n})`, plus a local guard that drops unrated rows. If a server rejects the operator, it logs and filters locally rather than failing the run. |
+| Typed outcomes end to end | `ratingrelay/engine/types.py` → `TrackOutcome` → `core/relay.py` `CallbackProgress` → `core/worker.py` `on_track` → `models/jobs.py` | `TrackCallback` gained a sixth argument, the outcome itself; the five existing ones keep their meaning so callers that ignore it still work. |
+| Reason-based queue | `ratingrelay/routes/unmatched.py` | Selects on `reason in (no_match, ambiguous_match, no_recording_mbid, missing_metadata)` and returns `candidates`. |
+| Schema | `ratingrelay/alembic/versions/d2e3f4a5b6c7_add_typed_outcomes.py` | Three nullable columns; backfills `outcome`/`reason` from the two v2 error strings so pre-existing history stays in the queue. |
+| UI | `frontend/src/routes/unmatched/+page.svelte` | Shows the reason per row; also clears that file's long-standing eslint failures (SvelteSet, `resolve()`, keyed `#each`). |
+
+Deliberate choices:
+
+- **`_reset_recorded` reports a revert as an `ok`.** Reset is the inverse of a write, so
+  the count means "tracks brought back to the pre-tool state".
+- **A reverted row is labelled from its normalized key.** `SyncRecord` stores only the
+  key, so a reset event reads `artist a - song`. Storing display names would mean new
+  columns to keep in step with every write; the label is cosmetic and the docstring on
+  `SyncedTrack.track` says so.
+- **`write_to_*` no longer default `source_service` to `"unknown"`.** Same foot-gun S3
+  removed from `run_tracks`: a guessed source writes records that can never be
+  reconciled.
+
 ### S5 — Dry-run parity through the API
 
-S2 already made the pipeline dry-run aware (`run_tracks(dry_run=True)` returns the
-same outcomes and skips only the commit), so the remaining work is at the edges: the
-router must pass its flag through the worker to the engine rather than each writer
-suppressing itself, and the skip events the SPA receives in a dry run must be the
-engine's, not a re-derivation.
-
-Exit: a test runs one fixture through `execute_relay` twice (dry, then real) and
-asserts the per-service counts match and the writes differ.
+Still to land: the router/worker flag plumbing and the dry/real parity test.
 
 ## Scope Boundaries
 

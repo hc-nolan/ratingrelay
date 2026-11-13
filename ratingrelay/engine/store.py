@@ -31,7 +31,13 @@ class SyncedTrack:
 
     @property
     def track(self) -> Track:
-        """A display-only track recovered from the normalized key."""
+        """A display-only track recovered from the normalized key.
+
+        The record stores the key and nothing else identifying the track, so the
+        artist and title here are the normalized forms — lowercase, no accents.
+        That is good enough to label a reverted row and not good enough to write
+        with, which is why nothing writes from it.
+        """
         artist, _, title = self.key.partition("||")
         return Track(artist=artist, title=title, recording_mbid=self.recording_mbid)
 

@@ -19,8 +19,16 @@ class ListenBrainzFromConfig(BaseModel):
 
 
 class ResetFromConfig(BaseModel):
+    """Reset the target to the state it was in before this tool ran.
+
+    By default that means undoing the writes we recorded for the target and
+    leaving every other rating alone. ``all`` clears the whole service, which is
+    destructive and never implied.
+    """
+
     service: Literal["reset"] = "reset"
     target_service: Literal["plex", "lastfm", "listenbrainz"] = "plex"
+    all: bool = False
 
 
 FromConfig = Annotated[

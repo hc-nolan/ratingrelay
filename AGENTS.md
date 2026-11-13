@@ -48,10 +48,15 @@ app.py                 uvicorn entrypoint, reads host/port from settings
 ratingrelay/
   main.py              FastAPI app, lifespan, routers, SPA fallback
   settings.py          pydantic-settings; get_settings() + module logger
-  core/                relay.py (pipeline), worker.py (job queue), thread.py (run_sync), plex_auth.py, session.py (login + guard)
+  __main__.py          `python -m ratingrelay` → the CLI
+  engine/              pure relay logic: fetch → match → reconcile → write
+  cli/                 headless entrypoint: config.py, report.py, main.py
+  core/                relay.py (API pipeline), worker.py (job queue), factory.py
+                       (service construction both entry points share), thread.py
+                       (run_sync), plex_auth.py, session.py (login + guard)
   db/                  engine, session factory, get_async_session(), credential helpers
-  models/              SQLModel tables: services, jobs, sync, mappings
-  routes/              one module per service + jobs/unmatched/relay
+  models/              SQLModel tables: services, jobs, sync, mappings, mbids
+  routes/              one module per service + jobs/unmatched/relay/auth
   schemas/             pydantic request/response models, one file per service
 frontend/              SvelteKit 5 SPA (see frontend/AGENTS.md)
 tests/                 pytest, in-memory SQLite, fake service clients
@@ -74,6 +79,15 @@ frontend/   SvelteKit SPA. Talks to api/ only, never to Plex/Last.fm/LBZ directl
 
 Layering rules: `engine/` may not import `api/` or FastAPI; `api/` may not contain
 relay logic beyond marshalling; the frontend may not encode sync semantics.
+`cli/` may import `engine/`, `db/` and the service construction in `core/factory.py`,
+but **not** `fastapi`, `starlette`, `ratingrelay.routes` or `ratingrelay.schemas` —
+a request-config pydantic model in the CLI would make the headless path depend on
+the web path's wire format. Two AST tests enforce this (`tests/test_engine_matching.py`,
+`tests/test_cli.py`).
+
+Headless usage, exit codes and the `relays.toml` shape are documented in
+`README.md`; `relays.toml.example` is the template. The CLI opens the SQLite file
+directly, so nothing on that path needs the API, the SPA bundle or a browser.
 
 ## Behaviour contract (do not regress these)
 
@@ -102,6 +116,16 @@ These are the point of the tool. v1 got them right; keep them that way.
 - **Blocking clients**: plexapi, pylast and liblistenbrainz are synchronous. Wrap
   them: `await run_sync(lambda: client.call())` from `ratingrelay.core.thread`.
 - **Sessions**: inject `Depends(get_async_session)`. Never build sessions ad hoc.
+  The CLI is the one exception: it opens `session_maker` itself, because there is
+  no request to depend on.
+- **Service construction lives in `core/factory.py`**, never in a route or the CLI.
+  `source_for_service` / `target_for_service` / `stores` / `mbid_cache` are the only
+  place a client is paired with a store and the MBID cache, so the headless path
+  cannot drift from the web path on which store a target reconciles against.
+- **The CLI is quiet by default and loud on failure**: cron mails whatever it
+  prints, so a clean run prints a short block, `--verbose` adds per-track lines on
+  stderr, `--json` prints one document. Never exit 0 on a partial run — 0/1/2 are
+  the only signal a scheduler reads.
 - **Credentials**: one `ServiceCredential` row per service, read through
   `ratingrelay.db.credentials`. Settings take precedence over the DB row.
 - **Auth is the Plex account, not a password store**: the API needs a session

@@ -12,6 +12,7 @@ wheels/
 # Local configuration and secrets. Never commit these.
 .config
 *.env
+relays.toml
 
 # Databases
 *.db

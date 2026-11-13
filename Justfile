@@ -38,6 +38,18 @@ test *args:
 lint:
     uv run pylint ratingrelay
 
+# Headless: run the relays in relays.toml (cron's entry point).
+relay *args:
+    uv run ratingrelay run {{args}}
+
+# Headless: the relays a config file defines, without running them.
+relays:
+    uv run ratingrelay list
+
+# Headless dry run: the real pipeline, no writes. The authority on what a run does.
+relay-check *args:
+    uv run ratingrelay relay --target lastfm --target listenbrainz --dry-run {{args}}
+
 # Frontend typecheck and lint. eslint is still red: see docs/plans on the v3 baseline.
 check:
     cd frontend && pnpm check

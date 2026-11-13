@@ -139,6 +139,19 @@ These are the point of the tool. v1 got them right; keep them that way.
   The worker commits per track so the SSE stream can tail the database; there is no
   in-process registry to keep in sync. A run is stopped by `job.cancel_requested` at
   a track boundary, never by killing the task.
+- **An interrupted job resumes, it does not repeat.** A `running` job found at
+  startup goes back to `queued` with `started_at` intact, and the worker treats a
+  job that already has a `started_at` as a second attempt: the counters continue
+  from the row, and an `already_synced` outcome is an echo of work the first
+  attempt reported, so it is neither journalled nor counted. Skips that are *news*
+  (`unrecorded_target` refusals) are still recorded. Job status is computed from
+  those accumulated counters, so a resumed job reports one run, not two halves.
+- **Network calls go through `engine/retry.attempt`**: three tries, doubling
+  backoff, `OSError` only — connection trouble and timeouts, which is what
+  `requests` raises, are retried; a `ValueError` refusal is a decision and never is.
+  Retrying is safe because every call the engine makes is idempotent. A failed
+  fetch or a target that cannot be planned fails the run or the track; it never
+  silently becomes a skip.
 - **Schemas**: request/response models live in `ratingrelay/schemas/`, one file per
   service. Never reuse SQLModel table classes as API schemas.
 - **Migrations**: Alembic, always autogenerate then review. Existing databases must

@@ -1,9 +1,11 @@
 """The relay pipeline: match, reconcile, write — in one place.
 
-The pipeline owns three decisions so that nothing above it has to repeat them:
+The pipeline owns four decisions so that nothing above it has to repeat them:
 
-* whether a track was already written (the sync store says so),
+* whether a write was already made *in the state the source now wants* (the sync
+  store records the intent, not just the key),
 * whether a plan gets committed (``dry_run`` is the only difference),
+* whether a recorded write has been withdrawn at the source and must be undone,
 * what an outcome is worth reporting (typed, never a string to be re-parsed).
 
 Everything service-specific lives behind the :class:`Source` and :class:`Target`
@@ -14,7 +16,7 @@ from typing import Optional, Sequence
 
 from ratingrelay.engine.plan import WritePlan
 from ratingrelay.engine.services import Source, Target
-from ratingrelay.engine.store import ProgressSink, SyncStore, SyncedTrack
+from ratingrelay.engine.store import ProgressSink, SyncedTrack, SyncStore
 from ratingrelay.engine.types import (
     OutcomeStatus,
     Reason,
@@ -39,6 +41,24 @@ class _NoProgress:
 NO_PROGRESS: ProgressSink = _NoProgress()
 
 
+def _intent_key(plan: WritePlan) -> Optional[str]:
+    return plan.intent.key if plan.intent else None
+
+
+def _with_known_mbid(track: Track, record: Optional[SyncedTrack]) -> Track:
+    """Reuse the MBID we already resolved, so a rerun makes no lookup."""
+    if record is None or track.recording_mbid or not record.recording_mbid:
+        return track
+    return Track(
+        artist=track.artist,
+        title=track.title,
+        recording_mbid=record.recording_mbid,
+        track_mbid=track.track_mbid,
+        rating=track.rating,
+        external_id=track.external_id,
+    )
+
+
 async def _apply(
     track: Track,
     target: Target,
@@ -49,10 +69,15 @@ async def _apply(
     dry_run: bool,
 ) -> TrackOutcome:
     """Decide and (unless dry run) perform the write for one track on one target."""
-    if track.key in synced:
-        return TrackOutcome(track, target.service, OutcomeStatus.SKIPPED, Reason.ALREADY_SYNCED)
+    record = synced.get(track.key)
+    plan: WritePlan = await target.plan(_with_known_mbid(track, record))
 
-    plan: WritePlan = await target.plan(track)
+    # The same intent this target already holds is what "already synced" means
+    # now: a changed rating or a withdrawn love is a different intent, and gets
+    # written again.
+    if record is not None and plan.intent is not None and record.intent == plan.intent.key:
+        return plan.to_outcome(OutcomeStatus.SKIPPED, Reason.ALREADY_SYNCED, None)
+
     if plan.status is not OutcomeStatus.WRITTEN:
         return plan.to_outcome()
     if not plan.actionable:
@@ -75,26 +100,101 @@ async def _apply(
     await sync_store.remember(
         source_service,
         target.service,
-        SyncedTrack(track.key, plan.recording_mbid, _intent_key(plan), track.rating),
+        SyncedTrack(
+            key=track.key,
+            recording_mbid=plan.recording_mbid,
+            intent=_intent_key(plan),
+            rating=plan.intent.rating if plan.intent else None,
+            target_key=plan.target_key,
+        ),
     )
     return outcome
 
 
-def _intent_key(plan: WritePlan) -> Optional[str]:
-    return plan.intent.key if plan.intent else None
+async def _undo(
+    record: SyncedTrack,
+    target: Target,
+    *,
+    sync_store: SyncStore,
+    source_service: str,
+    dry_run: bool,
+) -> TrackOutcome:
+    """Revert a write the source no longer wants, or say why we cannot."""
+    track = record.track
+    if dry_run:
+        return TrackOutcome(
+            track, target.service, OutcomeStatus.REVERTED, Reason.WITHDRAWN
+        )
+
+    try:
+        await target.undo(record)
+    except ValueError as exc:
+        # The record predates target_key, so we know we wrote here but not what:
+        # clearing it could remove a rating the user made themselves.
+        logger.warning(
+            "Cannot undo %s write for '%s': %s", target.service, record.key, exc
+        )
+        return TrackOutcome(
+            track, target.service, OutcomeStatus.SKIPPED, Reason.UNRECORDED_TARGET, str(exc)
+        )
+    except Exception as exc:  # noqa: BLE001 - one failed undo must not stop the run
+        logger.error("Undo on %s failed for '%s': %s", target.service, record.key, exc)
+        return TrackOutcome(
+            track, target.service, OutcomeStatus.FAILED, Reason.WRITE_FAILED, str(exc)
+        )
+
+    await sync_store.forget(source_service, target.service, record.key)
+    return TrackOutcome(track, target.service, OutcomeStatus.REVERTED, Reason.WITHDRAWN)
+
+
+async def _reconcile(
+    target: Target,
+    *,
+    synced: dict[str, SyncedTrack],
+    seen: set[str],
+    sync_store: SyncStore,
+    source_service: str,
+    dry_run: bool,
+) -> list[TrackOutcome]:
+    """Undo the writes whose track the source has stopped rating.
+
+    Only rows we recorded are considered, and inside them only rows that say
+    what was written — that is the whole of "only undo our own writes".
+    """
+    outcomes = []
+    for key, record in synced.items():
+        if key in seen:
+            continue
+        outcomes.append(
+            await _undo(
+                record,
+                target,
+                sync_store=sync_store,
+                source_service=source_service,
+                dry_run=dry_run,
+            )
+        )
+    return outcomes
 
 
 async def run_tracks(
     tracks: Sequence[Track],
     targets: Sequence[Target],
     *,
+    source_service: str,
     sync_store: SyncStore,
-    source_service: str = "unknown",
     progress: ProgressSink = NO_PROGRESS,
     dry_run: bool = False,
 ) -> RunReport:
-    """Relay an already-fetched track list to every target."""
+    """Relay an already-fetched track list to every target, then reconcile.
+
+    *source_service* is required and keyword-only: it is half of the key the
+    sync store is written under, so a run that guessed it ("unknown") would
+    write records it could never reconcile against.
+    """
     outcomes: list[TrackOutcome] = []
+    seen = {track.key for track in tracks}
+
     for target in targets:
         synced = await sync_store.load(source_service, target.service)
         for track in tracks:
@@ -106,6 +206,17 @@ async def run_tracks(
                 source_service=source_service,
                 dry_run=dry_run,
             )
+            outcomes.append(outcome)
+            await progress.outcome(outcome)
+
+        for outcome in await _reconcile(
+            target,
+            synced=synced,
+            seen=seen,
+            sync_store=sync_store,
+            source_service=source_service,
+            dry_run=dry_run,
+        ):
             outcomes.append(outcome)
             await progress.outcome(outcome)
 

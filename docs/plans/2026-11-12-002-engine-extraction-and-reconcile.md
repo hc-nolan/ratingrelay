@@ -77,7 +77,7 @@ db/store.py               SqlSyncStore, SqlMappingStore (the ports, implemented)
 ```
 
 `core/relay.py` keeps its public names (`execute_relay`, `fetch_*`, `write_to_*`,
-`reset_*`, `_record_sync`) and its `(ok, err, skipped)` returns, so the router and
+`reset_*`) and its `(ok, err, skipped)` returns, so the router and
 the worker did not change in this slice; under them it now builds targets and calls
 the engine. Credential precedence (settings > env > DB) is unchanged, resolved in
 `core/credentials.py` instead of per writer.
@@ -93,18 +93,50 @@ recorded, and mappings/MBID resolution reach the right call. The 15 pre-existing
 still pass with their assertions intact (only their injection points moved, because
 the fakes must now sit where the adapters build clients).
 
-### S3 — Intent-keyed SyncRecord + reconciliation
+### S3 — Intent-keyed SyncRecord + reconciliation (done)
 
-Migration (additive, existing rows preserved): `SyncRecord` gains `intent` (nullable —
-NULL means "we wrote something here but the intent predates v3", still eligible for
-undo), `rating`, `target_key`, and a unique constraint on
-`(source_service, target_service, key, intent)`. Writers stop short-circuiting on
-"key seen" and start converging: write when the intent differs, skip when it matches,
-undo when a recorded intent has disappeared from the source. MBID lookups consult the
-record cache before calling MusicBrainz.
+What landed, and where:
 
-Exit: tests for love→unlove, rating change, hate, rerun-is-a-no-op, and
-"never undo a rating we did not write".
+```
+models/sync.py            SyncRecord gains intent, rating, target_key (all nullable)
+alembic/c1d2e3f4a5b6      additive migration + backfill of intent and LBZ target_key
+engine/types.py           OutcomeStatus.REVERTED, Reason.WITHDRAWN / UNRECORDED_TARGET,
+                          target_key on WritePlan/TrackOutcome, reverted count on TargetReport
+engine/store.py           SyncedTrack.target_key, SyncedTrack.track (display names from the key)
+engine/services/*         undo(record) on all three targets, each keyed by target_key
+engine/pipeline.py        _apply compares the stored intent before skipping, _reconcile
+                          undoes what the source withdrew; run_tracks takes source_service
+db/store.py               SqlSyncStore.remember upserts; load reads intent/rating/target_key
+core/relay.py             reverted writes count as ok; _record_sync removed (nothing used it)
+```
+
+`intent` is what reconciliation compares: `love`, `hate` or `rating:<value>`. A record
+whose intent matches the plan is skipped; one that differs is written again; one whose
+key the source no longer rates is undone through `target_key` and then forgotten. A
+row with a NULL intent (written before v3) is rewritten once — it says only that
+*something* was synced, so converging it is the only safe move. A row that cannot say
+what to undo (`target_key` NULL and no MBID) is left in place with
+`Reason.UNRECORDED_TARGET` rather than guessed at, because clearing it could remove a
+rating the user made themselves.
+
+The migration backfills only what is inferable: `lastfm` rows were loves, `plex` rows
+were the configured rating (`rating:10.0`), and ListenBrainz rows get `target_key` from
+`recording_mbid` because feedback is keyed by MBID — their intent stays NULL because
+love and hate are indistinguishable after the fact.
+
+Not done in this slice, deliberately: no unique constraint on
+`(source_service, target_service, normalized_key)`. Upsert is a delete-then-insert in
+`SqlSyncStore`, so a constraint would only add a migration failure mode on existing
+databases; add it when a second writer exists.
+
+Also fixed here: revision `c3d4e5f6a7b8` created `ix_trackevent_job_id` twice (once via
+`index=True` on the column and once explicitly), so `alembic upgrade head` could not
+run on a fresh database — and therefore this migration could not run either.
+
+Exit: `tests/test_engine_reconcile.py` (withdrawn → un-loved, changed rating →
+rewritten, matching intent → skipped, legacy row → rewritten, no-record → untouched,
+dry run → reported but not undone) and `tests/test_db_store.py` (round trip, upsert,
+scoping, forget, mapping precedence).
 
 ### S4 — Narrow reset, server-side Plex filter, typed outcomes
 

@@ -41,7 +41,7 @@ def upgrade() -> None:
     op.create_table(
         'trackevent',
         sa.Column('id', sqlmodel.sql.sqltypes.AutoString(), primary_key=True, nullable=False),
-        sa.Column('job_id', sqlmodel.sql.sqltypes.AutoString(), sa.ForeignKey('job.id'), nullable=False, index=True),
+        sa.Column('job_id', sqlmodel.sql.sqltypes.AutoString(), sa.ForeignKey('job.id'), nullable=False),
         sa.Column('created_at', sa.DateTime(), nullable=False),
         sa.Column('artist', sqlmodel.sql.sqltypes.AutoString(), nullable=False, server_default=''),
         sa.Column('title', sqlmodel.sql.sqltypes.AutoString(), nullable=False, server_default=''),
@@ -50,6 +50,8 @@ def upgrade() -> None:
         sa.Column('error', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
     )
 
+    # The index is created here rather than with index=True on the column,
+    # which would create it a second time and fail the upgrade.
     op.create_index('ix_trackevent_job_id', 'trackevent', ['job_id'])
 
 

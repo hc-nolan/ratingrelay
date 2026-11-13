@@ -6,6 +6,7 @@ not. Plex's own MBIDs are *track* MBIDs, not recording MBIDs, so they are not
 used for identity here; the matching ladder decides.
 """
 
+import json
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -15,7 +16,7 @@ from ratingrelay.engine.credentials import PlexCredentials
 from ratingrelay.engine.matching import MatchStatus, match_track
 from ratingrelay.engine.plan import WritePlan
 from ratingrelay.engine.services import MappedTarget
-from ratingrelay.engine.store import MappingStore
+from ratingrelay.engine.store import MappingStore, SyncedTrack
 from ratingrelay.engine.thread import run_sync
 from ratingrelay.engine.types import (
     Candidate,
@@ -156,6 +157,7 @@ class PlexTarget(MappedTarget):
 
         rating = self._rating
         external_ids = [match.external_id for match in outcome.matches]
+        target_key = json.dumps(external_ids)
 
         async def commit() -> None:
             for external_id in external_ids:
@@ -166,5 +168,13 @@ class PlexTarget(MappedTarget):
             self.service,
             matches=outcome.matches,
             intent=Intent(IntentKind.RATING, rating),
+            target_key=target_key,
             commit=commit,
         )
+
+    async def undo(self, record: SyncedTrack) -> None:
+        """Clear the rating on every copy this tool rated, and only those."""
+        if not record.target_key:
+            raise ValueError("no recorded Plex rating keys")
+        for external_id in json.loads(record.target_key):
+            await self._library.rate(external_id, None)

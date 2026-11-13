@@ -96,21 +96,21 @@ async def test_dry_run_takes_the_same_decisions_as_a_real_run():
     tracks = [Track("Artist", "Song")]
 
     dry = await pipeline.run_tracks(
-        tracks, [target], sync_store=MemorySyncStore(), dry_run=True
+        tracks, [target], source_service="plex", sync_store=MemorySyncStore(), dry_run=True
     )
     store = MemorySyncStore()
-    real = await pipeline.run_tracks(tracks, [target], sync_store=store)
+    real = await pipeline.run_tracks(tracks, [target], source_service="plex", sync_store=store)
 
     assert dry.outcomes == real.outcomes
     assert library.writes == [("1", 10.0)]
-    assert set(store.records[("unknown", "plex")]) == {"artist||song"}
+    assert set(store.records[("plex", "plex")]) == {"artist||song"}
 
 
 async def test_dry_run_writes_nothing_to_the_sync_store():
     target, library = _plex_target([Candidate("Artist", "Song", external_id="1")])
     store = MemorySyncStore()
 
-    await pipeline.run_tracks([Track("Artist", "Song")], [target], sync_store=store, dry_run=True)
+    await pipeline.run_tracks([Track("Artist", "Song")], [target], source_service="plex", sync_store=store, dry_run=True)
 
     assert library.writes == []
     assert store.records == {}
@@ -126,8 +126,8 @@ async def test_second_run_skips_what_the_first_wrote():
     store = MemorySyncStore()
     tracks = [Track("Artist", "Song")]
 
-    await pipeline.run_tracks(tracks, [target], sync_store=store)
-    again = await pipeline.run_tracks(tracks, [target], sync_store=store)
+    await pipeline.run_tracks(tracks, [target], source_service="plex", sync_store=store)
+    again = await pipeline.run_tracks(tracks, [target], source_service="plex", sync_store=store)
 
     assert [o.status for o in again.outcomes] == [OutcomeStatus.SKIPPED]
     assert again.outcomes[0].reason is Reason.ALREADY_SYNCED
@@ -148,7 +148,7 @@ async def test_ambiguous_match_writes_nothing_and_attaches_candidates():
     )
     store = MemorySyncStore()
 
-    report = await pipeline.run_tracks([Track("Artist", "Song")], [target], sync_store=store)
+    report = await pipeline.run_tracks([Track("Artist", "Song")], [target], source_service="plex", sync_store=store)
 
     outcome = report.outcomes[0]
     assert outcome.status is OutcomeStatus.UNMATCHED
@@ -162,7 +162,7 @@ async def test_unmatched_track_carries_candidates_it_was_not_written_to():
     target, library = _plex_target([Candidate("Artist Tribute Band", "Song", external_id="1")])
     store = MemorySyncStore()
 
-    report = await pipeline.run_tracks([Track("Artist", "Song")], [target], sync_store=store)
+    report = await pipeline.run_tracks([Track("Artist", "Song")], [target], source_service="plex", sync_store=store)
 
     outcome = report.outcomes[0]
     assert outcome.status is OutcomeStatus.UNMATCHED
@@ -183,7 +183,7 @@ async def test_write_failure_is_typed_and_not_recorded():
     )
     store = MemorySyncStore()
 
-    report = await pipeline.run_tracks([Track("Artist", "Song")], [target], sync_store=store)
+    report = await pipeline.run_tracks([Track("Artist", "Song")], [target], source_service="plex", sync_store=store)
 
     outcome = report.outcomes[0]
     assert outcome.status is OutcomeStatus.FAILED
@@ -206,6 +206,7 @@ async def test_one_failed_write_does_not_stop_the_run():
     report = await pipeline.run_tracks(
         [Track("Artist", "Song"), Track("Artist", "Other")],
         [target],
+        source_service="plex",
         sync_store=MemorySyncStore(),
     )
 
@@ -251,7 +252,7 @@ async def test_outcomes_are_reported_as_they_are_decided():
 async def test_default_progress_sink_is_a_no_op():
     target, _ = _plex_target([])
     report = await pipeline.run_tracks(
-        [Track("Artist", "Song")], [target], sync_store=MemorySyncStore(), progress=NullProgress()
+        [Track("Artist", "Song")], [target], source_service="plex", sync_store=MemorySyncStore(), progress=NullProgress()
     )
     assert report.outcomes[0].status is OutcomeStatus.UNMATCHED
 
@@ -269,7 +270,7 @@ async def test_lastfm_target_loves_the_mapped_track():
     target = LastFmTarget(client, store)
 
     report = await pipeline.run_tracks(
-        [Track("Artist", "Song")], [target], sync_store=MemorySyncStore()
+        [Track("Artist", "Song")], [target], source_service="plex", sync_store=MemorySyncStore()
     )
 
     assert report.outcomes[0].status is OutcomeStatus.WRITTEN
@@ -281,7 +282,7 @@ async def test_lastfm_target_reports_missing_metadata_without_writing():
     target = LastFmTarget(client, MemoryMappingStore())
 
     report = await pipeline.run_tracks(
-        [Track("", "")], [target], sync_store=MemorySyncStore()
+        [Track("", "")], [target], source_service="plex", sync_store=MemorySyncStore()
     )
 
     outcome = report.outcomes[0]
@@ -310,12 +311,12 @@ async def test_listenbrainz_target_records_the_resolved_mbid():
     store = MemorySyncStore()
 
     report = await pipeline.run_tracks(
-        [Track("Artist", "Song")], [target], sync_store=store
+        [Track("Artist", "Song")], [target], source_service="plex", sync_store=store
     )
 
     assert report.outcomes[0].status is OutcomeStatus.WRITTEN
     assert client.submissions == [(1, "rec-1")]
-    assert store.records[("unknown", "listenbrainz")]["artist||song"].recording_mbid == "rec-1"
+    assert store.records[("plex", "listenbrainz")]["artist||song"].recording_mbid == "rec-1"
 
 
 async def test_listenbrainz_target_without_an_mbid_is_unmatched():
@@ -324,7 +325,7 @@ async def test_listenbrainz_target_without_an_mbid_is_unmatched():
     store = MemorySyncStore()
 
     report = await pipeline.run_tracks(
-        [Track("Artist", "Song")], [target], sync_store=store
+        [Track("Artist", "Song")], [target], source_service="plex", sync_store=store
     )
 
     outcome = report.outcomes[0]
@@ -341,7 +342,7 @@ async def test_listenbrainz_target_prefers_a_mapping_mbid():
     )
     target = ListenBrainzTarget(client, mappings, await _resolver("looked-up"))
 
-    await pipeline.run_tracks([Track("Artist", "Song")], [target], sync_store=MemorySyncStore())
+    await pipeline.run_tracks([Track("Artist", "Song")], [target], source_service="plex", sync_store=MemorySyncStore())
 
     assert client.submissions == [(1, "mapped-mbid")]
 
@@ -353,10 +354,10 @@ async def test_listenbrainz_intent_matches_the_feedback_score(score):
     store = MemorySyncStore()
 
     report = await pipeline.run_tracks(
-        [Track("Artist", "Song")], [target], sync_store=store
+        [Track("Artist", "Song")], [target], source_service="plex", sync_store=store
     )
 
-    record = store.records[("unknown", "listenbrainz")]["artist||song"]
+    record = store.records[("plex", "listenbrainz")]["artist||song"]
     assert record.intent == report.outcomes[0].intent.key
     assert report.outcomes[0].intent.key == ("love" if score > 0 else "hate")
 
@@ -374,7 +375,7 @@ async def test_plex_target_writes_every_copy_of_a_matched_recording():
         ]
     )
 
-    await pipeline.run_tracks([Track("Artist", "Song")], [target], sync_store=MemorySyncStore())
+    await pipeline.run_tracks([Track("Artist", "Song")], [target], source_service="plex", sync_store=MemorySyncStore())
 
     assert sorted(library.writes) == [("1", 10.0), ("2", 10.0)]
 
@@ -385,7 +386,7 @@ async def test_plex_target_and_engine_agree_on_the_tier():
     direct = match_track(source, candidates)
     target, library = _plex_target(candidates)
 
-    report = await pipeline.run_tracks([source], [target], sync_store=MemorySyncStore())
+    report = await pipeline.run_tracks([source], [target], source_service="plex", sync_store=MemorySyncStore())
 
     assert direct.matched
     assert report.outcomes[0].status is OutcomeStatus.WRITTEN

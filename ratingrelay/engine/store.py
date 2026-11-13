@@ -9,22 +9,31 @@ without a database.
 from dataclasses import dataclass, field
 from typing import Optional, Protocol
 
-from ratingrelay.engine.types import TrackOutcome
+from ratingrelay.engine.types import Track, TrackOutcome
 
 
 @dataclass(frozen=True, slots=True)
 class SyncedTrack:
     """A write this tool made, as recorded after the fact.
 
-    ``intent`` and the rating on the record are what make a later run able to
-    notice that a target has drifted; they are optional until the reconcile
-    slice lands the migration for them.
+    ``intent`` is what makes a later run able to notice drift: comparing it with
+    the intent the source now implies is the whole of the reconcile decision.
+    ``target_key`` is the identity we wrote to, in whatever form that target
+    uses (a rating key, an artist/title pair, a recording MBID) — the engine
+    treats it as opaque and hands it back to the same target to undo.
     """
 
     key: str
     recording_mbid: Optional[str] = None
     intent: Optional[str] = None
     rating: Optional[float] = None
+    target_key: Optional[str] = None
+
+    @property
+    def track(self) -> Track:
+        """A display-only track recovered from the normalized key."""
+        artist, _, title = self.key.partition("||")
+        return Track(artist=artist, title=title, recording_mbid=self.recording_mbid)
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,7 +54,7 @@ class SyncStore(Protocol):
     async def remember(
         self, source_service: str, target_service: str, synced: SyncedTrack
     ) -> None:
-        """Record a write so a later run does not repeat it."""
+        """Record a write, replacing any earlier record for the same key."""
 
     async def forget(self, source_service: str, target_service: str, key: str) -> None:
         """Drop the record of a write, because we just undid it."""

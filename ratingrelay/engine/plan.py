@@ -37,6 +37,7 @@ class WritePlan:
     matches: tuple[Candidate, ...] = ()
     recording_mbid: Optional[str] = None
     intent: Optional[Intent] = None
+    target_key: Optional[str] = None
     commit: Optional[Commit] = field(default=None, repr=False, compare=False)
 
     @property
@@ -59,4 +60,5 @@ class WritePlan:
             detail=self.detail if detail is None else detail,
             matches=self.matches,
             intent=self.intent,
+            target_key=self.target_key,
         )

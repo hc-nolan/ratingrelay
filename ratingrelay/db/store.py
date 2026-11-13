@@ -15,7 +15,7 @@ from ratingrelay.models.sync import SyncRecord
 
 
 class SqlSyncStore:
-    """What this tool has written, in the ``sync_records`` table."""
+    """What this tool has written, in the ``syncrecord`` table."""
 
     def __init__(self, db: AsyncSession):
         self._db = db
@@ -28,10 +28,11 @@ class SqlSyncStore:
         )
         return {
             row.normalized_key: SyncedTrack(
-                row.normalized_key,
-                row.recording_mbid,
-                getattr(row, "intent", None),
-                getattr(row, "rating", None),
+                key=row.normalized_key,
+                recording_mbid=row.recording_mbid,
+                intent=row.intent,
+                rating=row.rating,
+                target_key=row.target_key,
             )
             for row in result.scalars().all()
         }
@@ -39,23 +40,23 @@ class SqlSyncStore:
     async def remember(
         self, source_service: str, target_service: str, synced: SyncedTrack
     ) -> None:
+        """Upsert: the latest write for a key replaces what the row said before."""
+        await self._delete_key(source_service, target_service, synced.key)
         self._db.add(
             SyncRecord(
                 source_service=source_service,
                 target_service=target_service,
                 normalized_key=synced.key,
                 recording_mbid=synced.recording_mbid,
+                intent=synced.intent,
+                rating=synced.rating,
+                target_key=synced.target_key,
             )
         )
         await self._db.commit()
 
     async def forget(self, source_service: str, target_service: str, key: str) -> None:
-        await self._db.execute(
-            delete(SyncRecord)
-            .where(SyncRecord.source_service == source_service)
-            .where(SyncRecord.target_service == target_service)
-            .where(SyncRecord.normalized_key == key)
-        )
+        await self._delete_key(source_service, target_service, key)
         await self._db.commit()
 
     async def forget_target(self, target_service: str) -> None:
@@ -64,6 +65,16 @@ class SqlSyncStore:
             delete(SyncRecord).where(SyncRecord.target_service == target_service)
         )
         await self._db.commit()
+
+    async def _delete_key(
+        self, source_service: str, target_service: str, key: str
+    ) -> None:
+        await self._db.execute(
+            delete(SyncRecord)
+            .where(SyncRecord.source_service == source_service)
+            .where(SyncRecord.target_service == target_service)
+            .where(SyncRecord.normalized_key == key)
+        )
 
 
 class SqlMappingStore:

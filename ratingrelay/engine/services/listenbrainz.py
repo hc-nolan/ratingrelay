@@ -14,7 +14,7 @@ from liblistenbrainz import ListenBrainz
 from ratingrelay.engine.credentials import ListenBrainzCredentials
 from ratingrelay.engine.plan import WritePlan
 from ratingrelay.engine.services import MappedTarget
-from ratingrelay.engine.store import MappingStore
+from ratingrelay.engine.store import MappingStore, SyncedTrack
 from ratingrelay.engine.thread import run_sync
 from ratingrelay.engine.types import (
     Intent,
@@ -137,5 +137,17 @@ class ListenBrainzTarget(MappedTarget):
             self.service,
             recording_mbid=mbid,
             intent=Intent(kind),
+            target_key=mbid,
             commit=commit,
         )
+
+    async def undo(self, record: SyncedTrack) -> None:
+        """Submit a neutral score for the recording we gave feedback on.
+
+        Feedback is keyed by recording MBID, so a row written before
+        ``target_key`` existed is still undoable when it recorded the MBID.
+        """
+        mbid = record.target_key or record.recording_mbid
+        if not mbid:
+            raise ValueError("no recorded recording MBID")
+        await self._client.submit(0, mbid)

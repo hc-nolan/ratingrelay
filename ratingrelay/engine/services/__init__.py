@@ -9,7 +9,7 @@ job worker.
 from typing import Optional, Protocol
 
 from ratingrelay.engine.plan import WritePlan
-from ratingrelay.engine.store import MappingStore, TrackMapping
+from ratingrelay.engine.store import MappingStore, SyncedTrack, TrackMapping
 from ratingrelay.engine.types import Track
 
 
@@ -29,6 +29,14 @@ class Target(Protocol):
 
     async def plan(self, track: Track) -> WritePlan:
         """Match *track* and decide what to write, without writing it."""
+
+    async def undo(self, record: SyncedTrack) -> None:
+        """Revert a write we recorded, using the record's ``target_key``.
+
+        Must raise ``ValueError`` when the record does not say what we wrote:
+        the pipeline then leaves the record alone rather than guessing at a
+        rating that may not be ours to clear.
+        """
 
 
 class MappedTarget:

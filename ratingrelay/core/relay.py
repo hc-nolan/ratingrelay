@@ -22,11 +22,10 @@ from ratingrelay.core.credentials import (
 )
 from ratingrelay.db.store import SqlSyncStore
 from ratingrelay.engine import pipeline
-from ratingrelay.engine.normalize import track_key
 from ratingrelay.engine.services.lastfm import LastFmClient
 from ratingrelay.engine.services.listenbrainz import ListenBrainzClient
 from ratingrelay.engine.services.plex import PlexLibrary
-from ratingrelay.engine.store import ProgressSink, SyncedTrack
+from ratingrelay.engine.store import ProgressSink
 from ratingrelay.engine.types import OutcomeStatus, RunReport, TrackOutcome
 from ratingrelay.schemas.relay import (
     LastFMFromConfig,
@@ -54,24 +53,6 @@ async def _noop_track(
     pass
 
 
-def _sync_key(track: dict) -> str:
-    return track_key(track.get("artist", ""), track.get("title", ""))
-
-
-async def _record_sync(
-    db: AsyncSession,
-    source_service: str,
-    target_service: str,
-    track: dict,
-    recording_mbid: Optional[str] = None,
-) -> None:
-    await SqlSyncStore(db).remember(
-        source_service,
-        target_service,
-        SyncedTrack(_sync_key(track), recording_mbid),
-    )
-
-
 class CallbackProgress:
     """Translate engine outcomes into the callback the worker and router use.
 
@@ -97,7 +78,9 @@ class CallbackProgress:
         skipped = outcome.status is OutcomeStatus.SKIPPED
         if skipped and not self._dry_run:
             return
-        written = outcome.status is OutcomeStatus.WRITTEN
+        # A revert is a write we made in the other direction: the target is now
+        # in the state the source wants, which is what "ok" means here.
+        written = outcome.status in (OutcomeStatus.WRITTEN, OutcomeStatus.REVERTED)
         await self._on_track(
             adapters.track_to_dict(outcome.track),
             outcome.target,
@@ -139,7 +122,7 @@ async def fetch_listenbrainz(
 def _counts(report: RunReport) -> tuple[int, int, int]:
     """(ok, err, skipped) for a single-target report, in the shape callers expect."""
     target = report.targets[0]
-    return target.written, target.unmatched + target.failed, target.skipped
+    return target.written + target.reverted, target.unmatched + target.failed, target.skipped
 
 
 async def _write(
@@ -346,7 +329,8 @@ async def execute_relay(
         service = target_service(config)
         if service in counts:
             result = counts[service]
-            ok, err, skipped = result.written, result.unmatched + result.failed, result.skipped
+            ok = result.written + result.reverted
+            err, skipped = result.unmatched + result.failed, result.skipped
         else:
             detail = next(message for name, message in unconfigured if name == service)
             for track in tracks:

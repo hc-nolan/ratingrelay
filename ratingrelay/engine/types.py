@@ -80,6 +80,7 @@ class OutcomeStatus(str, Enum):
     SKIPPED = "skipped"
     UNMATCHED = "unmatched"
     FAILED = "failed"
+    REVERTED = "reverted"
 
 
 class Reason(str, Enum):
@@ -95,6 +96,8 @@ class Reason(str, Enum):
     MISSING_METADATA = "missing_metadata"
     NOT_CONFIGURED = "not_configured"
     WRITE_FAILED = "write_failed"
+    WITHDRAWN = "withdrawn"
+    UNRECORDED_TARGET = "unrecorded_target"
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +111,7 @@ class TrackOutcome:
     detail: Optional[str] = None
     matches: tuple[Candidate, ...] = ()
     intent: Optional[Intent] = None
+    target_key: Optional[str] = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,13 +123,19 @@ class TargetReport:
     skipped: int = 0
     unmatched: int = 0
     failed: int = 0
+    reverted: int = 0
 
     @classmethod
     def from_outcomes(
         cls, target: str, outcomes: tuple[TrackOutcome, ...]
     ) -> "TargetReport":
-        counts = dict.fromkeys(
-            (OutcomeStatus.WRITTEN, OutcomeStatus.SKIPPED, OutcomeStatus.UNMATCHED),
+        counted = dict.fromkeys(
+            (
+                OutcomeStatus.WRITTEN,
+                OutcomeStatus.SKIPPED,
+                OutcomeStatus.UNMATCHED,
+                OutcomeStatus.REVERTED,
+            ),
             0,
         )
         failed = 0
@@ -135,13 +145,14 @@ class TargetReport:
             if outcome.status is OutcomeStatus.FAILED:
                 failed += 1
             else:
-                counts[outcome.status] += 1
+                counted[outcome.status] += 1
         return cls(
             target=target,
-            written=counts[OutcomeStatus.WRITTEN],
-            skipped=counts[OutcomeStatus.SKIPPED],
-            unmatched=counts[OutcomeStatus.UNMATCHED],
+            written=counted[OutcomeStatus.WRITTEN],
+            skipped=counted[OutcomeStatus.SKIPPED],
+            unmatched=counted[OutcomeStatus.UNMATCHED],
             failed=failed,
+            reverted=counted[OutcomeStatus.REVERTED],
         )
 
 

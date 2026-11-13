@@ -7,6 +7,7 @@ Last.fm needs to look one up.
 """
 
 import asyncio
+import json
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -15,7 +16,7 @@ import pylast
 from ratingrelay.engine.credentials import LastFmCredentials
 from ratingrelay.engine.plan import WritePlan
 from ratingrelay.engine.services import MappedTarget
-from ratingrelay.engine.store import MappingStore
+from ratingrelay.engine.store import MappingStore, SyncedTrack
 from ratingrelay.engine.thread import run_sync
 from ratingrelay.engine.types import (
     Intent,
@@ -103,5 +104,13 @@ class LastFmTarget(MappedTarget):
             track,
             self.service,
             intent=Intent(IntentKind.LOVE),
+            target_key=json.dumps([artist, title]),
             commit=commit,
         )
+
+    async def undo(self, record: SyncedTrack) -> None:
+        """Un-love what we loved, by the name we loved it under."""
+        if not record.target_key:
+            raise ValueError("no recorded Last.fm track name")
+        artist, title = json.loads(record.target_key)
+        await self._client.unlove(artist, title)

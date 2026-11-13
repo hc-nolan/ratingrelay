@@ -153,13 +153,53 @@ def session_guard(open_prefixes: tuple[str, ...] = OPEN_PREFIXES, session_factor
         if token is None:
             return await call_next(request)
 
-        if verify_session(request.cookies.get(SESSION_COOKIE), token) is None:
-            log = logging.getLogger("ratingrelay")
-            log.debug("Refused %s %s: no valid session", request.method, path)
+        cookie = request.cookies.get(SESSION_COOKIE)
+        if verify_session(cookie, token) is None:
+            _log_refusal(request, path, cookie)
             return JSONResponse(status_code=401, content={"detail": "Not signed in"})
         return await call_next(request)
 
     return guard
+
+
+# "The browser sent no cookie" and "the browser sent a cookie we cannot verify"
+# are different bugs with different fixes, and both are invisible from the page,
+# so say which one happened — once per kind per process, not per request.
+_REFUSALS_SEEN: set[str] = set()
+
+
+def _log_refusal(request, path: str, cookie: Optional[str]) -> None:
+    log = logging.getLogger("ratingrelay")
+    kind = "no-cookie" if not cookie else "bad-cookie"
+    log.debug("Refused %s %s (%s)", request.method, path, kind)
+    if kind in _REFUSALS_SEEN:
+        return
+    _REFUSALS_SEEN.add(kind)
+    if kind == "no-cookie":
+        log.warning(
+            "Refused %s %s: the request carried no session cookie at all. Either "
+            "this browser never stored it, or it is on a different host than the "
+            "login (cookies do not cross hosts).",
+            request.method,
+            path,
+        )
+    else:
+        log.warning(
+            "Refused %s %s: a session cookie was present but did not verify (%s). "
+            "If the Plex token was rotated, sign in again.",
+            request.method,
+            path,
+            _cookie_shape(cookie or ""),
+        )
+
+
+def _cookie_shape(cookie: str) -> str:
+    """Enough of a cookie's structure to tell truncation from a bad signature."""
+    parts = cookie.split(".")
+    shape = f"len={len(cookie)} parts={len(parts)}"
+    if len(parts) == 4 and parts[1].isdigit():
+        shape += f" expires_in={int(parts[1]) - int(time.time())}s"
+    return shape
 
 
 def _default_session_factory():

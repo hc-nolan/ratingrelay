@@ -197,3 +197,38 @@ setup wizard has been doing live since v2.
    browser keeps working (the cookie is stateless), but there is no way to sign
    in afresh, and no local password fallback. For a single-user tool that beats
    another password store.
+
+## Fix: the login "did nothing" because the cookie was signed with the wrong token
+
+Symptom: the Plex popup completes, the API logs `Signed in as chunned`, and the SPA
+stays on "This relay is private" forever.
+
+Cause: `login_poll` signed the session with `pin_login.token` — the token *this
+login just minted* — while the guard verifies against `owner_token(db)`, the token
+the relay actually stores. Plex issues a new token per PIN login, so the two almost
+never match: the browser receives a cookie that verifies against nothing, and every
+later request is a 401 that looks exactly like "no cookie". The unit test passed
+because its fake PIN handed back the same token the fixture had stored.
+
+Fix: sign with the configured credential's token (`owner_token(db)`), which is the
+only key the guard can check. The PIN token still proves *who* is logging in
+(`identify()` + account-id comparison); it just is not the signing key.
+
+Two supporting changes, because the failure mode was invisible:
+
+- `GET /api/auth/status` now reports `cookie: bool` — "did this request carry a
+  session cookie at all?". `no-cookie` and `bad-cookie` are different bugs with
+  different fixes, and the page can finally tell them apart: `LoginGate` says
+  "Plex signed you in, but the browser did not keep the session cookie" or "…the
+  browser sent back a session this relay cannot verify".
+- `/api/auth/status` is `Cache-Control: no-store` — a cached "no" outliving the
+  login is the same bug wearing a different hat.
+- The guard logs one warning per kind per process, with the cookie's shape
+  (length, part count, expiry) and never its value.
+
+Also: `LoginGate` now believes the poll's answer and lifts the gate immediately;
+the confirming round trip no longer decides whether the page updates.
+
+Regression test: `test_a_login_mints_a_new_token_but_signs_with_the_configured_one`
+— the fake PIN returns a token nobody stored, then asserts the cookie verifies
+against the stored token and that the next guarded request is a 200.

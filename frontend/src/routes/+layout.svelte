@@ -31,10 +31,11 @@
 
 	const gated = $derived(session !== null && session.required && !session.authenticated);
 
-	async function handleSignedIn() {
-		session = await getSession();
-		// Every page fetched its data while unsigned; those answers were refusals.
-		await invalidateAll();
+	async function handleSignedIn(username: string, ok: boolean) {
+		// Trust the poll's answer first: the page must not look unchanged while a
+		// second round trip goes out to confirm it.
+		session = { required: true, authenticated: ok, username: ok ? username : session?.username };
+		if (ok) await invalidateAll();
 	}
 </script>
 

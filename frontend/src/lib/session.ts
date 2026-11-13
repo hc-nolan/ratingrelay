@@ -11,6 +11,8 @@ export interface SessionStatus {
 	required: boolean;
 	authenticated: boolean;
 	username?: string | null;
+	/** Did this request carry a session cookie at all? */
+	cookie?: boolean;
 }
 
 export interface LoginInit {
@@ -47,6 +49,13 @@ export async function waitForLogin(pinId: number, deadlineMs = 120_000): Promise
 		await new Promise((resolve) => setTimeout(resolve, 1500));
 	}
 	throw new Error('Timed out waiting for Plex');
+}
+
+/** A logged-in browser still gets refused if it never stored the cookie. */
+export function lostCookieMessage(status: SessionStatus): string {
+	return status.cookie
+		? 'Plex signed you in, but the browser sent back a session this relay cannot verify. Sign in again — if it keeps happening, the Plex token has changed.'
+		: 'Plex signed you in, but the browser did not keep the session cookie. Allow cookies for this site and try again.';
 }
 
 export async function logout(): Promise<void> {

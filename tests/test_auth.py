@@ -137,7 +137,12 @@ async def test_a_fresh_install_needs_no_login(client):
     res = await client.get("/api/auth/status")
 
     assert res.status_code == 200
-    assert res.json() == {"required": False, "authenticated": False, "username": None}
+    assert res.json() == {
+        "required": False,
+        "authenticated": False,
+        "username": None,
+        "cookie": False,
+    }
 
 
 async def test_a_configured_relay_asks_for_a_login(client, factory, plex_identifies):
@@ -150,6 +155,8 @@ async def test_a_configured_relay_asks_for_a_login(client, factory, plex_identif
     assert body["required"] is True
     assert body["authenticated"] is False
     assert body["username"] == "chunned"
+    # No cookie yet: the gate must be able to tell this from a rejected one.
+    assert body["cookie"] is False
 
 
 async def test_a_signed_in_browser_reports_itself(client, factory, plex_identifies):
@@ -160,6 +167,7 @@ async def test_a_signed_in_browser_reports_itself(client, factory, plex_identifi
     res = await client.get("/api/auth/status")
 
     assert res.json()["authenticated"] is True
+    assert res.json()["cookie"] is True
 
 
 async def test_login_can_be_switched_off_for_a_private_relay(client, factory, settings):
@@ -237,6 +245,32 @@ async def test_confirming_as_the_owner_sets_a_session(client, factory, pins, ple
     cookie = res.cookies.get(SESSION_COOKIE)
     assert cookie and verify_session(cookie, OWNER_TOKEN) == "12345"
     assert "httponly" in res.headers["set-cookie"].lower()
+
+
+async def test_a_login_mints_a_new_token_but_signs_with_the_configured_one(
+    client, factory, pins, plex_identifies
+):
+    """Plex hands out a fresh token per login; the guard only knows the stored one.
+
+    Signing the cookie with the token this PIN just minted produces a session that
+    looks fine and verifies against nothing — the login appears to do nothing.
+    """
+    await _configure_owner(factory)
+    plex_identifies["freshly-minted-token"] = ("12345", "chunned")
+    pins["token"] = "freshly-minted-token"
+
+    res = await client.get("/api/auth/plex/poll", params={"pin_id": 77})
+
+    assert res.status_code == 200
+    cookie = res.cookies.get(SESSION_COOKIE)
+    assert cookie
+    assert verify_session(cookie, OWNER_TOKEN) == "12345"
+
+    # And the browser stays signed in: the very next request passes the guard.
+    status = await client.get("/api/auth/status")
+    assert status.json()["authenticated"] is True
+    assert status.json()["cookie"] is True
+    assert (await client.get("/api/relay/run")).status_code == 200
 
 
 async def test_confirming_as_somebody_else_is_refused(client, factory, pins, plex_identifies):

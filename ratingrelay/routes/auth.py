@@ -45,15 +45,24 @@ _POPUP_CLOSE_HTML = """<!DOCTYPE html>
 </html>"""
 
 
-def _set_session_cookie(response: Response, request: Request, username_id: str, token: str) -> None:
+def _set_session_cookie(
+    response: Response, request: Request, username_id: str, key_token: str
+) -> None:
+    secure = request.url.scheme == "https"
     response.set_cookie(
         SESSION_COOKIE,
-        issue_session(username_id, token),
+        issue_session(username_id, key_token),
         max_age=SESSION_MAX_AGE,
         httponly=True,
         samesite="lax",
-        secure=request.url.scheme == "https",
+        secure=secure,
         path="/",
+    )
+    logger.info(
+        "Session cookie issued for Plex user %s (secure=%s, path=/, host=%s)",
+        username_id,
+        secure,
+        request.headers.get("host", "?"),
     )
 
 
@@ -61,19 +70,38 @@ def _set_session_cookie(response: Response, request: Request, username_id: str, 
 async def auth_status(
     request: Request,
     db: AsyncSession = Depends(get_async_session),
-) -> AuthStatusResponse:
+) -> Response:
     """Is a login needed, and does this browser already have one?"""
+    cookie = request.cookies.get(SESSION_COOKIE)
     owner = await owner_identity(db)
     if owner is None:
         # Nothing configured yet: the setup wizard has to be reachable.
-        return AuthStatusResponse(required=False, authenticated=False)
+        return _status(AuthStatusResponse(required=False, authenticated=False, cookie=bool(cookie)))
     user_id, username = owner
     if not settings.auth:
-        return AuthStatusResponse(required=False, authenticated=True, username=username)
+        return _status(
+            AuthStatusResponse(
+                required=False, authenticated=True, username=username, cookie=bool(cookie)
+            )
+        )
     token = await owner_token(db)
-    if token and verify_session(request.cookies.get(SESSION_COOKIE), token) == user_id:
-        return AuthStatusResponse(required=True, authenticated=True, username=username)
-    return AuthStatusResponse(required=True, authenticated=False, username=username)
+    signed_in = bool(token) and verify_session(cookie, token) == user_id
+    return _status(
+        AuthStatusResponse(
+            required=True,
+            authenticated=signed_in,
+            username=username,
+            cookie=bool(cookie),
+        )
+    )
+
+
+def _status(body: AuthStatusResponse) -> Response:
+    """A login state is never cacheable: a cached "no" outlives the login."""
+    payload = JSONResponse(body.model_dump())
+    payload.headers["Cache-Control"] = "no-store, must-revalidate"
+    payload.headers["Pragma"] = "no-cache"
+    return payload
 
 
 @router.post("/plex/init", response_model=LoginInitResponse)
@@ -135,7 +163,14 @@ async def login_poll(
     payload = JSONResponse(
         LoginPollResponse(status="ok", username=owner_name).model_dump()
     )
-    _set_session_cookie(payload, request, user_id, token)
+    # Sign with the *configured* credential's token, not the one this PIN just
+    # minted. Plex hands out a new token per login, and the guard can only verify
+    # against the token the relay actually holds — keying on the PIN token
+    # produces a cookie that never verifies, i.e. a login that silently fails.
+    key_token = await owner_token(db)
+    if not key_token:
+        raise HTTPException(status_code=409, detail="Relay has no Plex token")
+    _set_session_cookie(payload, request, user_id, key_token)
     logger.info("Signed in as %s", owner_name)
     return payload
 

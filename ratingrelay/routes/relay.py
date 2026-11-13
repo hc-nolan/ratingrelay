@@ -37,7 +37,9 @@ async def run_relay(
         raise HTTPException(status_code=400, detail="Unknown source service")
 
     try:
-        result = await execute_relay(db, source, list(body.targets))
+        result = await execute_relay(
+            db, source, list(body.targets), dry_run=body.dry_run
+        )
     except ValueError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
@@ -45,15 +47,29 @@ async def run_relay(
     results_raw = result["results"]
 
     if not results_raw:
-        return RelayResponse(status="error", tracks_fetched=tracks_fetched, results=[])
+        return RelayResponse(
+            status="error", tracks_fetched=tracks_fetched, results=[], dry_run=body.dry_run
+        )
 
     target_results = [
-        TargetResult(service=r["service"], processed=r["ok"], errors=r["err"])
+        TargetResult(
+            service=r["service"],
+            processed=r["ok"],
+            errors=r["err"],
+            skipped=r.get("skipped", 0),
+        )
         for r in results_raw
     ]
 
+    # A dry run writes nothing, so "processed" alone would call it a failure.
+    # Judge it on whether the pipeline got through, which is what it reports.
+    attempted = any(r.processed or r.skipped or r.errors for r in target_results)
     total_errors = sum(r.errors for r in target_results)
-    all_failed = all(r.processed == 0 for r in target_results)
-    status = "error" if all_failed else ("partial" if total_errors else "completed")
+    status = "error" if not attempted else ("partial" if total_errors else "completed")
 
-    return RelayResponse(status=status, tracks_fetched=tracks_fetched, results=target_results)
+    return RelayResponse(
+        status=status,
+        tracks_fetched=tracks_fetched,
+        results=target_results,
+        dry_run=body.dry_run,
+    )

@@ -175,9 +175,30 @@ Deliberate choices:
   removed from `run_tracks`: a guessed source writes records that can never be
   reconciled.
 
-### S5 — Dry-run parity through the API
+### S5 — Dry-run parity through the API (done)
 
-Still to land: the router/worker flag plumbing and the dry/real parity test.
+S2 already made the pipeline dry-run aware (`run_tracks(dry_run=True)` returns the
+same outcomes and skips only the commit), so the remaining work is at the edges: the
+router must pass its flag through the worker to the engine rather than each writer
+suppressing itself, and the skip events the SPA receives in a dry run must be the
+engine's, not a re-derivation.
+
+Exit: a test runs one fixture through `execute_relay` twice (dry, then real) and
+asserts the per-service counts match and the writes differ.
+
+What landed, and where:
+
+| Concern | File | Notes |
+| --- | --- | --- |
+| Request flag | `ratingrelay/schemas/relay.py` (`RelayRequest.dry_run`) | Off by default, so an unmodified caller keeps writing. |
+| Adapter | `ratingrelay/routes/relay.py` | Passes the flag to `execute_relay`; the job worker (`routes/jobs.py` → `core/worker.py`) already carried `Job.dry_run`. |
+| Response | `RelayResponse.dry_run`, `TargetResult.skipped` | A dry run says so in the response instead of leaving the SPA to infer it from counts. |
+| Status | `routes/relay.py` | Judges the run on whether the pipeline got through (`processed or skipped or errors`), because a dry run writes nothing and would otherwise look like a failure. |
+| Skip events | `core/relay.py` `CallbackProgress` | Unchanged from S2: it forwards the engine outcome and only suppresses nothing-at-all runs. |
+
+Exit test: `tests/test_relay_parity.py` runs the same fixture through
+`execute_relay` dry-then-real and asserts identical per-service counts (including the
+second, all-skipped pass) while the fake target's write log differs.
 
 ## Scope Boundaries
 

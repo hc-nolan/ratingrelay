@@ -60,18 +60,24 @@ ToConfig = Annotated[
 class RelayRequest(BaseModel):
     source: FromConfig
     targets: list[ToConfig]
+    # A dry run fetches, matches and reconciles exactly like a real run and
+    # reports what it would write; only the write calls are suppressed. It is
+    # the same flag the job worker already carries.
+    dry_run: bool = False
 
 
 class TargetResult(BaseModel):
     service: str
     processed: int = 0
     errors: int = 0
+    skipped: int = 0
 
 
 class RelayResponse(BaseModel):
     status: Literal["completed", "partial", "error"]
     tracks_fetched: int
     results: list[TargetResult]
+    dry_run: bool = False
 
 
 source_adapter: TypeAdapter[FromConfig] = TypeAdapter(FromConfig)

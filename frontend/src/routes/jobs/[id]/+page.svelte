@@ -342,40 +342,6 @@
 		flex-shrink: 0;
 	}
 
-	.status-queued {
-		background: oklch(0.55 0.14 55);
-	}
-	.status-scheduled {
-		background: oklch(0.52 0.12 240);
-	}
-	.status-running {
-		background: var(--primary);
-		box-shadow: 0 0 6px var(--primary);
-		animation: blink 1.2s ease-in-out infinite;
-	}
-	.status-completed {
-		background: oklch(0.6 0.15 140);
-	}
-	.status-partial {
-		background: oklch(0.65 0.16 62);
-	}
-	.status-failed {
-		background: oklch(0.55 0.2 22);
-	}
-	.status-cancelled {
-		background: oklch(0.35 0.01 40);
-	}
-
-	@keyframes blink {
-		0%,
-		100% {
-			opacity: 0.5;
-		}
-		50% {
-			opacity: 1;
-		}
-	}
-
 	.job-title {
 		font-size: 0.9375rem;
 		font-family: var(--font-heading);

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
+	import { resolve } from '$app/paths';
 	import type { PageData } from './$types';
 	import type {
 		PlexAuthState,
@@ -9,7 +10,21 @@
 		SetupStep
 	} from '$lib/types/auth';
 	import type { JobData } from '$lib/types/jobs';
-	import { summarizeSource, summarizeTargets, statusColor, frequencyOptions } from '$lib/relay';
+	import type {
+		ListenBrainzSourceConfig,
+		ListenBrainzTargetConfig,
+		PlexSourceConfig,
+		PlexTargetConfig,
+		SourceId,
+		SourceOption,
+		TargetOption
+	} from '$lib/types/relay';
+	import SourceNode from '$lib/components/flow/SourceNode.svelte';
+	import TargetNode from '$lib/components/flow/TargetNode.svelte';
+	import FlowLink from '$lib/components/flow/FlowLink.svelte';
+	import RunDock from '$lib/components/flow/RunDock.svelte';
+	import JobsRail from '$lib/components/jobs/JobsRail.svelte';
+	import ServiceMark from '$lib/components/flow/ServiceMark.svelte';
 
 	let { data }: { data: PageData } = $props();
 
@@ -258,44 +273,96 @@
 
 	// ── Relay home state ──────────────────────────────────────────────────────
 
-	type ServiceId = 'plex' | 'lastfm' | 'listenbrainz' | 'reset';
+	let selectedSource = $state<SourceId>('plex');
+	let resetTargetService = $state<SourceId>('plex');
 
-	let selectedSource = $state<ServiceId>('plex');
-	let resetTargetService = $state<'plex' | 'lastfm' | 'listenbrainz'>('plex');
-
-	let plexSourceConfig = $state({ ratingThreshold: 8, comparison: 'gte' as 'gte' | 'lte' });
-	let lbzSourceConfig = $state({ feedbackType: 'love' as 'love' | 'hate' });
+	let plexSourceConfig = $state<PlexSourceConfig>({ ratingThreshold: 8, comparison: 'gte' });
+	let lbzSourceConfig = $state<ListenBrainzSourceConfig>({ feedbackType: 'love' });
 
 	let plexTargetEnabled = $state(false);
-	let plexTargetConfig = $state({ rating: 10 });
+	let plexTargetConfig = $state<PlexTargetConfig>({ rating: 10 });
 	let lastfmTargetEnabled = $state(false);
 	let lbzTargetEnabled = $state(false);
-	let lbzTargetConfig = $state({ feedbackType: 'love' as 'love' | 'hate' });
+	let lbzTargetConfig = $state<ListenBrainzTargetConfig>({ feedbackType: 'love' });
+
+	/** Whether the ghost list under the last node is showing. */
+	let showTargetPicker = $state(false);
+
+	/** The jobs rail opens itself when a run is queued. */
+	let jobsOpen = $state(true);
 
 	let relaying = $state(false);
-	let relayResult = $state<{
-		status: string;
-		tracks_fetched: number;
-		results: { service: string; processed: number; errors: number }[];
-	} | null>(null);
 	let relayError = $state('');
 
-	let canRelay = $derived(
-		!relaying && (plexTargetEnabled || lastfmTargetEnabled || lbzTargetEnabled)
+	/** The nodes above the rail: one per connected service, plus the reset. */
+	const sourceOptions = $derived<SourceOption[]>([
+		...(plex.status === 'connected' && plex.server_name
+			? [{ id: 'plex' as const, name: 'Plex' }]
+			: []),
+		...(lastfm.status === 'connected' ? [{ id: 'lastfm' as const, name: 'Last.fm' }] : []),
+		...(listenbrainz.status === 'connected'
+			? [{ id: 'listenbrainz' as const, name: 'ListenBrainz' }]
+			: []),
+		{ id: 'reset' as const, name: 'Reset' }
+	]);
+
+	const targetCatalog: TargetOption[] = [
+		{ id: 'plex', name: 'Plex', hint: 'rate the library' },
+		{ id: 'lastfm', name: 'Last.fm', hint: 'love the track' },
+		{ id: 'listenbrainz', name: 'ListenBrainz', hint: 'love or hate' }
+	];
+
+	function isAllocated(id: string): boolean {
+		if (id === 'plex') return plexTargetEnabled;
+		if (id === 'lastfm') return lastfmTargetEnabled;
+		return lbzTargetEnabled;
+	}
+
+	function setAllocated(id: string, on: boolean) {
+		if (id === 'plex') plexTargetEnabled = on;
+		else if (id === 'lastfm') lastfmTargetEnabled = on;
+		else lbzTargetEnabled = on;
+	}
+
+	/** Targets the flow may offer: connected, and never the source itself. */
+	const availableTargets = $derived(
+		targetCatalog.filter((t) => {
+			if (t.id === selectedSource) return false;
+			if (t.id === 'plex') return plex.status === 'connected' && !!plex.server_name;
+			if (t.id === 'lastfm') return lastfm.status === 'connected';
+			return listenbrainz.status === 'connected';
+		})
 	);
 
-	const plexStarOptions = [
-		{ value: 1, label: '½★ 0.5 stars' },
-		{ value: 2, label: '★ 1 star' },
-		{ value: 3, label: '★½ 1.5 stars' },
-		{ value: 4, label: '★★ 2 stars' },
-		{ value: 5, label: '★★½ 2.5 stars' },
-		{ value: 6, label: '★★★ 3 stars' },
-		{ value: 7, label: '★★★½ 3.5 stars' },
-		{ value: 8, label: '★★★★ 4 stars' },
-		{ value: 9, label: '★★★★½ 4.5 stars' },
-		{ value: 10, label: '★★★★★ 5 stars' }
-	];
+	const allocatedTargets = $derived(availableTargets.filter((t) => isAllocated(t.id)));
+	const ghostTargets = $derived(availableTargets.filter((t) => !isAllocated(t.id)));
+
+	/** Services a reset can clear: the ones we hold credentials for. */
+	const resetOptions = $derived<SourceOption[]>([
+		...(plex.status === 'connected' ? [{ id: 'plex' as const, name: 'Plex' }] : []),
+		...(lastfm.status === 'connected' ? [{ id: 'lastfm' as const, name: 'Last.fm' }] : []),
+		...(listenbrainz.status === 'connected'
+			? [{ id: 'listenbrainz' as const, name: 'ListenBrainz' }]
+			: [])
+	]);
+
+	// Keep the selection legal when a service disconnects or the source changes.
+	$effect(() => {
+		if (!sourceOptions.some((o) => o.id === selectedSource)) {
+			selectedSource = sourceOptions[0].id;
+		}
+		if (!resetOptions.some((o) => o.id === resetTargetService) && resetOptions.length > 0) {
+			resetTargetService = resetOptions[0].id;
+		}
+		for (const id of ['plex', 'lastfm', 'listenbrainz']) {
+			if (id === selectedSource && isAllocated(id)) setAllocated(id, false);
+		}
+	});
+
+	let canRelay = $derived(
+		!relaying &&
+			(selectedSource === 'reset' ? resetOptions.length > 0 : allocatedTargets.length > 0)
+	);
 
 	function buildRelayPayload() {
 		let source: object;
@@ -331,64 +398,29 @@
 		return { source, targets };
 	}
 
-	async function runRelay() {
-		if (!canRelay) return;
-		relaying = true;
-		relayResult = null;
-		relayError = '';
-		try {
-			const res = await fetch('/api/relay/run', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(buildRelayPayload())
-			});
-			if (!res.ok) {
-				const err = await res.json().catch(() => ({ detail: 'Relay failed' }));
-				relayError = err.detail ?? 'Relay failed';
-				return;
-			}
-			relayResult = await res.json();
-		} catch {
-			relayError = 'Network error';
-		} finally {
-			relaying = false;
-		}
-	}
-
-	const serviceLabels: Record<ServiceId, string> = {
-		plex: 'Plex',
-		lastfm: 'Last.fm',
-		listenbrainz: 'ListenBrainz',
-		reset: 'Reset'
-	};
-
 	// ── Job queue state ───────────────────────────────────────────────────────
 
-	let recurring = $state(false);
-	let intervalMinutes = $state(1440);
+	/** Minutes between runs; 0 means a one-off. */
+	let repeat = $state(0);
 	let dryRun = $state(false);
 
 	$effect(() => {
-		if (recurring) dryRun = false;
+		if (repeat > 0) dryRun = false;
 	});
 
 	let jobs = $state<JobData[]>([]);
 
-	let canQueue = $derived(
-		!relaying &&
-			(selectedSource === 'reset' || plexTargetEnabled || lastfmTargetEnabled || lbzTargetEnabled)
-	);
+	let canQueue = $derived(canRelay);
 
 	async function queueJob() {
 		if (!canQueue) return;
 		relaying = true;
-		relayResult = null;
 		relayError = '';
 		try {
 			const payload = {
 				...buildRelayPayload(),
-				recurring,
-				interval_minutes: recurring ? intervalMinutes : undefined,
+				recurring: repeat > 0,
+				interval_minutes: repeat > 0 ? repeat : undefined,
 				dry_run: dryRun
 			};
 			const res = await fetch('/api/relay/jobs', {
@@ -408,6 +440,7 @@
 			}
 			const job: JobData = await res.json();
 			jobs = [job, ...jobs];
+			jobsOpen = true;
 		} catch {
 			relayError = 'Network error';
 		} finally {
@@ -436,17 +469,6 @@
 		}
 	}
 
-	// ── Helper functions ──────────────────────────────────────────────────────
-
-	function formatNextRun(runAt: string): string {
-		const diff = new Date(runAt).getTime() - Date.now();
-		if (diff <= 0) return 'soon';
-		const h = Math.floor(diff / 3600000);
-		const m = Math.floor((diff % 3600000) / 60000);
-		if (h > 0) return `in ${h}h ${m}m`;
-		return `in ${m}m`;
-	}
-
 	// ── Mount: load jobs and poll for status updates ──────────────────────────
 	$effect(() => {
 		loadJobs();
@@ -460,498 +482,139 @@
 </svelte:head>
 
 {#if step === 'done'}
-	<!-- ═══════════════════════════════════════════════════════════════════════ -->
-	<!-- Relay Home                                                              -->
-	<!-- ═══════════════════════════════════════════════════════════════════════ -->
-
-	<div class="setup-root">
-		<div class="bg-noise" aria-hidden="true"></div>
-
-		<main class="relay-main">
-			<!-- Header -->
-			<header class="setup-header">
-				<div class="logo-mark" aria-hidden="true">
-					<span class="logo-signal"></span>
-					<span class="logo-signal"></span>
-					<span class="logo-signal"></span>
-				</div>
-				<div style="flex:1">
-					<div class="title-row">
-						<h1 class="setup-title">RatingRelay</h1>
-						<a href="/unmatched" class="nav-link">Unmatched tracks</a>
-					</div>
-					<div class="conn-pills">
-						{#if plex.status === 'connected'}
-							<span class="conn-pill">
-								<svg viewBox="0 0 512 512" width="10" height="10"
-									><path d="M256 70H148l108 186-108 186h108l108-186z" fill="currentColor" /></svg
-								>
-								{plex.server_name}
-							</span>
-						{/if}
-						{#if lastfm.status === 'connected'}
-							<span class="conn-pill lastfm-pill">Last.fm · {lastfm.username}</span>
-						{/if}
-						{#if listenbrainz.status === 'connected'}
-							<span class="conn-pill lb-pill">ListenBrainz · {listenbrainz.username}</span>
-						{/if}
-					</div>
-				</div>
-			</header>
-
-			<!-- ── FROM section ───────────────────────────────────────────────── -->
-			<section class="relay-card">
-				<div class="relay-card-label">FROM</div>
-
-				<!-- Source service tabs -->
-				<div class="source-tabs">
-					{#if plex.status === 'connected' && plex.server_name}
-						<button
-							class="source-tab"
-							class:tab-active={selectedSource === 'plex'}
-							onclick={() => (selectedSource = 'plex')}
-						>
-							<svg viewBox="0 0 512 512" width="14" height="14" aria-hidden="true"
-								><rect width="512" height="512" rx="15%" fill="#282a2d" /><path
-									d="M256 70H148l108 186-108 186h108l108-186z"
-									fill="#e5a00d"
-								/></svg
-							>
-							Plex
-						</button>
-					{/if}
-					{#if lastfm.status === 'connected'}
-						<button
-							class="source-tab"
-							class:tab-active={selectedSource === 'lastfm'}
-							onclick={() => (selectedSource = 'lastfm')}
-						>
-							<svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14" aria-hidden="true"
-								><path
-									d="M10.584 17.21l-.88-2.392s-1.43 1.6-3.573 1.6c-1.898 0-3.244-1.65-3.244-4.29 0-3.38 1.703-4.594 3.38-4.594 2.42 0 3.19 1.565 3.85 3.576l.88 2.75c.88 2.673 2.53 4.815 7.315 4.815 3.41 0 5.73-1.045 5.73-3.8 0-2.227-1.265-3.38-3.63-3.93l-1.76-.385c-1.21-.275-1.57-.77-1.57-1.593 0-.935.737-1.483 1.95-1.483 1.318 0 2.03.494 2.14 1.67l2.75-.33c-.22-2.47-1.925-3.48-4.755-3.48-2.49 0-4.82.935-4.82 3.93 0 1.87.907 3.05 3.19 3.6l1.87.44c1.375.33 1.87.88 1.87 1.76 0 1.046-.99 1.483-2.862 1.483-2.75 0-3.9-1.43-4.562-3.38l-.91-2.75c-1.155-3.52-3-4.87-6.655-4.87C1.87 5.528 0 8.278 0 12.238c0 3.82 1.87 6.234 6.04 6.234 3.135 0 4.544-1.262 4.544-1.262z"
-								/></svg
-							>
-							Last.fm
-						</button>
-					{/if}
-					{#if listenbrainz.status === 'connected'}
-						<button
-							class="source-tab"
-							class:tab-active={selectedSource === 'listenbrainz'}
-							onclick={() => (selectedSource = 'listenbrainz')}
-						>
-							<svg viewBox="9,0,128,160" width="14" height="14" aria-hidden="true"
-								><path d="m75.354 7.823v144l61-35v-74z" fill="#eb743b" /><path
-									d="m70.354 7.823-61 35v74l61 35z"
-									fill="#353070"
-								/></svg
-							>
-							ListenBrainz
-						</button>
-					{/if}
-					<button
-						class="source-tab source-tab-reset"
-						class:tab-active={selectedSource === 'reset'}
-						onclick={() => (selectedSource = 'reset')}
-					>
-						<svg
-							viewBox="0 0 16 16"
-							fill="none"
-							stroke="currentColor"
-							stroke-width="1.5"
-							width="13"
-							height="13"
-							aria-hidden="true"
-						>
-							<path
-								d="M8 2a6 6 0 1 0 4.5 2M8 2V5m0-3h3"
-								stroke-linecap="round"
-								stroke-linejoin="round"
-							/>
-						</svg>
-						Reset
-					</button>
-				</div>
-
-				<!-- Source config -->
-				<div class="source-config">
-					{#if selectedSource === 'plex'}
-						<span class="config-label">Fetch tracks rated</span>
-						<select class="relay-select" bind:value={plexSourceConfig.comparison}>
-							<option value="gte">at least</option>
-							<option value="lte">at most</option>
-						</select>
-						<select class="relay-select" bind:value={plexSourceConfig.ratingThreshold}>
-							{#each plexStarOptions as opt}
-								<option value={opt.value}>{opt.label}</option>
-							{/each}
-						</select>
-					{:else if selectedSource === 'lastfm'}
-						<span class="config-label">Fetch all loved tracks</span>
-					{:else if selectedSource === 'listenbrainz'}
-						<span class="config-label">Fetch</span>
-						<div class="toggle-group">
-							<button
-								class="toggle-btn"
-								class:toggle-active={lbzSourceConfig.feedbackType === 'love'}
-								onclick={() => (lbzSourceConfig.feedbackType = 'love')}>Loved</button
-							>
-							<button
-								class="toggle-btn"
-								class:toggle-active={lbzSourceConfig.feedbackType === 'hate'}
-								onclick={() => (lbzSourceConfig.feedbackType = 'hate')}>Hated</button
-							>
-						</div>
-						<span class="config-label">recordings</span>
-					{:else if selectedSource === 'reset'}
-						<div class="reset-config">
-							<div class="reset-service-picker">
-								{#if plex.status === 'connected'}
-									<button
-										class="reset-svc-btn"
-										class:reset-svc-active={resetTargetService === 'plex'}
-										onclick={() => (resetTargetService = 'plex')}
-									>
-										<svg viewBox="0 0 512 512" width="13" height="13" aria-hidden="true"
-											><rect width="512" height="512" rx="15%" fill="#282a2d" /><path
-												d="M256 70H148l108 186-108 186h108l108-186z"
-												fill="#e5a00d"
-											/></svg
-										>
-										Plex
-									</button>
-								{/if}
-								{#if lastfm.status === 'connected'}
-									<button
-										class="reset-svc-btn"
-										class:reset-svc-active={resetTargetService === 'lastfm'}
-										onclick={() => (resetTargetService = 'lastfm')}
-									>
-										<svg
-											viewBox="0 0 24 24"
-											fill="currentColor"
-											width="13"
-											height="13"
-											aria-hidden="true"
-											><path
-												d="M10.584 17.21l-.88-2.392s-1.43 1.6-3.573 1.6c-1.898 0-3.244-1.65-3.244-4.29 0-3.38 1.703-4.594 3.38-4.594 2.42 0 3.19 1.565 3.85 3.576l.88 2.75c.88 2.673 2.53 4.815 7.315 4.815 3.41 0 5.73-1.045 5.73-3.8 0-2.227-1.265-3.38-3.63-3.93l-1.76-.385c-1.21-.275-1.57-.77-1.57-1.593 0-.935.737-1.483 1.95-1.483 1.318 0 2.03.494 2.14 1.67l2.75-.33c-.22-2.47-1.925-3.48-4.755-3.48-2.49 0-4.82.935-4.82 3.93 0 1.87.907 3.05 3.19 3.6l1.87.44c1.375.33 1.87.88 1.87 1.76 0 1.046-.99 1.483-2.862 1.483-2.75 0-3.9-1.43-4.562-3.38l-.91-2.75c-1.155-3.52-3-4.87-6.655-4.87C1.87 5.528 0 8.278 0 12.238c0 3.82 1.87 6.234 6.04 6.234 3.135 0 4.544-1.262 4.544-1.262z"
-											/></svg
-										>
-										Last.fm
-									</button>
-								{/if}
-								{#if listenbrainz.status === 'connected'}
-									<button
-										class="reset-svc-btn"
-										class:reset-svc-active={resetTargetService === 'listenbrainz'}
-										onclick={() => (resetTargetService = 'listenbrainz')}
-									>
-										<svg viewBox="9,0,128,160" width="13" height="13" aria-hidden="true"
-											><path d="m75.354 7.823v144l61-35v-74z" fill="#eb743b" /><path
-												d="m70.354 7.823-61 35v74l61 35z"
-												fill="#353070"
-											/></svg
-										>
-										ListenBrainz
-									</button>
-								{/if}
-							</div>
-							<div class="reset-warning">
-								<svg
-									viewBox="0 0 16 16"
-									fill="none"
-									stroke="currentColor"
-									stroke-width="1.5"
-									width="13"
-									height="13"
-									aria-hidden="true"
-								>
-									<path
-										d="M8 2L1.5 14h13L8 2zm0 5v3m0 2v.5"
-										stroke-linecap="round"
-										stroke-linejoin="round"
-									/>
-								</svg>
-								This will permanently remove all ratings from the selected service and cannot be undone.
-							</div>
-						</div>
-					{/if}
-				</div>
-			</section>
-
-			<!-- ── TO section ─────────────────────────────────────────────────── -->
-			{#if selectedSource !== 'reset'}
-				<section class="relay-card">
-					<div class="relay-card-label">TO</div>
-
-					<div class="targets-list">
-						<!-- Plex target -->
-						{#if plex.status === 'connected' && plex.server_name && selectedSource !== 'plex'}
-							<div class="target-row" class:target-enabled={plexTargetEnabled}>
-								<label class="target-check">
-									<input type="checkbox" bind:checked={plexTargetEnabled} />
-									<svg viewBox="0 0 512 512" width="14" height="14" aria-hidden="true"
-										><rect width="512" height="512" rx="15%" fill="#282a2d" /><path
-											d="M256 70H148l108 186-108 186h108l108-186z"
-											fill="#e5a00d"
-										/></svg
-									>
-									<span>Plex</span>
-								</label>
-								{#if plexTargetEnabled}
-									<div class="target-config">
-										<span class="config-label">Rate as</span>
-										<select class="relay-select" bind:value={plexTargetConfig.rating}>
-											{#each plexStarOptions as opt}
-												<option value={opt.value}>{opt.label}</option>
-											{/each}
-										</select>
-									</div>
-								{:else}
-									<span class="target-hint">Rate tracks in your Plex library</span>
-								{/if}
-							</div>
-						{/if}
-
-						<!-- Last.fm target -->
-						{#if lastfm.status === 'connected' && selectedSource !== 'lastfm'}
-							<div class="target-row" class:target-enabled={lastfmTargetEnabled}>
-								<label class="target-check">
-									<input type="checkbox" bind:checked={lastfmTargetEnabled} />
-									<svg
-										viewBox="0 0 24 24"
-										fill="currentColor"
-										width="14"
-										height="14"
-										aria-hidden="true"
-										><path
-											d="M10.584 17.21l-.88-2.392s-1.43 1.6-3.573 1.6c-1.898 0-3.244-1.65-3.244-4.29 0-3.38 1.703-4.594 3.38-4.594 2.42 0 3.19 1.565 3.85 3.576l.88 2.75c.88 2.673 2.53 4.815 7.315 4.815 3.41 0 5.73-1.045 5.73-3.8 0-2.227-1.265-3.38-3.63-3.93l-1.76-.385c-1.21-.275-1.57-.77-1.57-1.593 0-.935.737-1.483 1.95-1.483 1.318 0 2.03.494 2.14 1.67l2.75-.33c-.22-2.47-1.925-3.48-4.755-3.48-2.49 0-4.82.935-4.82 3.93 0 1.87.907 3.05 3.19 3.6l1.87.44c1.375.33 1.87.88 1.87 1.76 0 1.046-.99 1.483-2.862 1.483-2.75 0-3.9-1.43-4.562-3.38l-.91-2.75c-1.155-3.52-3-4.87-6.655-4.87C1.87 5.528 0 8.278 0 12.238c0 3.82 1.87 6.234 6.04 6.234 3.135 0 4.544-1.262 4.544-1.262z"
-										/></svg
-									>
-									<span>Last.fm</span>
-								</label>
-								{#if lastfmTargetEnabled}
-									<div class="target-config">
-										<span class="config-label fixed-action">Love tracks</span>
-									</div>
-								{:else}
-									<span class="target-hint">Love tracks on Last.fm</span>
-								{/if}
-							</div>
-						{/if}
-
-						<!-- ListenBrainz target -->
-						{#if listenbrainz.status === 'connected' && selectedSource !== 'listenbrainz'}
-							<div class="target-row" class:target-enabled={lbzTargetEnabled}>
-								<label class="target-check">
-									<input type="checkbox" bind:checked={lbzTargetEnabled} />
-									<svg viewBox="9,0,128,160" width="14" height="14" aria-hidden="true"
-										><path d="m75.354 7.823v144l61-35v-74z" fill="#eb743b" /><path
-											d="m70.354 7.823-61 35v74l61 35z"
-											fill="#353070"
-										/></svg
-									>
-									<span>ListenBrainz</span>
-								</label>
-								{#if lbzTargetEnabled}
-									<div class="target-config">
-										<span class="config-label">Mark as</span>
-										<div class="toggle-group">
-											<button
-												class="toggle-btn"
-												class:toggle-active={lbzTargetConfig.feedbackType === 'love'}
-												onclick={() => (lbzTargetConfig.feedbackType = 'love')}>Love</button
-											>
-											<button
-												class="toggle-btn"
-												class:toggle-active={lbzTargetConfig.feedbackType === 'hate'}
-												onclick={() => (lbzTargetConfig.feedbackType = 'hate')}>Hate</button
-											>
-										</div>
-									</div>
-								{:else}
-									<span class="target-hint">Submit feedback to ListenBrainz</span>
-								{/if}
-							</div>
-						{/if}
-					</div>
-				</section>
-
-				<!-- ── Recurring schedule section ─────────────────────────────────── -->
-				<section class="relay-card">
-					<div class="relay-card-label">SCHEDULE</div>
-					<div class="schedule-row">
-						<label class="schedule-toggle-label">
-							<input type="checkbox" bind:checked={recurring} />
-							<span>Run on a schedule</span>
-						</label>
-						{#if recurring}
-							<div class="schedule-freq">
-								<span class="config-label">Frequency:</span>
-								<select class="relay-select" bind:value={intervalMinutes}>
-									{#each frequencyOptions as opt}
-										<option value={opt.value}>{opt.label}</option>
-									{/each}
-								</select>
-							</div>
-						{/if}
-					</div>
-				</section>
-			{/if}
-
-			<!-- ── Dry-run toggle ──────────────────────────────────────────────── -->
-			{#if !recurring && selectedSource !== 'reset'}
-				<section class="relay-card">
-					<div class="relay-card-label">DRY RUN</div>
-					<div class="schedule-row">
-						<label class="schedule-toggle-label">
-							<input type="checkbox" bind:checked={dryRun} />
-							<span>Preview only — don't write to any service</span>
-						</label>
-					</div>
-				</section>
-			{/if}
-
-			<!-- ── Queue button ─────────────────────────────────────────────────── -->
-			<button
-				class="run-btn"
-				class:run-btn-reset={selectedSource === 'reset'}
-				onclick={queueJob}
-				disabled={!canQueue}
-				aria-busy={relaying}
-			>
-				{#if relaying}
-					<span class="status-spinner" aria-hidden="true"></span>
-					Queueing…
-				{:else if selectedSource === 'reset'}
+	<!-- Home: the pipeline as a flow of nodes, the queue as its own rail. -->
+	<div class="flex h-dvh w-full flex-col overflow-hidden bg-background text-foreground">
+		<header class="flex shrink-0 items-center gap-4 border-b border-border/70 px-5 py-2.5">
+			<div class="flex items-center gap-2">
+				<span class="grid size-7 place-items-center rounded-md bg-primary text-primary-foreground">
 					<svg
 						viewBox="0 0 16 16"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="1.5"
 						width="15"
 						height="15"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="1.7"
+						stroke-linecap="round"
 						aria-hidden="true"
 					>
-						<path
-							d="M8 2a6 6 0 1 0 4.5 2M8 2V5m0-3h3"
-							stroke-linecap="round"
-							stroke-linejoin="round"
-						/>
+						<path d="M3 12V8m5 4V3m5 9V6" />
 					</svg>
-					Queue Reset
-				{:else if dryRun}
-					<svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16" aria-hidden="true">
-						<path
-							fill-rule="evenodd"
-							d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z"
-							clip-rule="evenodd"
-						/>
-					</svg>
-					Preview Run
-				{:else}
-					<svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16" aria-hidden="true">
-						<path
-							fill-rule="evenodd"
-							d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z"
-							clip-rule="evenodd"
-						/>
-					</svg>
-					Queue Job
+				</span>
+				<h1 class="font-heading text-lg font-semibold tracking-tight">RatingRelay</h1>
+			</div>
+
+			<div class="flex flex-wrap items-center gap-2">
+				{#if plex.status === 'connected'}
+					<span class="conn-pill">
+						<ServiceMark service="plex" size={13} />
+						{plex.server_name ?? 'Plex'}
+					</span>
 				{/if}
-			</button>
+				{#if lastfm.status === 'connected'}
+					<span class="conn-pill">
+						<ServiceMark service="lastfm" size={13} />
+						Last.fm · {lastfm.username}
+					</span>
+				{/if}
+				{#if listenbrainz.status === 'connected'}
+					<span class="conn-pill">
+						<ServiceMark service="listenbrainz" size={13} />
+						ListenBrainz · {listenbrainz.username}
+					</span>
+				{/if}
+			</div>
 
-			<!-- ── Error ───────────────────────────────────────────────────────── -->
-			{#if relayError}
-				<div class="relay-result result-error" role="alert">
-					<svg viewBox="0 0 16 16" fill="currentColor" width="14" height="14" aria-hidden="true">
-						<path
-							d="M8 1L1 14h14L8 1zm0 9V6m0 3v1"
-							stroke="currentColor"
-							stroke-width="1.5"
-							fill="none"
+			<a
+				href={resolve('/unmatched')}
+				class="ml-auto text-base text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+			>
+				Unmatched tracks
+			</a>
+		</header>
+
+		{#if relayError}
+			<div
+				class="border-b border-destructive/30 bg-destructive/10 px-5 py-2 text-base text-destructive"
+			>
+				{relayError}
+			</div>
+		{/if}
+
+		<div class="flex min-h-0 flex-1">
+			<section class="flex min-h-0 flex-1 flex-col" aria-label="Relay flow">
+				<div class="flow-canvas min-h-0 flex-1 overflow-y-auto">
+					<div class="mx-auto flex w-full max-w-4xl flex-col px-8 py-10">
+						<SourceNode
+							options={sourceOptions}
+							bind:selected={selectedSource}
+							plexConfig={plexSourceConfig}
+							lbzConfig={lbzSourceConfig}
+							bind:resetService={resetTargetService}
+							{resetOptions}
 						/>
-					</svg>
-					{relayError}
-				</div>
-			{/if}
 
-			<!-- ── Jobs list ────────────────────────────────────────────────────── -->
-			{#if jobs.length > 0}
-				<div class="jobs-section">
-					<div class="jobs-section-label">Jobs</div>
+						{#if selectedSource !== 'reset'}
+							<FlowLink />
 
-					{#each jobs as job (job.id)}
-						<a href="/jobs/{job.id}" class="job-card" data-status={job.status}>
-							<div class="job-card-top">
-								<div class="job-card-left">
-									<span class="job-status-dot {statusColor(job.status)}"></span>
-									<div class="job-card-info">
-										<span class="job-title">
-											{summarizeSource(job.source_config)}{job.targets_config.length > 0
-												? ` → ${summarizeTargets(job.targets_config)}`
-												: ''}
-										</span>
-										{#if job.dry_run}
-											<span class="job-dry-badge">DRY RUN</span>
-										{/if}
-										{#if job.recurring && job.interval_minutes}
-											<span class="job-recur-hint">
-												Every {frequencyOptions
-													.find((o) => o.value === job.interval_minutes)
-													?.label?.toLowerCase()
-													.replace('every ', '') ?? `${job.interval_minutes}m`}
-												{#if job.run_at && job.status === 'scheduled'}
-													· Next {formatNextRun(job.run_at)}
-												{/if}
-											</span>
-										{/if}
+							{#if allocatedTargets.length > 0}
+								<div class="space-y-3.5">
+									{#each allocatedTargets as target (target.id)}
+										<TargetNode
+											option={target}
+											allocated={true}
+											onadd={() => {}}
+											onremove={() => setAllocated(target.id, false)}
+											plexConfig={target.id === 'plex' ? plexTargetConfig : undefined}
+											lbzConfig={target.id === 'listenbrainz' ? lbzTargetConfig : undefined}
+										/>
+									{/each}
+								</div>
+							{/if}
+
+							{#if ghostTargets.length > 0}
+								{#if allocatedTargets.length === 0}
+									<p class="mb-3 text-center text-base text-muted-foreground">
+										Where should these ratings go?
+									</p>
+								{:else}
+									<FlowLink
+										onadd={() => (showTargetPicker = !showTargetPicker)}
+										active={showTargetPicker}
+									/>
+								{/if}
+
+								{#if allocatedTargets.length === 0 || showTargetPicker}
+									<div class="space-y-2.5">
+										{#each ghostTargets as target (target.id)}
+											<TargetNode
+												option={target}
+												allocated={false}
+												onadd={() => {
+													setAllocated(target.id, true);
+													showTargetPicker = false;
+												}}
+												onremove={() => {}}
+											/>
+										{/each}
 									</div>
-								</div>
-								<div class="job-card-right">
-									{#if job.status === 'running'}
-										<span class="job-progress">
-											{#if job.tracks_fetched > 0}
-												{job.tracks_ok + job.tracks_err} / {job.tracks_fetched} tracks
-											{:else}
-												<span class="status-spinner" aria-hidden="true"></span>
-												Fetching…
-											{/if}
-										</span>
-									{:else if job.status === 'queued' || job.status === 'scheduled'}
-										<span class="job-status-text">{job.status}</span>
-									{:else}
-										<span class="job-done-stats">
-											{#if job.tracks_ok > 0}
-												<span class="stat-ok">{job.tracks_ok} ✓</span>
-											{/if}
-											{#if job.tracks_err > 0}
-												<span class="stat-err">{job.tracks_err} ✗</span>
-											{/if}
-											{#if job.tracks_ok === 0 && job.tracks_err === 0}
-												<span class="job-status-text">{job.status}</span>
-											{/if}
-										</span>
-									{/if}
-									{#if job.status === 'queued' || job.status === 'scheduled'}
-										<button
-											class="job-cancel-btn"
-											onclick={(e) => {
-												e.preventDefault();
-												e.stopPropagation();
-												cancelJob(job.id);
-											}}
-										>
-											Cancel
-										</button>
-									{/if}
-								</div>
-							</div>
-						</a>
-					{/each}
+								{/if}
+							{/if}
+						{/if}
+					</div>
 				</div>
-			{/if}
-		</main>
+
+				<RunDock
+					bind:repeat
+					bind:dryRun
+					mode={selectedSource === 'reset' ? 'reset' : 'run'}
+					busy={relaying}
+					canRun={canQueue}
+					onrun={queueJob}
+				/>
+			</section>
+
+			<JobsRail {jobs} oncancel={cancelJob} bind:open={jobsOpen} />
+		</div>
 	</div>
 {:else}
 	<!-- ═══════════════════════════════════════════════════════════════════════ -->
@@ -1440,7 +1103,6 @@
 {/if}
 
 <style>
-	/* ── Root & background ─────────────────────────────────────────────────── */
 	.setup-root {
 		min-height: 100dvh;
 		display: grid;
@@ -1471,18 +1133,6 @@
 		gap: 0;
 	}
 
-	/* ── Relay main layout ─────────────────────────────────────────────────── */
-	.relay-main {
-		position: relative;
-		z-index: 1;
-		width: 100%;
-		max-width: 560px;
-		display: flex;
-		flex-direction: column;
-		gap: 1rem;
-	}
-
-	/* ── Header ────────────────────────────────────────────────────────────── */
 	.setup-header {
 		display: flex;
 		align-items: center;
@@ -1531,25 +1181,6 @@
 		}
 	}
 
-	.title-row {
-		display: flex;
-		align-items: baseline;
-		gap: 1rem;
-		flex-wrap: wrap;
-	}
-
-	.nav-link {
-		font-size: 0.75rem;
-		font-family: var(--font-heading);
-		font-weight: 500;
-		color: oklch(0.45 0.015 40);
-		text-decoration: none;
-		transition: color 0.15s;
-	}
-	.nav-link:hover {
-		color: oklch(0.65 0.02 40);
-	}
-
 	.setup-title {
 		font-family: var(--font-heading);
 		font-size: 1.5rem;
@@ -1566,398 +1197,18 @@
 		margin: 0;
 	}
 
-	/* ── Connected service pills ───────────────────────────────────────────── */
-	.conn-pills {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.375rem;
-		margin-top: 0.375rem;
-	}
-
 	.conn-pill {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.3rem;
-		font-size: 0.6875rem;
-		padding: 0.2rem 0.5rem;
-		background: oklch(0.5 0.12 140 / 0.1);
-		border: 1px solid oklch(0.5 0.12 140 / 0.3);
-		color: oklch(0.65 0.12 140);
-		font-variant-numeric: tabular-nums;
-	}
-
-	.lastfm-pill {
-		background: oklch(0.5 0.18 28 / 0.1);
-		border-color: oklch(0.5 0.18 28 / 0.3);
-		color: oklch(0.65 0.18 28);
-	}
-
-	.lb-pill {
-		background: oklch(0.4 0.15 280 / 0.1);
-		border-color: oklch(0.4 0.15 280 / 0.3);
-		color: oklch(0.6 0.12 280);
-	}
-
-	/* ── Relay cards ───────────────────────────────────────────────────────── */
-	.relay-card {
-		background: oklch(0.16 0.015 38);
-		border: 1px solid oklch(0.22 0.02 38);
-		display: flex;
-		flex-direction: column;
-	}
-
-	.relay-card-label {
-		font-size: 0.625rem;
-		letter-spacing: 0.12em;
-		text-transform: uppercase;
-		color: oklch(0.38 0.01 40);
-		padding: 0.625rem 1rem 0;
-		font-family: var(--font-heading);
-		font-weight: 700;
-	}
-
-	/* ── Source tabs ───────────────────────────────────────────────────────── */
-	.source-tabs {
-		display: flex;
-		gap: 0;
-		padding: 0.5rem 0.75rem 0;
-		border-bottom: 1px solid oklch(0.2 0.01 40);
-	}
-
-	.source-tab {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.375rem;
-		padding: 0.4rem 0.75rem;
-		font-size: 0.8rem;
-		font-family: var(--font-heading);
-		font-weight: 500;
-		color: oklch(0.45 0.015 40);
-		background: transparent;
-		border: none;
-		border-bottom: 2px solid transparent;
-		margin-bottom: -1px;
-		cursor: pointer;
-		transition:
-			color 0.15s,
-			border-color 0.15s;
-	}
-
-	.source-tab:hover {
-		color: oklch(0.7 0.02 40);
-	}
-
-	.source-tab.tab-active {
-		color: oklch(0.85 0.01 60);
-		border-bottom-color: var(--primary);
-	}
-
-	.source-tab-reset {
-		color: oklch(0.48 0.08 22);
-	}
-	.source-tab-reset:hover {
-		color: oklch(0.65 0.14 22);
-	}
-	.source-tab-reset.tab-active {
-		color: oklch(0.7 0.16 22);
-		border-bottom-color: oklch(0.6 0.18 22);
-	}
-
-	/* ── Reset config ──────────────────────────────────────────────────────── */
-	.reset-config {
-		display: flex;
-		flex-direction: column;
-		gap: 0.75rem;
-		padding: 0.875rem 1rem;
-	}
-
-	.reset-service-picker {
-		display: flex;
-		gap: 0.5rem;
-		flex-wrap: wrap;
-	}
-
-	.reset-svc-btn {
-		display: inline-flex;
-		align-items: center;
 		gap: 0.4rem;
-		padding: 0.35rem 0.75rem;
-		font-size: 0.8125rem;
-		font-family: var(--font-heading);
-		font-weight: 500;
-		background: oklch(0.12 0.01 38);
-		border: 1px solid oklch(0.28 0.02 38);
-		color: oklch(0.52 0.015 40);
-		cursor: pointer;
-		transition:
-			border-color 0.15s,
-			color 0.15s;
-	}
-	.reset-svc-btn:hover {
-		border-color: oklch(0.38 0.02 38);
-		color: oklch(0.68 0.015 40);
-	}
-	.reset-svc-btn.reset-svc-active {
-		border-color: oklch(0.55 0.18 22 / 0.55);
-		color: oklch(0.7 0.16 22);
-		background: oklch(0.5 0.18 22 / 0.08);
-	}
-
-	.reset-warning {
-		display: flex;
-		align-items: flex-start;
-		gap: 0.5rem;
 		font-size: 0.75rem;
-		color: oklch(0.58 0.14 22);
-		background: oklch(0.5 0.18 22 / 0.08);
-		border: 1px solid oklch(0.5 0.18 22 / 0.25);
-		padding: 0.5rem 0.625rem;
-		line-height: 1.4;
-	}
-	.reset-warning svg {
-		flex-shrink: 0;
-		margin-top: 1px;
-	}
-
-	/* ── Source config row ─────────────────────────────────────────────────── */
-	.source-config {
-		display: flex;
-		align-items: center;
-		gap: 0.625rem;
-		padding: 0.875rem 1rem;
-		flex-wrap: wrap;
-	}
-
-	.config-label {
-		font-size: 0.8125rem;
-		color: oklch(0.52 0.015 40);
-		white-space: nowrap;
-	}
-
-	/* ── Relay select ──────────────────────────────────────────────────────── */
-	.relay-select {
-		background: oklch(0.12 0.01 38);
-		border: 1px solid oklch(0.28 0.02 38);
-		color: oklch(0.85 0.01 60);
-		padding: 0.35rem 0.625rem;
-		font-size: 0.8rem;
-		font-family: var(--font-sans);
-		outline: none;
-		cursor: pointer;
-		transition: border-color 0.2s;
-	}
-
-	.relay-select:focus {
-		border-color: oklch(0.5 0.15 38 / 0.7);
-	}
-
-	/* ── Toggle group ──────────────────────────────────────────────────────── */
-	.toggle-group {
-		display: flex;
-	}
-
-	.toggle-btn {
-		padding: 0.3rem 0.625rem;
-		font-size: 0.8rem;
-		font-family: var(--font-heading);
-		font-weight: 500;
-		background: oklch(0.12 0.01 38);
-		border: 1px solid oklch(0.28 0.02 38);
-		color: oklch(0.48 0.015 40);
-		cursor: pointer;
-		transition:
-			background 0.15s,
-			color 0.15s,
-			border-color 0.15s;
-	}
-
-	.toggle-btn + .toggle-btn {
-		border-left: none;
-	}
-
-	.toggle-btn.toggle-active {
-		background: oklch(0.553 0.195 38 / 0.2);
-		border-color: oklch(0.553 0.195 38 / 0.5);
-		color: oklch(0.78 0.12 38);
-	}
-
-	/* ── Targets list ──────────────────────────────────────────────────────── */
-	.targets-list {
-		display: flex;
-		flex-direction: column;
-	}
-
-	.target-row {
-		display: flex;
-		align-items: center;
-		gap: 1rem;
-		padding: 0.75rem 1rem;
-		border-top: 1px solid oklch(0.2 0.01 40);
-		transition: background 0.15s;
-		flex-wrap: wrap;
-	}
-
-	.target-row.target-enabled {
-		background: oklch(0.553 0.195 38 / 0.04);
-	}
-
-	.target-check {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		cursor: pointer;
-		font-size: 0.8125rem;
-		font-family: var(--font-heading);
-		font-weight: 500;
-		color: oklch(0.6 0.015 40);
-		user-select: none;
-		min-width: 120px;
-	}
-
-	.target-check input[type='checkbox'] {
-		accent-color: var(--primary);
-		width: 14px;
-		height: 14px;
-		cursor: pointer;
-	}
-
-	.target-enabled .target-check {
-		color: oklch(0.85 0.01 60);
-	}
-
-	.target-config {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-	}
-
-	.target-hint {
-		font-size: 0.75rem;
-		color: oklch(0.35 0.01 40);
-		font-style: italic;
-	}
-
-	.fixed-action {
-		color: oklch(0.65 0.14 140);
-		font-style: normal;
-	}
-
-	/* ── Run button ────────────────────────────────────────────────────────── */
-	.run-btn {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		gap: 0.5rem;
-		padding: 0.75rem 1.75rem;
-		font-size: 0.9375rem;
-		font-weight: 700;
-		font-family: var(--font-heading);
-		letter-spacing: 0.01em;
-		background: var(--primary);
-		color: var(--primary-foreground);
-		border: 1px solid var(--primary);
-		cursor: pointer;
-		transition:
-			background 0.15s,
-			opacity 0.15s;
-		align-self: center;
-		margin-top: 0.25rem;
-	}
-
-	.run-btn:hover:not(:disabled) {
-		background: oklch(from var(--primary) calc(l + 0.05) c h);
-	}
-
-	.run-btn:disabled {
-		opacity: 0.4;
-		cursor: not-allowed;
-	}
-
-	.run-btn-reset {
-		background: oklch(0.48 0.18 22 / 0.85);
-		border-color: oklch(0.52 0.2 22);
-		color: oklch(0.95 0.02 22);
-	}
-	.run-btn-reset:hover:not(:disabled) {
-		background: oklch(0.52 0.2 22 / 0.9);
-	}
-
-	/* ── Result panel ──────────────────────────────────────────────────────── */
-	.relay-result {
-		border: 1px solid oklch(0.28 0.01 40);
-		background: oklch(0.16 0.015 38);
-		padding: 0.875rem 1rem;
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-		font-size: 0.8125rem;
-		animation: slide-up 0.3s ease both;
-	}
-
-	.result-ok {
-		border-color: oklch(0.45 0.12 140 / 0.5);
-		background: oklch(0.55 0.14 140 / 0.06);
-	}
-
-	.result-partial {
-		border-color: oklch(0.6 0.16 62 / 0.5);
-		background: oklch(0.6 0.16 62 / 0.06);
-	}
-
-	.result-error {
-		border-color: oklch(0.5 0.2 22 / 0.5);
-		background: oklch(0.5 0.2 22 / 0.06);
-		color: oklch(0.65 0.18 22);
-		flex-direction: row;
-		align-items: center;
-		gap: 0.5rem;
-	}
-
-	.result-summary {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		color: oklch(0.7 0.015 40);
-	}
-
-	.result-ok .result-summary {
-		color: oklch(0.65 0.14 140);
-	}
-	.result-partial .result-summary {
-		color: oklch(0.7 0.14 62);
-	}
-	.result-error .result-summary {
-		color: oklch(0.65 0.18 22);
-	}
-
-	.result-service {
-		display: flex;
-		align-items: center;
-		gap: 0.75rem;
-		color: oklch(0.55 0.015 40);
-		padding-left: 1.5rem;
-	}
-
-	.result-svc-name {
-		font-family: var(--font-heading);
-		font-weight: 600;
-		color: oklch(0.68 0.015 40);
-		min-width: 90px;
-	}
-
-	.result-stat {
+		padding: 0.25rem 0.6rem;
+		background: oklch(0.62 0.13 155 / 0.12);
+		border: 1px solid oklch(0.62 0.13 155 / 0.35);
+		color: oklch(0.8 0.13 155);
 		font-variant-numeric: tabular-nums;
-		font-size: 0.75rem;
 	}
 
-	.result-ok-stat {
-		color: oklch(0.65 0.14 140);
-	}
-	.result-err-stat {
-		color: oklch(0.65 0.18 22);
-	}
-
-	/* ── Progress rail ─────────────────────────────────────────────────────── */
 	.progress-rail {
 		display: flex;
 		align-items: center;
@@ -2022,7 +1273,6 @@
 		background: oklch(0.5 0.15 140);
 	}
 
-	/* ── Service card ──────────────────────────────────────────────────────── */
 	.service-card {
 		background: oklch(0.16 0.015 38);
 		border: 1px solid oklch(0.22 0.02 38);
@@ -2149,7 +1399,6 @@
 		}
 	}
 
-	/* ── Card body ─────────────────────────────────────────────────────────── */
 	.card-body {
 		border-top: 1px solid oklch(0.2 0.01 40);
 		padding: 1rem 1.125rem;
@@ -2200,7 +1449,6 @@
 		}
 	}
 
-	/* ── Credentials form ──────────────────────────────────────────────────── */
 	.credentials-form {
 		display: flex;
 		flex-direction: column;
@@ -2236,7 +1484,6 @@
 		box-shadow: 0 0 0 2px oklch(0.5 0.15 38 / 0.12);
 	}
 
-	/* ── Buttons ───────────────────────────────────────────────────────────── */
 	.btn {
 		display: inline-flex;
 		align-items: center;
@@ -2285,7 +1532,6 @@
 		color: oklch(0.6 0.02 40);
 	}
 
-	/* ── Music service group ───────────────────────────────────────────────── */
 	.service-group {
 		display: flex;
 		flex-direction: column;
@@ -2321,7 +1567,6 @@
 		margin-bottom: 1px;
 	}
 
-	/* ── Server select ─────────────────────────────────────────────────────── */
 	.server-select-row {
 		display: flex;
 		gap: 0.5rem;
@@ -2357,292 +1602,12 @@
 		}
 	}
 
-	/* ── Schedule section ──────────────────────────────────────────────────── */
-	.schedule-row {
-		display: flex;
-		align-items: center;
-		gap: 1rem;
-		padding: 0.75rem 1rem;
-		flex-wrap: wrap;
-	}
-
-	.schedule-toggle-label {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		font-size: 0.8125rem;
-		color: oklch(0.62 0.015 40);
-		cursor: pointer;
-		user-select: none;
-	}
-
-	.schedule-toggle-label input[type='checkbox'] {
-		accent-color: var(--primary);
-		width: 14px;
-		height: 14px;
-		cursor: pointer;
-	}
-
-	.schedule-freq {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-	}
-
-	/* ── Jobs section ──────────────────────────────────────────────────────── */
-	.jobs-section {
-		display: flex;
-		flex-direction: column;
-		gap: 0;
-		margin-top: 0.5rem;
-	}
-
-	.jobs-section-label {
-		font-size: 0.625rem;
-		letter-spacing: 0.12em;
-		text-transform: uppercase;
-		color: oklch(0.38 0.01 40);
-		font-family: var(--font-heading);
-		font-weight: 700;
-		padding: 0.5rem 0 0.375rem;
-		border-top: 1px solid oklch(0.2 0.01 40);
-	}
-
-	.job-card {
-		display: block;
-		text-decoration: none;
-		color: inherit;
-		background: oklch(0.16 0.015 38);
-		border: 1px solid oklch(0.22 0.02 38);
-		margin-bottom: 1px;
-		animation: slide-up 0.25s ease both;
-		transition: border-color 0.15s;
-		cursor: pointer;
-	}
-
-	.job-card:hover {
-		border-color: oklch(0.32 0.04 40);
-	}
-
-	.job-card[data-status='running'] {
-		border-color: oklch(0.55 0.18 38 / 0.45);
-	}
-
-	.job-card[data-status='completed'] {
-		border-color: oklch(0.45 0.12 140 / 0.4);
-	}
-
-	.job-card[data-status='partial'] {
-		border-color: oklch(0.55 0.16 62 / 0.4);
-	}
-
-	.job-card[data-status='failed'] {
-		border-color: oklch(0.5 0.2 22 / 0.4);
-	}
-
-	.job-card[data-status='cancelled'] {
-		opacity: 0.5;
-	}
-
-	.job-card-top {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 1rem;
-		padding: 0.7rem 1rem;
-		flex-wrap: wrap;
-	}
-
-	.job-card-left {
-		display: flex;
-		align-items: center;
-		gap: 0.625rem;
-		min-width: 0;
-		flex: 1;
-	}
-
-	.job-status-dot {
-		width: 8px;
-		height: 8px;
-		border-radius: 50%;
-		flex-shrink: 0;
-	}
-
-	.status-queued {
-		background: oklch(0.55 0.14 55);
-	}
-	.status-scheduled {
-		background: oklch(0.52 0.12 240);
-	}
-	.status-running {
-		background: var(--primary);
-		box-shadow: 0 0 6px var(--primary);
-		animation: blink 1.2s ease-in-out infinite;
-	}
-	.status-completed {
-		background: oklch(0.6 0.15 140);
-	}
-	.status-partial {
-		background: oklch(0.65 0.16 62);
-	}
-	.status-failed {
-		background: oklch(0.55 0.2 22);
-	}
-	.status-cancelled {
-		background: oklch(0.35 0.01 40);
-	}
-
-	.job-card-info {
-		display: flex;
-		flex-direction: column;
-		gap: 0.15rem;
-		min-width: 0;
-	}
-
-	.job-title {
-		font-size: 0.8125rem;
-		font-family: var(--font-heading);
-		font-weight: 500;
-		color: oklch(0.78 0.015 50);
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-
-	.job-recur-hint {
-		font-size: 0.7rem;
-		color: oklch(0.45 0.012 40);
-	}
-
-	.job-dry-badge {
-		display: inline-block;
-		font-size: 0.575rem;
-		letter-spacing: 0.08em;
-		font-family: var(--font-heading);
-		font-weight: 600;
-		text-transform: uppercase;
-		padding: 0.1rem 0.35rem;
-		border: 1px solid oklch(0.52 0.12 240 / 0.5);
-		color: oklch(0.62 0.1 240);
-	}
-
-	.job-card-right {
-		display: flex;
-		align-items: center;
-		gap: 0.625rem;
-		flex-shrink: 0;
-	}
-
-	.job-progress {
-		display: flex;
-		align-items: center;
-		gap: 0.375rem;
-		font-size: 0.75rem;
-		font-variant-numeric: tabular-nums;
-		color: oklch(0.62 0.015 40);
-	}
-
-	.job-status-text {
-		font-size: 0.7rem;
-		letter-spacing: 0.06em;
-		text-transform: uppercase;
-		color: oklch(0.42 0.01 40);
-	}
-
-	.job-done-stats {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		font-size: 0.8rem;
-		font-variant-numeric: tabular-nums;
-	}
-
-	.stat-ok {
-		color: oklch(0.65 0.14 140);
-	}
-	.stat-err {
-		color: oklch(0.65 0.18 22);
-	}
-
-	.job-cancel-btn {
-		padding: 0.2rem 0.5rem;
-		font-size: 0.7rem;
-		font-family: var(--font-heading);
-		font-weight: 500;
-		background: transparent;
-		border: 1px solid oklch(0.3 0.01 40);
-		color: oklch(0.45 0.01 40);
-		cursor: pointer;
-		transition:
-			border-color 0.15s,
-			color 0.15s;
-	}
-
-	.job-cancel-btn:hover {
-		border-color: oklch(0.5 0.18 22 / 0.6);
-		color: oklch(0.65 0.18 22);
-	}
-
-	/* ── Live event list ───────────────────────────────────────────────────── */
-	.job-events-list {
-		border-top: 1px solid oklch(0.2 0.01 40);
-		max-height: 200px;
-		overflow-y: auto;
-		padding: 0.375rem 0;
-	}
-
-	.job-event-row {
-		display: flex;
-		align-items: baseline;
-		gap: 0.375rem;
-		padding: 0.175rem 1rem;
-		font-size: 0.75rem;
-		color: oklch(0.55 0.015 40);
-		font-variant-numeric: tabular-nums;
-		flex-wrap: nowrap;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-
-	.job-event-row.event-err {
-		color: oklch(0.52 0.015 40);
-	}
-
-	.event-icon {
-		font-size: 0.65rem;
-		flex-shrink: 0;
-		color: oklch(0.6 0.14 140);
-	}
-
-	.event-err .event-icon {
-		color: oklch(0.6 0.18 22);
-	}
-
-	.event-track {
-		overflow: hidden;
-		text-overflow: ellipsis;
-		min-width: 0;
-		flex: 1;
-		color: oklch(0.65 0.015 50);
-	}
-
-	.event-arrow {
-		color: oklch(0.35 0.01 40);
-		flex-shrink: 0;
-	}
-
-	.event-target {
-		flex-shrink: 0;
-		color: oklch(0.48 0.01 40);
-	}
-
-	.event-error-msg {
-		flex-shrink: 0;
-		color: oklch(0.55 0.15 22);
-		font-style: italic;
-		max-width: 160px;
-		overflow: hidden;
-		text-overflow: ellipsis;
+	/* The home canvas: a dotted plane, so the nodes read as placed on a board. */
+	.flow-canvas {
+		background-image: radial-gradient(
+			color-mix(in oklab, var(--color-border, var(--border)) 75%, transparent) 1px,
+			transparent 1px
+		);
+		background-size: 22px 22px;
 	}
 </style>

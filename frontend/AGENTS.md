@@ -35,3 +35,21 @@ You MUST use this tool whenever writing Svelte code before sending it to the use
 
 Generates a Svelte Playground link with the provided code.
 After completing the code, ask the user if they want a playground link. Only call this tool after user confirmation and NEVER if code was written to files in their project.
+
+---
+
+## Project specifics
+
+- **Dark only.** The palette lives in `:root` in `src/routes/layout.css` and
+  `src/app.html` sets `class="dark"` so `dark:` variants in the vendored
+  primitives still apply. There is no light theme and no theme switch — do not
+  add one; new UI uses the tokens (`bg-card`, `text-muted-foreground`,
+  `border-border`), never literal colours.
+- **Home is a flow builder**, not a form: `src/lib/components/flow/` owns the
+  nodes, the connector and the run dock, `src/lib/components/jobs/` owns the
+  collapsible queue rail. The page keeps state and API calls; the setup wizard
+  below `{step === 'done'}` is a separate, older surface — leave it alone
+  unless a ticket says otherwise.
+- The canvas is a **vertical chain** (one source → N targets) on purpose: the
+  engine takes exactly one source, so a free-form graph would promise fan-in the
+  pipeline cannot deliver.

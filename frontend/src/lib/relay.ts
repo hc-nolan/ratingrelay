@@ -24,17 +24,36 @@ export function summarizeTargets(cfgs: Record<string, unknown>[]): string {
 	return cfgs.map((c) => serviceLabels[c.service as string] ?? (c.service as string)).join(' + ');
 }
 
+/** Tailwind classes for a job's status dot, so no page has to own the rule. */
 export function statusColor(status: string): string {
 	const map: Record<string, string> = {
-		queued: 'status-queued',
-		scheduled: 'status-scheduled',
-		running: 'status-running',
-		completed: 'status-completed',
-		partial: 'status-partial',
-		failed: 'status-failed',
-		cancelled: 'status-cancelled'
+		queued: 'bg-muted-foreground/60',
+		scheduled: 'bg-sky-500',
+		running: 'bg-amber-400 animate-pulse',
+		completed: 'bg-emerald-500',
+		partial: 'bg-amber-500',
+		failed: 'bg-destructive',
+		cancelled: 'bg-muted-foreground/30'
 	};
-	return map[status] ?? 'status-queued';
+	return map[status] ?? 'bg-muted-foreground/60';
+}
+
+/** "in 3h 12m", "soon" — how long until a scheduled job next runs. */
+export function formatNextRun(runAt: string): string {
+	const diff = new Date(runAt).getTime() - Date.now();
+	if (diff <= 0) return 'soon';
+	const h = Math.floor(diff / 3600000);
+	const m = Math.floor((diff % 3600000) / 60000);
+	if (h >= 24) return `in ${Math.floor(h / 24)}d ${h % 24}h`;
+	if (h > 0) return `in ${h}h ${m}m`;
+	return `in ${m}m`;
+}
+
+/** "Every 6 hours" → "every 6 hours", for the small line under a job summary. */
+export function describeInterval(minutes: number): string {
+	const known = frequencyOptions.find((o) => o.value === minutes);
+	if (!known) return `every ${minutes}m`;
+	return known.label.toLowerCase();
 }
 
 export const frequencyOptions = [
@@ -43,4 +62,21 @@ export const frequencyOptions = [
 	{ value: 720, label: 'Every 12 hours' },
 	{ value: 1440, label: 'Daily' },
 	{ value: 10080, label: 'Weekly' }
+];
+
+/** The repeat control offers "once" where the API offers intervals. */
+export const repeatOptions = [{ value: 0, label: 'Once' }, ...frequencyOptions];
+
+/** Plex stores ratings as 0–10; the UI says stars. */
+export const plexStarOptions = [
+	{ value: 1, label: '½★ 0.5 stars' },
+	{ value: 2, label: '★ 1 star' },
+	{ value: 3, label: '★½ 1.5 stars' },
+	{ value: 4, label: '★★ 2 stars' },
+	{ value: 5, label: '★★½ 2.5 stars' },
+	{ value: 6, label: '★★★ 3 stars' },
+	{ value: 7, label: '★★★½ 3.5 stars' },
+	{ value: 8, label: '★★★★ 4 stars' },
+	{ value: 9, label: '★★★★½ 4.5 stars' },
+	{ value: 10, label: '★★★★★ 5 stars' }
 ];

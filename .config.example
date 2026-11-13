@@ -11,6 +11,9 @@
 # --- App ---------------------------------------------------------------
 # Where the API listens. Keep base_url in sync: it is what Plex redirects to
 # during OAuth, so it must be reachable from the browser, not just locally.
+# Leave base_url on localhost and the callback follows whichever origin the
+# browser used, so the app works over the LAN without editing this. Set it to a
+# real address and that address wins, which is what a deployed instance wants.
 host = "0.0.0.0"
 port = 8100
 base_url = "http://localhost:8100"

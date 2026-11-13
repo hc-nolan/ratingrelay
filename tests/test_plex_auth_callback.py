@@ -114,3 +114,63 @@ async def test_an_unconfirmed_pin_stores_nothing_and_says_so(app_client):
     assert recorder.calls == []
     assert "plex:authed" not in response.text
     assert "did not confirm" in response.text
+
+
+# ---------------------------------------------------------------------------
+# Where the popup is sent back to
+# ---------------------------------------------------------------------------
+
+
+def _request(origin: str):
+    """A Request whose base_url is the origin the browser used."""
+    from starlette.requests import Request
+
+    scope = {
+        "type": "http",
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": origin.split("://")[0],
+        "path": "/api/plex/auth/init",
+        "raw_path": b"/api/plex/auth/init",
+        "query_string": b"",
+        "root_path": "",
+        "headers": [(b"host", origin.split("://", 1)[1].encode())],
+        "server": (origin.split("://", 1)[1].split(":")[0], 80),
+        "client": ("192.168.0.20", 5555),
+    }
+    return Request(scope)
+
+
+def test_a_configured_base_url_wins(monkeypatch):
+    """Deployed: the configured address is the answer, wherever the request came from."""
+    from ratingrelay.routes import plex
+
+    monkeypatch.setattr(plex.settings, "base_url", "https://relay.example.com")
+
+    assert (
+        plex._callback_url(_request("http://192.168.0.10:8100"))
+        == "https://relay.example.com/api/plex/auth/callback"
+    )
+
+
+@pytest.mark.parametrize(
+    "origin", ["http://192.168.0.10:5173", "http://ms01.local:8100"]
+)
+def test_the_localhost_default_follows_the_browser(monkeypatch, origin):
+    """Dev from the LAN: a localhost redirect would land on the client's own box."""
+    from ratingrelay.routes import plex
+
+    monkeypatch.setattr(plex.settings, "base_url", "http://localhost:8100")
+
+    assert plex._callback_url(_request(origin)) == f"{origin}/api/plex/auth/callback"
+
+
+def test_the_localhost_default_still_redirects_to_localhost(monkeypatch):
+    from ratingrelay.routes import plex
+
+    monkeypatch.setattr(plex.settings, "base_url", "http://localhost:8100")
+
+    assert (
+        plex._callback_url(_request("http://localhost:5173"))
+        == "http://localhost:5173/api/plex/auth/callback"
+    )

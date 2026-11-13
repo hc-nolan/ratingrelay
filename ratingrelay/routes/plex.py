@@ -1,7 +1,8 @@
 import asyncio
 from typing import Callable, TypeVar
+from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from plexapi.myplex import MyPlexAccount
 from plexapi.server import PlexServer
@@ -29,13 +30,30 @@ router = APIRouter(prefix="/api/plex", tags=["plex"])
 # Helpers
 # ---------------------------------------------------------------------------
 
-CALLBACK_URL = f"{settings.base_url.rstrip('/')}/api/plex/auth/callback"
-
 # Plex confirms the PIN moments after it redirects the popup back to us, so a
 # single check races the confirmation. A few short retries here are what turn
 # "nothing happened, try again" into a login that just works.
 _CALLBACK_ATTEMPTS = 6
 _CALLBACK_DELAY = 1.0
+
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
+def _callback_url(request: Request) -> str:
+    """Where Plex should send the popup back to.
+
+    ``base_url`` is authoritative whenever it names a real address: that is the
+    deployed case, and a configured answer must win. When it is still the
+    localhost default, the browser is not necessarily on this machine — the dev
+    server binds every interface, so the app can be open on a laptop elsewhere on
+    the LAN. A localhost redirect would send that browser to its own localhost
+    and the login would silently die, so fall back to the origin the request
+    arrived on.
+    """
+    configured = settings.base_url.rstrip("/")
+    if urlparse(configured).hostname not in _LOCAL_HOSTS:
+        return f"{configured}/api/plex/auth/callback"
+    return f"{str(request.base_url).rstrip('/')}/api/plex/auth/callback"
 
 # Minimal HTML page served inside the OAuth popup after Plex redirects back.
 # Sends a postMessage to the opener and immediately closes itself.
@@ -104,7 +122,7 @@ async def plex_auth_status(
 
 
 @router.post("/auth/init", response_model=PlexAuthInitResponse)
-async def plex_auth_init() -> PlexAuthInitResponse:
+async def plex_auth_init(request: Request) -> PlexAuthInitResponse:
     """
     Start a Plex OAuth PIN login flow.
 
@@ -112,10 +130,11 @@ async def plex_auth_init() -> PlexAuthInitResponse:
     - pin_id: integer used to correlate the callback
     - oauth_url: the plex.tv URL to open in a popup window
     """
+    callback_url = _callback_url(request)
     try:
-        pin_login, oauth_url = await run_sync(lambda: create_session(CALLBACK_URL))
+        pin_login, oauth_url = await run_sync(lambda: create_session(callback_url))
         pin_id = int(pin_login._id)
-        logger.info("Plex OAuth init: pin_id=%s, callback=%s", pin_id, CALLBACK_URL)
+        logger.info("Plex OAuth init: pin_id=%s, callback=%s", pin_id, callback_url)
         return PlexAuthInitResponse(pin_id=pin_id, oauth_url=oauth_url)
     except Exception as exc:
         logger.error("Failed to create Plex OAuth session: %s", exc)

@@ -1,7 +1,8 @@
 """
-Unmatched tracks and manual mapping API routes.
+Unmatched tracks, unrevertable writes and manual mapping API routes.
 
 GET    /api/relay/unmatched          — list tracks the engine could not match
+GET    /api/relay/unrevertable       — list recorded writes a reset must refuse
 GET    /api/relay/mappings           — list all mappings
 POST   /api/relay/mappings           — create a mapping
 DELETE /api/relay/mappings/{id}      — delete a mapping
@@ -15,10 +16,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ratingrelay.db import get_async_session
+from ratingrelay.db.store import SqlSyncStore
 from ratingrelay.engine.normalize import track_key
+from ratingrelay.engine.services.registry import UNDO_PRECONDITIONS
 from ratingrelay.engine.types import Reason
 from ratingrelay.models.jobs import TrackEvent
 from ratingrelay.models.mappings import TrackMapping
+from ratingrelay.schemas.relay import UnrevertableRecord
 
 router = APIRouter(prefix="/api/relay", tags=["mappings"])
 
@@ -110,6 +114,39 @@ async def list_unmatched(
         seen[key]["count"] += 1
 
     return sorted(seen.values(), key=lambda x: x["count"], reverse=True)
+
+
+@router.get("/unrevertable", response_model=list[UnrevertableRecord])
+async def list_unrevertable(
+    db: AsyncSession = Depends(get_async_session),
+) -> list[UnrevertableRecord]:
+    """
+    Return the writes a reset would refuse, because the record does not say
+    where it was written.
+
+    Each target answers for its own rows through the same precondition its own
+    undo runs, so this list and a real reset cannot disagree about which rows
+    are undoable. It reads records, not job events: the answer describes the
+    records as they are now and does not need a reset to have run.
+    """
+    refusals: list[UnrevertableRecord] = []
+    for target_service, record in await SqlSyncStore(db).all_records():
+        precondition = UNDO_PRECONDITIONS.get(target_service)
+        if precondition is None:
+            continue  # a target we no longer write to has nothing to refuse
+        try:
+            precondition(record)
+        except ValueError as exc:
+            refusals.append(
+                UnrevertableRecord(
+                    artist=record.track.artist,
+                    title=record.track.title,
+                    target_service=target_service,
+                    intent=record.intent,
+                    error=str(exc),
+                )
+            )
+    return refusals
 
 
 @router.get("/mappings")

@@ -82,3 +82,23 @@ class RelayResponse(BaseModel):
 
 source_adapter: TypeAdapter[FromConfig] = TypeAdapter(FromConfig)
 targets_adapter: TypeAdapter[list[ToConfig]] = TypeAdapter(list[ToConfig])
+
+
+class UnrevertableRecord(BaseModel):
+    """A write we recorded but can no longer address, so a reset refuses it.
+
+    v2 stored where it wrote to only for some targets, so an old row can say
+    "we loved this track on Last.fm" without saying which name we loved. The
+    row is reported rather than reconstructed: the key is normalised, and
+    guessing the name would clear somebody else's love.
+
+    ``artist``/``title`` are the normalised forms the key holds, which is all
+    such a row ever recorded.
+    """
+
+    artist: str
+    title: str
+    target_service: str
+    intent: str | None = None
+    reason: Literal["unrecorded_target"] = "unrecorded_target"
+    error: str

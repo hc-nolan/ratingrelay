@@ -25,6 +25,15 @@
 		missing_metadata: 'Missing artist/title'
 	};
 
+	interface UnrevertableRecord {
+		artist: string;
+		title: string;
+		target_service: string;
+		intent: string | null;
+		reason: string;
+		error: string;
+	}
+
 	interface Mapping {
 		id: string;
 		source_artist: string;
@@ -38,6 +47,7 @@
 
 	let unmatched = $state<UnmatchedTrack[]>([]);
 	let mappings = $state<Mapping[]>([]);
+	let unrevertable = $state<UnrevertableRecord[]>([]);
 	let loading = $state(true);
 	let error = $state('');
 
@@ -89,13 +99,15 @@
 		loading = true;
 		error = '';
 		try {
-			const [ua, um] = await Promise.all([
+			const [ua, um, ur] = await Promise.all([
 				fetch('/api/relay/unmatched'),
-				fetch('/api/relay/mappings')
+				fetch('/api/relay/mappings'),
+				fetch('/api/relay/unrevertable')
 			]);
-			if (!ua.ok || !um.ok) throw new Error('Failed to load');
+			if (!ua.ok || !um.ok || !ur.ok) throw new Error('Failed to load');
 			unmatched = await ua.json();
 			mappings = await um.json();
+			unrevertable = await ur.json();
 		} catch {
 			error = 'Failed to load data.';
 		} finally {
@@ -381,6 +393,36 @@
 					{/each}
 				{/if}
 			</div>
+
+			<!-- Writes a reset cannot undo -->
+			{#if unrevertable.length > 0}
+				<div class="section-card">
+					<div class="section-label">
+						Cannot be undone
+						<span class="badge badge-muted">{unrevertable.length}</span>
+					</div>
+					<div class="section-note">
+						Written before RatingRelay recorded where it wrote. A reset left these alone rather than
+						guess, because clearing a wrong name removes somebody else's rating. Re-syncing the
+						track records them properly; names below are as stored (lowercase).
+					</div>
+					{#each unrevertable as r (`${r.target_service}::${r.artist}::${r.title}`)}
+						<div class="track-row">
+							<div class="track-row-static">
+								<span class="track-info">
+									<span class="track-name">{r.artist} – {r.title}</span>
+									<span class="track-meta">
+										<span class="service-chip"
+											>{serviceLabel[r.target_service] ?? r.target_service}</span
+										>
+										<span class="fail-count">{r.error}</span>
+									</span>
+								</span>
+							</div>
+						</div>
+					{/each}
+				</div>
+			{/if}
 		{/if}
 	</main>
 </div>
@@ -533,6 +575,22 @@
 	}
 	.track-summary:hover {
 		background: oklch(0.18 0.015 38);
+	}
+
+	.track-row-static {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 0.6rem 1rem;
+		gap: 0.75rem;
+	}
+
+	.section-note {
+		padding: 0.75rem 1rem;
+		font-size: 0.75rem;
+		line-height: 1.5;
+		color: oklch(0.4 0.01 40);
+		border-bottom: 1px solid oklch(0.185 0.01 40);
 	}
 
 	.track-row-resolved .track-summary,

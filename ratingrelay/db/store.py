@@ -91,6 +91,28 @@ class SqlSyncStore:
             for row in result.scalars().all()
         ]
 
+    async def all_records(self) -> list[tuple[str, SyncedTrack]]:
+        """Every record there is, paired with the target it was written to.
+
+        The queue uses this to ask each target which of its own rows it can no
+        longer address; the answer depends on the target, so it cannot be
+        spelled as SQL here.
+        """
+        result = await self._db.execute(select(SyncRecord))
+        return [
+            (
+                row.target_service,
+                SyncedTrack(
+                    key=row.normalized_key,
+                    recording_mbid=row.recording_mbid,
+                    intent=row.intent,
+                    rating=row.rating,
+                    target_key=row.target_key,
+                ),
+            )
+            for row in result.scalars().all()
+        ]
+
     async def _delete_key(
         self, source_service: str, target_service: str, key: str
     ) -> None:

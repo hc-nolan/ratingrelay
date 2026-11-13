@@ -108,15 +108,22 @@ class LastFmTarget(MappedTarget):
             commit=commit,
         )
 
-    def _track_name(self, record: SyncedTrack) -> tuple[str, str]:
+    @staticmethod
+    def _track_name(record: SyncedTrack) -> tuple[str, str]:
         """The name we loved it under, or ``ValueError`` if the record does not say."""
         if not record.target_key:
             raise ValueError("no recorded Last.fm track name")
         artist, title = json.loads(record.target_key)
         return artist, title
 
-    def undoable(self, record: SyncedTrack) -> None:
-        self._track_name(record)
+    @staticmethod
+    def undoable(record: SyncedTrack) -> None:
+        """Raise exactly when :meth:`undo` would refuse this record.
+
+        Static so that "could we undo this?" can be answered from the record
+        alone, without building a client or touching the network.
+        """
+        LastFmTarget._track_name(record)
 
     async def undo(self, record: SyncedTrack) -> None:
         """Un-love what we loved, by the name we loved it under."""

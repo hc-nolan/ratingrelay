@@ -205,14 +205,21 @@ class PlexTarget(MappedTarget):
             commit=commit,
         )
 
-    def _rating_keys(self, record: SyncedTrack) -> list[str]:
+    @staticmethod
+    def _rating_keys(record: SyncedTrack) -> list[str]:
         """The copies we rated, or ``ValueError`` if the record does not say."""
         if not record.target_key:
             raise ValueError("no recorded Plex rating keys")
         return list(json.loads(record.target_key))
 
-    def undoable(self, record: SyncedTrack) -> None:
-        self._rating_keys(record)
+    @staticmethod
+    def undoable(record: SyncedTrack) -> None:
+        """Raise exactly when :meth:`undo` would refuse this record.
+
+        Static so that "could we undo this?" can be answered from the record
+        alone, without building a client or touching the network.
+        """
+        PlexTarget._rating_keys(record)
 
     async def undo(self, record: SyncedTrack) -> None:
         """Clear the rating on every copy this tool rated, and only those."""

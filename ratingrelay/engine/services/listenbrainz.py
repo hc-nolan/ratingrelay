@@ -153,8 +153,14 @@ class ListenBrainzTarget(MappedTarget):
             raise ValueError("no recorded recording MBID")
         return mbid
 
-    def undoable(self, record: SyncedTrack) -> None:
-        self._recorded_mbid(record)
+    @staticmethod
+    def undoable(record: SyncedTrack) -> None:
+        """Raise exactly when :meth:`undo` would refuse this record.
+
+        Static so that "could we undo this?" can be answered from the record
+        alone, without building a client or touching the network.
+        """
+        ListenBrainzTarget._recorded_mbid(record)
 
     async def undo(self, record: SyncedTrack) -> None:
         """Submit a neutral score for the recording we gave feedback on."""

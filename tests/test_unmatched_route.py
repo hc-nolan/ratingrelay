@@ -152,3 +152,89 @@ async def test_queue_counts_repeats_and_keeps_the_newest_first(client):
     rows = response.json()
     assert len(rows) == 1
     assert rows[0]["count"] == 3
+
+
+# ── unrevertable writes ───────────────────────────────────────────────────────
+
+
+async def _record(factory, **kwargs) -> None:
+    from ratingrelay.models.sync import SyncRecord
+
+    async with factory() as session:
+        session.add(SyncRecord(**kwargs))
+        await session.commit()
+
+
+def _record_args(**over) -> dict:
+    row = {
+        "source_service": "plex",
+        "target_service": "lastfm",
+        "normalized_key": "the smiths||bigmouth strikes again",
+        "recording_mbid": "mbid-1",
+        "intent": "love",
+        "rating": None,
+        "target_key": json.dumps(["The Smiths", "Bigmouth Strikes Again"]),
+    }
+    row.update(over)
+    return row
+
+
+async def test_a_record_with_its_target_key_is_not_reported(client):
+    http, factory = client
+    await _record(factory, **_record_args())
+
+    response = await http.get("/api/relay/unrevertable")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+async def test_a_record_without_its_target_key_is_reported(client):
+    """The v2 rows: we know we loved something on Last.fm, not which name."""
+    http, factory = client
+    await _record(factory, **_record_args(target_key=None))
+
+    response = await http.get("/api/relay/unrevertable")
+
+    assert response.json() == [
+        {
+            "artist": "the smiths",
+            "title": "bigmouth strikes again",
+            "target_service": "lastfm",
+            "intent": "love",
+            "reason": "unrecorded_target",
+            "error": "no recorded Last.fm track name",
+        }
+    ]
+
+
+async def test_a_listenbrainz_record_is_undoable_from_its_mbid(client):
+    """Feedback is addressed by recording MBID, so a missing target_key is fine."""
+    http, factory = client
+    await _record(
+        factory,
+        **_record_args(target_service="listenbrainz", target_key=None),
+    )
+
+    assert (await http.get("/api/relay/unrevertable")).json() == []
+
+
+async def test_a_listenbrainz_record_without_an_mbid_is_reported(client):
+    http, factory = client
+    await _record(
+        factory,
+        **_record_args(
+            target_service="listenbrainz", target_key=None, recording_mbid=None
+        ),
+    )
+
+    body = (await http.get("/api/relay/unrevertable")).json()
+
+    assert [r["error"] for r in body] == ["no recorded recording MBID"]
+
+
+async def test_rows_for_a_service_we_no_longer_write_to_are_left_out(client):
+    http, factory = client
+    await _record(factory, **_record_args(target_service="spotify", target_key=None))
+
+    assert (await http.get("/api/relay/unrevertable")).json() == []

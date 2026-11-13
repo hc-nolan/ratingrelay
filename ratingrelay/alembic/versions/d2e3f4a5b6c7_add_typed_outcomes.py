@@ -22,16 +22,20 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+# v2 worded these two messages differently over its life (the live database has
+# "No MusicBrainz recording ID available"), so the match is on the stable prefix
+# rather than an exact string. Rows whose text matches neither stay unmatched by
+# *reason*, which is honest: nobody wrote down why they failed.
 _BACKFILL_REASON = """
 UPDATE trackevent
-   SET reason = CASE error
-                  WHEN 'No match found in Plex library' THEN 'no_match'
-                  WHEN 'No MusicBrainz recording ID found' THEN 'no_recording_mbid'
+   SET reason = CASE
+                  WHEN error LIKE 'No match found in%' THEN 'no_match'
+                  WHEN error LIKE 'No MusicBrainz recording ID%' THEN 'no_recording_mbid'
                 END,
        outcome = 'unmatched'
  WHERE reason IS NULL
-   AND error IN ('No match found in Plex library',
-                 'No MusicBrainz recording ID found')
+   AND (error LIKE 'No match found in%'
+        OR error LIKE 'No MusicBrainz recording ID%')
 """
 
 

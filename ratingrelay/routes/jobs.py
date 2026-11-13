@@ -3,8 +3,13 @@ Job queue API routes.
 
 POST   /api/relay/jobs           — queue a new job
 GET    /api/relay/jobs           — list all jobs, newest first
-DELETE /api/relay/jobs/{id}      — cancel a queued/scheduled job
+DELETE /api/relay/jobs/{id}      — cancel a queued, scheduled or running job
 GET    /api/relay/jobs/{id}/stream — SSE stream of job events
+
+Progress is not pushed from the worker: every event is a ``track_event`` row, so
+the stream tails the database. That is what makes a two-process deployment (or a
+restart mid-run) work, and it means a reconnecting browser replays exactly what
+it missed.
 """
 
 import asyncio
@@ -18,8 +23,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ratingrelay.core.worker import broadcast, subscribe, unsubscribe
-from ratingrelay.db import get_async_session
+from ratingrelay.db import get_async_session, session_maker
 from ratingrelay.models.jobs import Job, TrackEvent
 from ratingrelay.schemas.relay import FromConfig, ToConfig, source_adapter as _source_adapter, targets_adapter as _targets_adapter
 from ratingrelay.settings import logger
@@ -28,6 +32,11 @@ router = APIRouter(prefix="/api/relay", tags=["jobs"])
 
 _TERMINAL_STATUSES = {"completed", "partial", "failed", "cancelled"}
 _ACTIVE_STATUSES = {"queued", "running", "scheduled"}
+# How often the stream looks for new rows. A run writes about one track a
+# second, so a second of lag is below the resolution of the progress bar.
+_STREAM_POLL_SECONDS = 1.0
+# Comment frame so an idle stream does not look like a dead one.
+_STREAM_KEEPALIVE_SECONDS = 15.0
 
 
 class JobCreateRequest(BaseModel):
@@ -55,6 +64,7 @@ def _job_to_dict(job: Job) -> dict:
         "tracks_err": job.tracks_err,
         "tracks_skipped": job.tracks_skipped,
         "dry_run": job.dry_run,
+        "cancel_requested": job.cancel_requested,
     }
 
 
@@ -122,10 +132,26 @@ async def cancel_job(
     job_id: str,
     db: AsyncSession = Depends(get_async_session),
 ) -> dict:
-    """Cancel a queued or scheduled job."""
+    """Cancel a queued, scheduled or running job.
+
+    A queued or scheduled job is cancelled outright. A running one cannot be
+    killed without risking a write it never recorded, so it is asked to stop at
+    the next track boundary and keeps status ``running`` until it does:
+    ``cancel_requested`` is what the UI shows meanwhile.
+    """
     job = await db.get(Job, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
+
+    if job.status == "running":
+        if not job.cancel_requested:
+            job.cancel_requested = True
+            db.add(job)
+            await db.commit()
+            await db.refresh(job)
+            logger.info("Job %s asked to stop at the next track boundary", job_id)
+        return _job_to_dict(job)
+
     if job.status not in {"queued", "scheduled"}:
         raise HTTPException(
             status_code=409,
@@ -136,17 +162,6 @@ async def cancel_job(
     db.add(job)
     await db.commit()
     await db.refresh(job)
-
-    await broadcast(
-        job_id,
-        "done",
-        {
-            "status": "cancelled",
-            "tracks_fetched": job.tracks_fetched,
-            "tracks_ok": job.tracks_ok,
-            "tracks_err": job.tracks_err,
-        },
-    )
     return _job_to_dict(job)
 
 
@@ -184,66 +199,100 @@ async def stream_job(
     job_id: str,
     db: AsyncSession = Depends(get_async_session),
 ) -> StreamingResponse:
-    """SSE stream of events for a job."""
+    """SSE stream of a job's events, tailed from the database.
+
+    The worker writes; this reads. Nothing is held in process memory, so a
+    restarted API, a second worker process, or a browser that reconnects halfway
+    all see the same thing: the rows that exist, in order, then live ones as
+    they land.
+    """
     job = await db.get(Job, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    # Load past track events
-    te_result = await db.execute(
-        select(TrackEvent)
-        .where(TrackEvent.job_id == job_id)
-        .order_by(TrackEvent.created_at.asc())
-    )
-    past_events = te_result.scalars().all()
-
-    # Snapshot job state for use in the generator
-    job_dict = _job_to_dict(job)
-    is_terminal = job.status in _TERMINAL_STATUSES
-
     async def generate() -> AsyncGenerator[str, None]:
-        # Initial status event
-        yield _sse("status", {
-            "status": job_dict["status"],
-            "tracks_fetched": job_dict["tracks_fetched"],
-            "tracks_ok": job_dict["tracks_ok"],
-            "tracks_err": job_dict["tracks_err"],
-            "tracks_skipped": job_dict["tracks_skipped"],
-        })
+        # ``track_event`` is append-only, so a count is a stable cursor and a
+        # row is never yielded twice.
+        seen = 0
+        last_state: tuple | None = None
+        idle_polls = 0
+        keepalive_polls = max(1, int(_STREAM_KEEPALIVE_SECONDS / _STREAM_POLL_SECONDS))
 
-        # Replay past track events
-        for te in past_events:
-            yield _sse("track", {
-                "artist": te.artist,
-                "title": te.title,
-                "target": te.target_service,
-                "success": te.success,
-                "error": te.error,
-            })
+        while True:
+            async with session_maker() as poll:
+                job_row = (
+                    await poll.execute(select(Job).where(Job.id == job_id))
+                ).scalars().first()
+                if job_row is None:
+                    return
+                rows = (
+                    await poll.execute(
+                        select(TrackEvent)
+                        .where(TrackEvent.job_id == job_id)
+                        .order_by(TrackEvent.created_at.asc(), TrackEvent.id.asc())
+                        .offset(seen)
+                    )
+                ).scalars().all()
 
-        if is_terminal:
-            yield _sse("done", {
-                "status": job_dict["status"],
-                "tracks_fetched": job_dict["tracks_fetched"],
-                "tracks_ok": job_dict["tracks_ok"],
-                "tracks_err": job_dict["tracks_err"],
-            })
-            return
+            for event in rows:
+                yield _sse(
+                    "track",
+                    {
+                        "artist": event.artist,
+                        "title": event.title,
+                        "target": event.target_service,
+                        "success": event.success,
+                        "error": event.error,
+                        "outcome": event.outcome,
+                        "reason": event.reason,
+                        "candidates": json.loads(event.candidates) if event.candidates else [],
+                    },
+                )
+            seen += len(rows)
 
-        # Subscribe to live events
-        q = subscribe(job_id)
-        try:
-            while True:
-                try:
-                    payload = await asyncio.wait_for(q.get(), timeout=25.0)
-                    yield _sse(payload["event"], payload["data"])
-                    if payload["event"] == "done":
-                        break
-                except asyncio.TimeoutError:
-                    # Keepalive comment
-                    yield ": keepalive\n\n"
-        finally:
-            unsubscribe(job_id, q)
+            state = (
+                job_row.status,
+                job_row.tracks_fetched,
+                job_row.tracks_ok,
+                job_row.tracks_err,
+                job_row.tracks_skipped,
+                job_row.cancel_requested,
+            )
+            if rows or state != last_state:
+                last_state = state
+                idle_polls = 0
+                yield _sse(
+                    "status",
+                    {
+                        "status": job_row.status,
+                        "tracks_fetched": job_row.tracks_fetched,
+                        "tracks_ok": job_row.tracks_ok,
+                        "tracks_err": job_row.tracks_err,
+                        "tracks_skipped": job_row.tracks_skipped,
+                        "cancel_requested": job_row.cancel_requested,
+                    },
+                )
+            else:
+                idle_polls += 1
+
+            if job_row.status in _TERMINAL_STATUSES:
+                yield _sse(
+                    "done",
+                    {
+                        "status": job_row.status,
+                        "tracks_fetched": job_row.tracks_fetched,
+                        "tracks_ok": job_row.tracks_ok,
+                        "tracks_err": job_row.tracks_err,
+                        "tracks_skipped": job_row.tracks_skipped,
+                    },
+                )
+                return
+
+            if idle_polls >= keepalive_polls:
+                idle_polls = 0
+                yield ": keepalive\n\n"
+
+            await asyncio.sleep(_STREAM_POLL_SECONDS)
 
     return StreamingResponse(
         generate(),

@@ -1,0 +1,126 @@
+# Gap 7 and 8: a job you can stop, and an API that asks who you are
+
+Two gaps survived the v3 rewrite because they were not on the relay's critical
+path. Both are about the *surface* around the engine rather than the engine
+itself, which is exactly why they were easy to keep deferring — and both are
+things a stranger reaching `:8100` would notice immediately.
+
+## Gap 8 — cancel stopped being a cancel
+
+`DELETE /api/relay/jobs/{id}` refuses anything that is not `queued` or
+`scheduled`, so the one case a user actually wants to stop — a run in progress,
+burning rate limit against Last.fm and MusicBrainz — answers `409`. The UI has
+no cancel affordance for a running job, which is honest at least, but the
+behaviour is missing rather than refused.
+
+The related smell is the transport. Live progress went out over an in-process
+`dict[str, list[asyncio.Queue]]` in `core/worker.py`, so:
+
+- two API processes (or a `--workers 2` uvicorn) would each hold half the
+  listeners and neither would see the other's events;
+- a browser that reconnected got only the rows the API process had buffered in
+  its `past_events` snapshot — a restart lost the live tail;
+- the worker could not be run headlessly at all without dragging FastAPI's
+  event loop state along, which is the thing `engine/` exists to avoid.
+
+### Cancellation
+
+A run cannot be interrupted mid-HTTP-request, and it must not be interrupted
+mid-write: the point of the pipeline is that every write it made is recorded
+before it moves on. So cancellation is **cooperative at track boundaries**:
+
+- `job.cancel_requested` is a new column (migration
+  `b1c2d3e4f5a6`), set by `DELETE` on a running job.
+- The worker's `on_track` sink records the event for the track it just
+  finished, then asks the database whether a cancel was requested, and raises
+  `RunCancelled` if so.
+- `run_job` catches `RunCancelled` before its generic handler and marks the job
+  `cancelled`, keeping the counters it actually reached. Because every
+  completed track already wrote its `sync_record`, the next run resumes: no
+  duplicate writes, no lost credit.
+
+Cancelling during the fetch phase is observed when the fetch returns, because
+the fetch is a single `await` inside the source. That is a documented limit, not
+a hidden one.
+
+`DELETE` keeps its old meaning for `queued`/`scheduled` (drop it before it
+starts) and gains the running case. Terminal jobs still answer `409`.
+
+### Transport
+
+The SSE stream becomes a **tail of the database** instead of a subscription to
+the worker's memory:
+
+- the generator polls the `job` row and `track_event` rows every second, using
+  its own short-lived session so a long-lived stream cannot serve a stale
+  identity map;
+- events are replayed from the start, ordered by `(created_at, id)` with an
+  offset cursor — `track_event` is append-only, so an offset is stable;
+- the stream ends on a terminal status, exactly as before;
+- `_listeners`, `subscribe`, `unsubscribe` and `broadcast` are deleted, and the
+  worker no longer imports an event loop's bookkeeping at all.
+
+The frontend keeps `EventSource` and the same four event names, so this is a
+transport change with no view-model change.
+
+Trade-off, stated plainly: 1 s polling instead of push. For a job that writes at
+roughly one track per second that is invisible; for a burst it can lag by a
+second. It buys cross-process correctness and reconnect-replay.
+
+## Gap 7 — the API trusts whoever can reach the socket
+
+`settings.secret` defaults to `"AUTHSECRET"` and is read by nothing. The name
+promises authentication that does not exist, on an API that can queue a
+destructive reset. Removing the setting alone would be honest but would leave
+the footgun loaded, so the gap is closed by doing what the name implied.
+
+### Login is Plex
+
+RatingRelay already trusts exactly one identity: the Plex account whose token it
+syncs as. So it does not get a password, a user table, or a second source of
+truth — it asks Plex, the way Overseerr and Tautulli do:
+
+- `POST /api/auth/plex/init` mints a Plex PIN session using the existing
+  `core/plex_auth` machinery and returns `{pin_id, auth_url}`. The popup's
+  forward URL closes the window; nothing is written to the credential.
+- `GET /api/auth/plex/poll?pin_id=…` calls `checkLogin()` server-side (the
+  Overseerr pattern — the opener polls, there is no callback dependency).
+  On success it identifies the account with `MyPlexAccount(token=…)` and
+  compares its **id** with the id behind the credential the relay syncs as.
+- Owner → `Set-Cookie: relay_session=…`, `HttpOnly`, `SameSite=Lax`,
+  30 days. Not the owner → `403`, and no cookie: a shared Plex user is a
+  stranger here, which is the whole point of a single-user tool.
+- `POST /api/auth/logout` clears it. `GET /api/auth/status` is public and is
+  what the SPA gates on.
+
+The cookie is `v1.<expires>.<plex_user_id>.<hmac>`, keyed by
+`sha256(settings.secret:plex_token)`:
+
+- a default `secret` is no longer fatal — the token is per-install and already
+  secret, so a forged cookie still needs the database;
+- rotating the Plex token invalidates every session, which is the correct
+  blast radius for "the account changed".
+
+### What is guarded, and the bootstrap hole
+
+A requirement is enforced when there is something to protect: once a Plex
+credential exists, every `/api` route needs a session except `/api/auth/*`.
+Before that — a fresh install, no token, no library — the app is open so the
+setup wizard can run. `settings.auth = false` in `.config` disables enforcement
+for a box that sits behind its own authenticating proxy; it is documented as a
+deliberate hole, not a default.
+
+The SPA gets a gate rather than eight per-call checks: the root layout asks
+`/api/auth/status`, and renders a "Sign in with Plex" card instead of the app
+when a session is required and absent. A `401` from any request reloads the
+gate, so an expired cookie degrades to a login screen instead of a blank page.
+
+## What must not change
+
+- The engine still knows nothing about HTTP, cookies or jobs.
+- `dry_run` semantics, the undoability rule and the reconcile contract are
+  untouched by both gaps.
+- No new credential storage: the Plex token is still the single identity, read
+  through `core/credentials`.
+- A cancelled job writes nothing new; the records it already wrote stay, because
+  they describe writes that really did happen.

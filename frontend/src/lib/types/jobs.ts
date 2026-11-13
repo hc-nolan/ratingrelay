@@ -22,5 +22,6 @@ export interface JobData {
 	tracks_err: number;
 	tracks_skipped: number;
 	dry_run: boolean;
+	cancel_requested?: boolean;
 	events?: TrackEvent[];
 }

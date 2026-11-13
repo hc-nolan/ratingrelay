@@ -25,6 +25,10 @@ class Job(SQLModel, table=True):
     tracks_err: int = Field(default=0)
     tracks_skipped: int = Field(default=0)
     dry_run: bool = Field(default=False)
+    # A running job cannot be interrupted mid-write, so cancellation is a flag
+    # the worker observes at a track boundary. It stays true after the run
+    # ends, so the UI can tell "stopped early" from "finished".
+    cancel_requested: bool = Field(default=False)
 
 
 class TrackEvent(SQLModel, table=True):

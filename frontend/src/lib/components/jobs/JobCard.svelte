@@ -12,7 +12,10 @@
 
 	let { job, oncancel }: { job: JobData; oncancel: (id: string) => void } = $props();
 
-	const cancellable = $derived(job.status === 'queued' || job.status === 'scheduled');
+	const cancellable = $derived(
+		!job.cancel_requested &&
+			(job.status === 'queued' || job.status === 'scheduled' || job.status === 'running')
+	);
 	const total = $derived(job.tracks_ok + job.tracks_err);
 </script>
 
@@ -49,7 +52,9 @@
 			{/if}
 			{#if job.status === 'running'}
 				<span class="text-foreground/70">
-					{#if job.tracks_fetched > 0}
+					{#if job.cancel_requested}
+						stopping at the next track…
+					{:else if job.tracks_fetched > 0}
 						{total} / {job.tracks_fetched} tracks
 					{:else}
 						fetching…

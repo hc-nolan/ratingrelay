@@ -1,8 +1,14 @@
 """
 Background worker that processes queued jobs one at a time.
 
-SSE listeners are stored in memory; the worker publishes events to them
-as each track is processed.
+Progress is not pushed anywhere: every track event is written to the database
+as it happens, and readers (the SSE stream, the job page) tail those rows. That
+is what lets the worker run in a different process from the API, or with no API
+at all, which is the whole point of the headless target.
+
+A running job is cancelled cooperatively: ``DELETE /api/relay/jobs/{id}`` sets
+``job.cancel_requested``, and the worker checks that flag at each track boundary
+(after the track's event and sync record are written) and stops there.
 """
 
 import asyncio
@@ -21,10 +27,22 @@ from ratingrelay.schemas.relay import source_adapter as _source_adapter, targets
 from ratingrelay.settings import logger
 
 # ---------------------------------------------------------------------------
-# In-memory SSE listener registry
+# Cancellation
 # ---------------------------------------------------------------------------
 
-_listeners: dict[str, list[asyncio.Queue]] = {}
+
+class RunCancelled(Exception):
+    """Raised at a track boundary when the job's cancel flag is set."""
+
+
+async def _cancel_requested(db: AsyncSession, job_id: str) -> bool:
+    """Read the flag from the database, not from the identity map.
+
+    The API request that sets it runs in another session, so ``job`` in this
+    session would keep reporting the value it loaded at the start of the run.
+    """
+    result = await db.execute(select(Job.cancel_requested).where(Job.id == job_id))
+    return bool(result.scalar_one_or_none())
 
 
 def _candidates_json(outcome: Optional[TrackOutcome]) -> Optional[str]:
@@ -48,32 +66,6 @@ def _candidates_json(outcome: Optional[TrackOutcome]) -> Optional[str]:
     )
 
 
-def subscribe(job_id: str) -> "asyncio.Queue[dict]":
-    q: asyncio.Queue[dict] = asyncio.Queue()
-    _listeners.setdefault(job_id, []).append(q)
-    return q
-
-
-def unsubscribe(job_id: str, q: "asyncio.Queue[dict]") -> None:
-    listeners = _listeners.get(job_id, [])
-    try:
-        listeners.remove(q)
-    except ValueError:
-        pass
-    if not listeners:
-        _listeners.pop(job_id, None)
-
-
-async def broadcast(job_id: str, event_type: str, data: dict) -> None:
-    listeners = _listeners.get(job_id, [])
-    payload = {"event": event_type, "data": data}
-    for q in list(listeners):
-        try:
-            q.put_nowait(payload)
-        except asyncio.QueueFull:
-            pass
-
-
 # ---------------------------------------------------------------------------
 # Job runner
 # ---------------------------------------------------------------------------
@@ -93,17 +85,6 @@ async def run_job(job_id: str) -> None:
         await db.commit()
         await db.refresh(job)
 
-        await broadcast(
-            job_id,
-            "status",
-            {
-                "status": job.status,
-                "tracks_fetched": job.tracks_fetched,
-                "tracks_ok": job.tracks_ok,
-                "tracks_err": job.tracks_err,
-            },
-        )
-
         # Local counters (updated per track, flushed to DB at end)
         tracks_ok = 0
         tracks_err = 0
@@ -114,16 +95,10 @@ async def run_job(job_id: str) -> None:
             job.tracks_fetched = count
             db.add(job)
             await db.commit()
-            await broadcast(
-                job_id,
-                "status",
-                {
-                    "status": job.status,
-                    "tracks_fetched": count,
-                    "tracks_ok": tracks_ok,
-                    "tracks_err": tracks_err,
-                },
-            )
+            # Cancelling during the fetch is only observable here: the fetch is
+            # a single await inside the source.
+            if await _cancel_requested(db, job_id):
+                raise RunCancelled
 
         # 3. on_track callback
         async def on_track(
@@ -134,7 +109,7 @@ async def run_job(job_id: str) -> None:
             skipped: bool = False,
             outcome: Optional[TrackOutcome] = None,
         ) -> None:
-            nonlocal tracks_ok, tracks_err
+            nonlocal tracks_ok, tracks_err, tracks_skipped
 
             event = TrackEvent(
                 job_id=job_id,
@@ -154,26 +129,23 @@ async def run_job(job_id: str) -> None:
                     tracks_ok += 1
                 else:
                     tracks_err += 1
+            else:
+                tracks_skipped += 1
 
-            await broadcast(
-                job_id,
-                "track",
-                {
-                    "artist": event.artist,
-                    "title": event.title,
-                    "target": target,
-                    "success": success,
-                    "error": error,
-                    "outcome": event.outcome,
-                    "reason": event.reason,
-                    "candidates": json.loads(event.candidates) if event.candidates else [],
-                },
-            )
-            await broadcast(
-                job_id,
-                "progress",
-                {"tracks_ok": tracks_ok, "tracks_err": tracks_err},
-            )
+            # Commit per track. Two reasons: the events are the thing the stream
+            # tails, so they must be visible outside this session while the run
+            # is still going, and a crash mid-run should not lose the history of
+            # the writes that did happen.
+            job.tracks_ok = tracks_ok
+            job.tracks_err = tracks_err
+            job.tracks_skipped = tracks_skipped
+            db.add(job)
+            await db.commit()
+
+            # The flag is checked *after* the track's event and sync record are
+            # written, so stopping never loses a write we really made.
+            if await _cancel_requested(db, job_id):
+                raise RunCancelled
 
         try:
             # 4. Parse configs
@@ -221,26 +193,29 @@ async def run_job(job_id: str) -> None:
                     "Worker: scheduled next run for job %s at %s", job_id, next_run
                 )
 
+        except RunCancelled:
+            # The counters are the ones actually reached; the writes behind them
+            # are already in the sync store, so the next run resumes from here.
+            job.status = "cancelled"
+            job.tracks_ok = tracks_ok
+            job.tracks_err = tracks_err
+            job.tracks_skipped = tracks_skipped
+            job.completed_at = datetime.now(timezone.utc)
+            db.add(job)
+            await db.commit()
+            logger.info(
+                "Worker: job %s cancelled after %d ok / %d err",
+                job_id,
+                tracks_ok,
+                tracks_err,
+            )
+
         except Exception as exc:
             logger.exception("Worker: job %s failed: %s", job_id, exc)
             job.status = "failed"
             job.completed_at = datetime.now(timezone.utc)
             db.add(job)
             await db.commit()
-
-        # Broadcast done
-        await db.refresh(job)
-        await broadcast(
-            job_id,
-            "done",
-            {
-                "status": job.status,
-                "tracks_fetched": job.tracks_fetched,
-                "tracks_ok": job.tracks_ok,
-                "tracks_err": job.tracks_err,
-                "tracks_skipped": job.tracks_skipped,
-            },
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -267,7 +242,11 @@ async def worker_loop() -> None:
             )
             stale = result.scalars().all()
             for j in stale:
-                j.status = "queued"
+                # A cancel that arrived while the process was dying still means
+                # the user asked for it to stop, so it must not resume.
+                j.status = "cancelled" if j.cancel_requested else "queued"
+                if j.status == "cancelled":
+                    j.completed_at = datetime.now(timezone.utc)
                 db.add(j)
             if stale:
                 await db.commit()

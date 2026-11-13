@@ -27,10 +27,6 @@
 			const d: TrackEvent = JSON.parse(e.data);
 			events = [...events, d];
 		});
-		es.addEventListener('progress', (e) => {
-			const d = JSON.parse(e.data);
-			if (job) job = { ...job, ...d };
-		});
 		es.addEventListener('done', (e) => {
 			const d = JSON.parse(e.data);
 			if (job) job = { ...job, ...d };
@@ -115,10 +111,16 @@
 						</h1>
 					</div>
 
-					{#if job.status === 'queued' || job.status === 'scheduled'}
+					{#if (job.status === 'queued' || job.status === 'scheduled' || job.status === 'running') && !job.cancel_requested}
 						<button class="cancel-btn" onclick={cancelJob} disabled={cancelling}>
-							{cancelling ? 'Cancelling…' : 'Cancel job'}
+							{cancelling
+								? 'Cancelling…'
+								: job.status === 'running'
+									? 'Stop after this track'
+									: 'Cancel job'}
 						</button>
+					{:else if job.cancel_requested && job.status === 'running'}
+						<span class="cancel-btn" aria-live="polite">Stopping…</span>
 					{/if}
 				</div>
 

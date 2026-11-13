@@ -13,7 +13,7 @@ from ratingrelay.core.credentials import (
     listenbrainz_credentials,
     plex_credentials,
 )
-from ratingrelay.db.store import SqlMappingStore, SqlSyncStore
+from ratingrelay.db.store import SqlMappingStore, SqlMbidCache, SqlSyncStore
 from ratingrelay.engine.services import Source, Target
 from ratingrelay.engine.services.lastfm import LastFmClient, LastFmSource, LastFmTarget
 from ratingrelay.engine.services.listenbrainz import (
@@ -62,6 +62,14 @@ def stores(db: AsyncSession) -> tuple[SqlSyncStore, SqlMappingStore]:
     return SqlSyncStore(db), SqlMappingStore(db)
 
 
+def mbid_cache(db: AsyncSession) -> SqlMbidCache:
+    """Resolved recording MBIDs, backed by the current session.
+
+    Separate from :func:`stores` because its rows outlive what a reset deletes.
+    """
+    return SqlMbidCache(db)
+
+
 def _score(feedback_type: str) -> int:
     return 1 if feedback_type == "love" else -1
 
@@ -91,6 +99,10 @@ async def target_for(db: AsyncSession, config: object) -> Target:
     if isinstance(config, ListenBrainzToConfig):
         client = ListenBrainzClient(await listenbrainz_credentials(db))
         return ListenBrainzTarget(
-            client, mappings, resolve_recording_mbid, _score(config.feedback_type)
+            client,
+            mappings,
+            resolve_recording_mbid,
+            _score(config.feedback_type),
+            cache=mbid_cache(db),
         )
     raise ValueError(f"Unknown target service: {config}")

@@ -16,6 +16,7 @@ import ratingrelay.models.services  # noqa: F401
 import ratingrelay.models.jobs  # noqa: F401
 import ratingrelay.models.sync  # noqa: F401
 import ratingrelay.models.mappings  # noqa: F401
+import ratingrelay.models.mbids  # noqa: F401
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

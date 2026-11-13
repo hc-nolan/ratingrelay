@@ -1,16 +1,20 @@
 """SQL implementations of the engine's store ports.
 
-The engine takes a ``SyncStore`` and a ``MappingStore``; this is the pair that
-reads and writes the rows behind them. Keeping them here (rather than in the
-engine) is what lets the pipeline run against an in-memory double, and later
-against a CLI's own storage.
+The engine takes a ``SyncStore``, a ``MappingStore`` and an ``MbidCache``; this is
+the trio that reads and writes the rows behind them. Keeping them here (rather
+than in the engine) is what lets the pipeline run against an in-memory double,
+and later against a CLI's own storage.
 """
+
+from datetime import datetime, timezone
+from typing import Optional
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ratingrelay.engine.store import SyncedTrack, TrackMapping
 from ratingrelay.models.mappings import TrackMapping as TrackMappingRow
+from ratingrelay.models.mbids import TrackMbid
 from ratingrelay.models.sync import SyncRecord
 
 
@@ -122,6 +126,46 @@ class SqlSyncStore:
             .where(SyncRecord.target_service == target_service)
             .where(SyncRecord.normalized_key == key)
         )
+
+
+class SqlMbidCache:
+    """Resolved recording MBIDs, in the ``trackmbid`` table.
+
+    Deliberately not part of the sync store: reset deletes sync records, and a
+    reset must not cost a cold run's worth of MusicBrainz lookups.
+    """
+
+    def __init__(self, db: AsyncSession):
+        self._db = db
+
+    async def get(self, key: str) -> Optional[str]:
+        result = await self._db.execute(
+            select(TrackMbid).where(TrackMbid.normalized_key == key)
+        )
+        row = result.scalars().first()
+        return row.recording_mbid if row else None
+
+    async def put(self, key: str, artist: str, title: str, recording_mbid: str) -> None:
+        """Upsert: a later resolution for the same key replaces the earlier one."""
+        result = await self._db.execute(
+            select(TrackMbid).where(TrackMbid.normalized_key == key)
+        )
+        row = result.scalars().first()
+        if row is None:
+            self._db.add(
+                TrackMbid(
+                    normalized_key=key,
+                    artist=artist,
+                    title=title,
+                    recording_mbid=recording_mbid,
+                )
+            )
+        else:
+            row.artist = artist
+            row.title = title
+            row.recording_mbid = recording_mbid
+            row.resolved_at = datetime.now(timezone.utc)
+        await self._db.commit()
 
 
 class SqlMappingStore:

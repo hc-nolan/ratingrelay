@@ -1,9 +1,10 @@
 """Ports the pipeline needs from the world outside it.
 
 The engine never touches a session: a caller supplies a sync store that records
-what was written, a mapping store for user overrides, and optionally a progress
-sink. In-memory implementations live here too, so tests can drive the pipeline
-without a database.
+what was written, a mapping store for user overrides, a cache of the recording
+MBIDs it already resolved, and optionally a progress sink. In-memory
+implementations live here too, so tests can drive the pipeline without a
+database.
 """
 
 from dataclasses import dataclass, field
@@ -73,6 +74,22 @@ class MappingStore(Protocol):
         """Return ``{normalized_key: mapping}`` with ``all`` overridden by the service."""
 
 
+class MbidCache(Protocol):
+    """Which recording a track is, remembered across runs.
+
+    Separate from :class:`SyncStore` because the lifetimes differ: a sync record
+    is a claim about a target and reset retracts it, while an MBID is what the
+    track *is* and no reset makes it untrue. Resolving one costs a rate-limited
+    MusicBrainz request, so throwing them away made every reset cost a cold run.
+    """
+
+    async def get(self, key: str) -> Optional[str]:
+        """The recording MBID for a normalized track key, if we resolved it before."""
+
+    async def put(self, key: str, artist: str, title: str, recording_mbid: str) -> None:
+        """Remember a resolved MBID, replacing any earlier answer for the key."""
+
+
 class ProgressSink(Protocol):
     """How far along a run is, for a job worker or a CLI progress bar."""
 
@@ -93,6 +110,16 @@ class NullProgress:
         pass
 
 
+class NullMbidCache:
+    """The default cache: remember nothing, so every lookup goes to MusicBrainz."""
+
+    async def get(self, key: str) -> Optional[str]:
+        return None
+
+    async def put(self, key: str, artist: str, title: str, recording_mbid: str) -> None:
+        pass
+
+
 @dataclass
 class MemorySyncStore:
     """A sync store in a dictionary, for tests and for the CLI's dry runs."""
@@ -109,6 +136,19 @@ class MemorySyncStore:
 
     async def forget(self, source_service: str, target_service: str, key: str) -> None:
         self.records.get((source_service, target_service), {}).pop(key, None)
+
+
+@dataclass
+class MemoryMbidCache:
+    """An MBID cache in a dictionary, for tests and for a CLI's dry runs."""
+
+    entries: dict[str, str] = field(default_factory=dict)
+
+    async def get(self, key: str) -> Optional[str]:
+        return self.entries.get(key)
+
+    async def put(self, key: str, artist: str, title: str, recording_mbid: str) -> None:
+        self.entries[key] = recording_mbid
 
 
 @dataclass

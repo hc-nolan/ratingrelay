@@ -15,7 +15,7 @@ from ratingrelay.engine.credentials import ListenBrainzCredentials
 from ratingrelay.engine.plan import WritePlan
 from ratingrelay.engine.services import MappedTarget
 from ratingrelay.engine.services.musicbrainz import Resolution
-from ratingrelay.engine.store import MappingStore, SyncedTrack
+from ratingrelay.engine.store import MappingStore, MbidCache, NullMbidCache, SyncedTrack
 from ratingrelay.engine.thread import run_sync
 from ratingrelay.engine.types import (
     Intent,
@@ -102,19 +102,30 @@ class ListenBrainzTarget(MappedTarget):
         mappings: MappingStore,
         resolve: Resolver,
         score: int = 1,
+        cache: Optional[MbidCache] = None,
     ):
         super().__init__(mappings)
         self._client = client
         self._resolve = resolve
         self._score = score
+        self._cache = cache or NullMbidCache()
 
     async def resolution(self, track: Track) -> Resolution:
-        """The recording this track is, or the ones it was nearly."""
+        """The recording this track is, or the ones it was nearly.
+
+        Order is authority: what the source said, then what a human decided,
+        then what we resolved before, then the network. The cache sits *below*
+        the mapping on purpose — a cache that outranked a user's correction
+        would make the correction stop working the once.
+        """
         artist, title, mapped_mbid = await self.mapped(track)
         if track.recording_mbid:
             return Resolution(track.recording_mbid)
         if mapped_mbid:
             return Resolution(mapped_mbid)
+        cached = await self._cache.get(track.key)
+        if cached:
+            return Resolution(cached)
         return await self._resolve(track.track_mbid, artist, title)
 
     async def plan(self, track: Track) -> WritePlan:
@@ -131,9 +142,13 @@ class ListenBrainzTarget(MappedTarget):
             )
 
         score = self._score
+        cache = self._cache
 
         async def commit() -> None:
             await self._client.submit(score, mbid)
+            # After the write, never before: a dry run does not reach here, and
+            # a failed submit must not teach the cache an answer no run kept.
+            await cache.put(track.key, track.artist, track.title, mbid)
 
         kind = IntentKind.LOVE if score > 0 else IntentKind.HATE
         return WritePlan(

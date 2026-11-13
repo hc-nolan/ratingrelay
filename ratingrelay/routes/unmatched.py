@@ -72,13 +72,18 @@ async def list_unmatched(
     db: AsyncSession = Depends(get_async_session),
 ) -> list[dict]:
     """
-    Return a deduplicated list of tracks that failed with no-match errors,
-    along with whether a mapping exists for each.
+    Return the tracks that are unmatched *now*, along with whether a mapping
+    exists for each.
+
+    Every event is read, not just the failed ones: a track that failed in May
+    and has synced on every run since is not a problem to act on, and showing it
+    would bury the rows that are. So the newest event per track decides whether
+    it appears at all, and the count is how many times it has failed since.
     """
     result = await db.execute(
-        select(TrackEvent)
-        .where(TrackEvent.reason.in_(list(_UNMATCHED_REASONS)))
-        .order_by(TrackEvent.created_at.desc())
+        select(TrackEvent).order_by(
+            TrackEvent.created_at.desc(), TrackEvent.id.desc()
+        )
     )
     events = result.scalars().all()
 
@@ -91,10 +96,17 @@ async def list_unmatched(
         if m.target_service != "all":
             mapped_keys.add((m.source_normalized_key, "all"))
 
-    # Deduplicate by (artist, title, target_service), track occurrence count
+    # Deduplicate by (artist, title, target_service): the newest event decides
+    # whether the track is listed, and every failure since then is counted.
+    unmatched_reasons = set(_UNMATCHED_REASONS)
+    settled: set[tuple[str, str, str]] = set()
     seen: dict[tuple[str, str, str], dict] = {}
     for ev in events:
         key = (ev.artist, ev.title, ev.target_service)
+        if key in settled or ev.reason not in unmatched_reasons:
+            # Newest event first: anything else for this key is history.
+            settled.add(key)
+            continue
         if key not in seen:
             norm_key = _sync_key(ev.artist, ev.title)
             has_mapping = (
@@ -110,6 +122,7 @@ async def list_unmatched(
                 "candidates": json.loads(ev.candidates) if ev.candidates else [],
                 "count": 0,
                 "has_mapping": has_mapping,
+                "last_failed": ev.created_at.isoformat(),
             }
         seen[key]["count"] += 1
 

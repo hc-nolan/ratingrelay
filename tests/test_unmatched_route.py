@@ -7,6 +7,7 @@ payload the UI needs to let a human choose.
 """
 
 import json
+from datetime import datetime
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -152,6 +153,83 @@ async def test_queue_counts_repeats_and_keeps_the_newest_first(client):
     rows = response.json()
     assert len(rows) == 1
     assert rows[0]["count"] == 3
+
+
+async def test_queue_drops_a_track_that_has_synced_since_it_failed(client):
+    """History is not a problem list.
+
+    The live account carried 225 rows for weeks, 192 of which resolve now: every
+    failed run had appended to the queue and no successful run ever removed
+    anything. A row belongs here only while the newest thing we know about the
+    track is that it failed.
+    """
+    http, factory = client
+    await _event(
+        factory,
+        artist="The Smiths",
+        title="Bigmouth Strikes Again",
+        target_service="listenbrainz",
+        success=False,
+        error="No MusicBrainz recording ID available",
+        outcome="unmatched",
+        reason="no_recording_mbid",
+        created_at=datetime(2026, 5, 11, 16, 23),
+    )
+    await _event(
+        factory,
+        artist="The Smiths",
+        title="Bigmouth Strikes Again",
+        target_service="listenbrainz",
+        success=True,
+        outcome="written",
+        created_at=datetime(2026, 11, 13, 1, 37),
+    )
+
+    assert (await http.get("/api/relay/unmatched")).json() == []
+
+
+async def test_queue_takes_the_track_back_when_it_fails_again(client):
+    """A track that regresses comes back, and only its new failures count."""
+    http, factory = client
+    for minute in range(3):
+        await _event(
+            factory,
+            artist="Artist A",
+            title="Song A",
+            target_service="lastfm",
+            success=False,
+            error="No match found in Plex library",
+            outcome="unmatched",
+            reason="no_match",
+            created_at=datetime(2026, 5, 1, 12, minute),
+        )
+    await _event(
+        factory,
+        artist="Artist A",
+        title="Song A",
+        target_service="lastfm",
+        success=True,
+        outcome="written",
+        created_at=datetime(2026, 6, 1, 12, 0),
+    )
+    for minute in range(2):
+        await _event(
+            factory,
+            artist="Artist A",
+            title="Song A",
+            target_service="lastfm",
+            success=False,
+            error="No match found in Plex library",
+            outcome="unmatched",
+            reason="no_match",
+            created_at=datetime(2026, 7, 1, 12, minute),
+        )
+
+    rows = (await http.get("/api/relay/unmatched")).json()
+
+    assert len(rows) == 1
+    assert rows[0]["count"] == 2
+    assert rows[0]["last_failed"] == "2026-07-01T12:01:00"
 
 
 # ── unrevertable writes ───────────────────────────────────────────────────────

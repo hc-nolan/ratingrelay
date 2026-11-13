@@ -68,7 +68,13 @@ async def _make_job(factory, status: str = "running", **kwargs) -> str:
         return job.id
 
 
-async def _add_event(factory, job_id: str, artist: str, success: bool = True) -> None:
+async def _add_event(
+    factory,
+    job_id: str,
+    artist: str,
+    success: bool = True,
+    reason: str | None = None,
+) -> None:
     async with factory() as db:
         db.add(
             TrackEvent(
@@ -78,6 +84,7 @@ async def _add_event(factory, job_id: str, artist: str, success: bool = True) ->
                 target_service="lastfm",
                 success=success,
                 outcome="written" if success else "failed",
+                reason=reason,
             )
         )
         await db.commit()
@@ -138,3 +145,17 @@ async def test_stream_reports_the_row_counters_not_its_own(client, factory):
     payload = json.loads(status_event.removeprefix("data: "))
     assert payload["tracks_ok"] == 3
     assert payload["tracks_fetched"] == 3
+
+
+async def test_job_detail_carries_the_typed_reason(client, factory):
+    """The log labels a skip from its reason, never by matching error text."""
+    job_id = await _make_job(factory, "completed")
+    await _add_event(factory, job_id, "skipped", success=False, reason="already_synced")
+
+    res = await client.get(f"/api/relay/jobs/{job_id}")
+
+    assert res.status_code == 200
+    event = res.json()["events"][0]
+    assert event["reason"] == "already_synced"
+    assert event["outcome"] == "failed"
+    assert event["candidates"] == []

@@ -188,6 +188,9 @@ async def get_job(
             "target": e.target_service,
             "success": e.success,
             "error": e.error,
+            "outcome": e.outcome,
+            "reason": e.reason,
+            "candidates": json.loads(e.candidates) if e.candidates else [],
         }
         for e in events
     ]

@@ -93,7 +93,7 @@
 		missing_metadata: 'missing artist or title',
 		not_configured: 'service not configured',
 		write_failed: 'write failed',
-		unrecorded_target: 'written before the relay recorded where'
+		unrecorded_target: 'no recorded write'
 	};
 
 	function describe(evt: TrackEvent): string {
@@ -359,7 +359,7 @@
 									{#if describe(evt)}
 										<span
 											class={cn(
-												'max-w-64 shrink-0 truncate text-xs',
+												'max-w-72 shrink-0 truncate text-xs',
 												b === 'failed'
 													? 'text-destructive'
 													: b === 'unmatched'

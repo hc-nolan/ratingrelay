@@ -200,6 +200,56 @@ Exit test: `tests/test_relay_parity.py` runs the same fixture through
 `execute_relay` dry-then-real and asserts identical per-service counts (including the
 second, all-skipped pass) while the fake target's write log differs.
 
+## Live verification (done)
+
+Everything above was exercised against the real Plex library, the `ratingrelay`
+Last.fm account and the `ratingrelay` ListenBrainz account — throwaway accounts, so
+writes were safe to repeat. 361 rated Plex tracks, of which ~229 are distinct songs
+(the rest are duplicate copies of the same track, which share one `track_key`).
+
+| Step | Result |
+| --- | --- |
+| `plex → lastfm` dry run | 348 already synced, 13 to write, 4 withdrawals |
+| `plex → lastfm` real run | 13 written, 352 skipped, 0 errors (2m21s for both targets) |
+| `plex → listenbrainz` real run | 360 written, 4 reverted, 1 unmatched, 0 errors; loves 1 → 220 |
+| Repeat dry run, both targets | 361 `already_synced` each; the run is a no-op |
+| Reset listenbrainz (dry, then real) | 222 undoable in both; loves 220 → 1, records 222 → 0 |
+| Reset lastfm (dry, then real) | 11 undoable, 216 refused, identical in both modes; loves 316 → 305 |
+
+The ListenBrainz reset left exactly one love: the one the account held before the
+relay ever wrote there. That is contract item 3 demonstrated, not asserted.
+
+Three bugs only the live pass could find, all fixed on this branch:
+
+1. **The MusicBrainz resolver guessed.** It took `recordings[0]` from a fuzzy
+   search, so it planned to love a different recording than Plex held. It now runs
+   the search results through the exact rung of the ladder and returns nothing when
+   no result is exact (`326b75d`).
+2. **The typed-outcome backfill matched no rows.** It compared whole error strings,
+   and the live database says `'No MusicBrainz recording ID available'` where v1
+   said `'No MusicBrainz recording ID'`. Now a prefix match (`326b75d`).
+3. **The dry run promised undos it could not make.** `_undo` answered REVERTED
+   before it looked at the record, so Last.fm showed 4 phantom un-loves that a real
+   run refused (v2 rows never recorded the name they were loved under). `Target`
+   gained `undoable()`, which raises exactly when `undo()` would, and both run it
+   before the dry-run shortcut (`61cd11a`).
+
+A fourth, unrelated to the engine: the Plex login wrote its token and then looked
+hung until a refresh, because the opener waited on a `postMessage` addressed to the
+API origin (a different origin from the Vite dev UI) and the callback checked the PIN
+once, racing Plex's confirmation. Fixed in `0a2a53b`.
+
+### Known, deliberate leaves
+
+- 216 Last.fm records from v2 have no `target_key`, so they cannot be undone and a
+  reset reports them as errors (`unrecorded_target`) rather than guessing at a name.
+  Reconstructing a name from `normalized_key` would be lossy (the key is normalised),
+  so it is not done. `all=true` clears the whole service if the user wants that
+  instead. Follow-up worth a ticket of its own: surface these on `/unmatched` (they
+  are refusals, not matches, so they do not belong in the current queue).
+- The one Plex track with no MusicBrainz recording ID stays unmatched on every run
+  by design; it is the queue's job to surface it.
+
 ## Scope Boundaries
 
 - No frontend changes in S1–S3; S4 touches the `/unmatched` payload and the Svelte

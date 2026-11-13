@@ -5,11 +5,22 @@ reconcile → write. It must not import FastAPI, request schemas, request
 sessions or SSE plumbing; callers above it (``api/``, ``cli/``) marshal their
 own representations into the types here and back out again.
 
-Current contents are the pure pieces (normalisation, value types, the matching
-ladder). Fetching, reconciliation and writing move here in the remaining slices
-of ``docs/plans/2026-11-12-002-engine-extraction-and-reconcile.md``.
+Layout:
+
+``normalize``   key formats, including the on-disk key shared with the database
+``types``       tracks, intents, outcomes and run reports
+``matching``    the MBID → exact → variant → containment ladder
+``plan``        what a target would write, and the closure that writes it
+``store``       the ports the pipeline needs (sync records, mappings, progress)
+``services``    one module per service: Plex, Last.fm, ListenBrainz, MusicBrainz
+``pipeline``    the run itself: skip, match, plan, commit
 """
 
+from ratingrelay.engine.credentials import (
+    LastFmCredentials,
+    ListenBrainzCredentials,
+    PlexCredentials,
+)
 from ratingrelay.engine.matching import (
     MatchOutcome,
     MatchStatus,
@@ -22,6 +33,18 @@ from ratingrelay.engine.normalize import (
     track_key,
     variant_form,
     variant_key,
+)
+from ratingrelay.engine.pipeline import run, run_tracks
+from ratingrelay.engine.plan import WritePlan
+from ratingrelay.engine.store import (
+    MemoryMappingStore,
+    MemorySyncStore,
+    MappingStore,
+    NullProgress,
+    ProgressSink,
+    SyncedTrack,
+    SyncStore,
+    TrackMapping,
 )
 from ratingrelay.engine.types import (
     Candidate,
@@ -39,18 +62,32 @@ __all__ = [
     "Candidate",
     "Intent",
     "IntentKind",
+    "LastFmCredentials",
+    "ListenBrainzCredentials",
+    "MappingStore",
     "MatchOutcome",
     "MatchStatus",
     "MatchTier",
+    "MemoryMappingStore",
+    "MemorySyncStore",
+    "NullProgress",
     "OutcomeStatus",
+    "PlexCredentials",
+    "ProgressSink",
     "Reason",
     "RunReport",
+    "SyncStore",
+    "SyncedTrack",
     "TargetReport",
     "Track",
+    "TrackMapping",
     "TrackOutcome",
+    "WritePlan",
     "comparison_form",
     "match_track",
     "normalize",
+    "run",
+    "run_tracks",
     "track_key",
     "variant_form",
     "variant_key",

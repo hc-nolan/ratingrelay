@@ -47,7 +47,7 @@ Slices land as separate commits on one branch. Every slice keeps `just test` and
 
 ## Slices
 
-### S1 — Engine skeleton: normalisation, types, matching (this commit)
+### S1 — Engine skeleton: normalisation, types, matching (done, `3b66003`)
 
 `ratingrelay/engine/{__init__,normalize,types,matching}.py`. Pure functions and frozen
 dataclasses only: no DB, no clients, no FastAPI. `normalize`/`track_key` become the
@@ -60,18 +60,38 @@ import the key helpers instead of owning copies.
 Exit: `tests/test_engine_matching.py` pins compatibility of the key format, all four
 tiers, the ambiguous/unmatched paths, and intent keys.
 
-### S2 — Engine pipeline behind ports
+### S2 — Engine pipeline behind ports (done)
 
-`engine/clients/{plex,lastfm,listenbrainz}.py` (sync-client wrappers around plexapi/
-pylast/liblistenbrainz), `engine/store.py` (protocols: credentials, mappings, sync
-records, progress), `engine/pipeline.py` (`fetch → match → reconcile → write`) and
-`engine/results.py` (typed run report). `routes/relay.py` and `core/worker.py` become
-adapters: pydantic request schemas are converted at the edge, `TrackEvent` is built
-from `TrackOutcome`. Credential precedence (settings > env > DB) stays, but is resolved
-once at the API boundary and passed down.
+What landed, and where:
 
-Exit: `engine/` imports are clean by a test that walks the package for forbidden
-imports; existing 15 tests still pass with their assertions unchanged.
+```
+engine/plan.py            WritePlan: the decision, plus the commit closure that writes it
+engine/thread.py          run_sync, moved down from core/
+engine/store.py           ports: SyncStore, MappingStore, ProgressSink + in-memory doubles
+engine/credentials.py     plain credential values (no settings, no DB)
+engine/services/*         plex / lastfm / listenbrainz / musicbrainz adapters
+engine/pipeline.py        _apply (skip, plan, commit) + run_tracks + run
+core/credentials.py       settings > stored row, resolved once at the edge
+core/adapters.py          request config -> Source/Target, dict <-> Track
+db/store.py               SqlSyncStore, SqlMappingStore (the ports, implemented)
+```
+
+`core/relay.py` keeps its public names (`execute_relay`, `fetch_*`, `write_to_*`,
+`reset_*`, `_record_sync`) and its `(ok, err, skipped)` returns, so the router and
+the worker did not change in this slice; under them it now builds targets and calls
+the engine. Credential precedence (settings > env > DB) is unchanged, resolved in
+`core/credentials.py` instead of per writer.
+
+The clients live under `engine/services/` rather than `engine/clients/`: a client and
+the source/target that uses it are one concern here, and splitting them would have
+made a five-line adapter into three files.
+
+Exit: `tests/test_engine_pipeline.py` drives the real pipeline against fake service
+clients — dry run takes the same decisions as a real run, a repeated run skips,
+ambiguity writes nothing and attaches candidates, a failed write is typed and not
+recorded, and mappings/MBID resolution reach the right call. The 15 pre-existing tests
+still pass with their assertions intact (only their injection points moved, because
+the fakes must now sit where the adapters build clients).
 
 ### S3 — Intent-keyed SyncRecord + reconciliation
 
@@ -98,13 +118,16 @@ with `userRating>>=`/`userRating<<=`. `TrackEvent` gains `outcome`/`reason`/
 Exit: API tests assert unmatched entries carry reason + candidates; a Plex fake
 asserts the rating filter reached the client.
 
-### S5 — One write boundary for dry run
+### S5 — Dry-run parity through the API
 
-All target mutations go through a `WriteGateway` (real or dry). The pipeline computes
-decisions the same way in both modes and the dry gateway records what it *would* have
-done, so dry-run output is the real run's output minus the writes.
+S2 already made the pipeline dry-run aware (`run_tracks(dry_run=True)` returns the
+same outcomes and skips only the commit), so the remaining work is at the edges: the
+router must pass its flag through the worker to the engine rather than each writer
+suppressing itself, and the skip events the SPA receives in a dry run must be the
+engine's, not a re-derivation.
 
-Exit: a test runs the same fixture through both gateways and compares decisions.
+Exit: a test runs one fixture through `execute_relay` twice (dry, then real) and
+asserts the per-service counts match and the writes differ.
 
 ## Scope Boundaries
 

@@ -1,15 +1,18 @@
 """
-Tests for dry-run write suppression in execute_relay / write_to_* functions.
+Tests for dry-run write suppression in the relay wrappers.
 
-Uses a real in-memory SQLite DB and fake credential/service layers to verify
-that dry_run=True suppresses external writes and SyncRecord creation while
-still calling on_track for every track (including skipped).
+Uses a real in-memory SQLite DB together with fake service layers, and verifies
+that dry_run=True suppresses external writes and SyncRecord creation while still
+calling on_track for every track (including skipped).
+
+The service fakes are injected where the adapters build clients, so these tests
+exercise the wrapper plus the real engine pipeline rather than a mock of it.
 """
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy import select
 from sqlmodel import SQLModel
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import ratingrelay.models.jobs  # noqa: F401
 import ratingrelay.models.sync  # noqa: F401
@@ -17,6 +20,10 @@ import ratingrelay.models.mappings  # noqa: F401
 import ratingrelay.models.services  # noqa: F401
 
 from ratingrelay.core.relay import write_to_lastfm, write_to_listenbrainz, _record_sync
+from ratingrelay.engine.credentials import (
+    LastFmCredentials,
+    ListenBrainzCredentials,
+)
 from ratingrelay.models.sync import SyncRecord
 from ratingrelay.schemas.relay import LastFMToConfig, ListenBrainzToConfig
 
@@ -26,6 +33,11 @@ TRACK_A = {"artist": "Artist A", "title": "Song A"}
 TRACK_B = {"artist": "Artist B", "title": "Song B"}
 LFM_CONFIG = LastFMToConfig(service="lastfm")
 LBZ_CONFIG = ListenBrainzToConfig(service="listenbrainz", feedback_type="love")
+
+LFM_CREDS = LastFmCredentials(
+    api_key="key", api_secret="secret", username="user", password_hash="hash"
+)
+LBZ_CREDS = ListenBrainzCredentials(token="tok", username="user")
 
 
 @pytest.fixture
@@ -44,6 +56,27 @@ async def _sync_record_count(db: AsyncSession) -> int:
     return len(result.scalars().all())
 
 
+def _lastfm_patches():
+    """Credential stub plus a fake pylast module, for the lifetime of one write."""
+    return (
+        patch(
+            "ratingrelay.core.adapters.lastfm_credentials",
+            AsyncMock(return_value=LFM_CREDS),
+        ),
+        patch("ratingrelay.engine.services.lastfm.pylast"),
+    )
+
+
+def _listenbrainz_patches():
+    return (
+        patch(
+            "ratingrelay.core.adapters.listenbrainz_credentials",
+            AsyncMock(return_value=LBZ_CREDS),
+        ),
+        patch("ratingrelay.engine.services.listenbrainz.ListenBrainz"),
+    )
+
+
 # ---------------------------------------------------------------------------
 # write_to_lastfm dry_run=True
 # ---------------------------------------------------------------------------
@@ -56,9 +89,8 @@ async def test_lastfm_dry_run_suppresses_write(db):
     async def capture(track, target, success, error, skipped=False):
         calls.append((track, target, success, error, skipped))
 
-    fake_network = MagicMock()
-
-    with patch("ratingrelay.core.relay._resolve_lastfm_network", AsyncMock(return_value=fake_network)):
+    creds_patch, pylast_patch = _lastfm_patches()
+    with creds_patch, pylast_patch as fake_pylast:
         ok, err, skipped = await write_to_lastfm(
             db, [TRACK_A], LFM_CONFIG, "plex", capture, dry_run=True
         )
@@ -69,7 +101,7 @@ async def test_lastfm_dry_run_suppresses_write(db):
     assert calls == [(TRACK_A, "lastfm", True, None, False)]
     assert await _sync_record_count(db) == 0
     # External .love() was never called
-    fake_network.get_track.assert_not_called()
+    fake_pylast.Track.assert_not_called()
 
 
 async def test_lastfm_dry_run_skipped_track_fires_on_track(db):
@@ -83,14 +115,14 @@ async def test_lastfm_dry_run_skipped_track_fires_on_track(db):
     async def capture(track, target, success, error, skipped=False):
         calls.append((track, target, success, error, skipped))
 
-    fake_network = MagicMock()
-
-    with patch("ratingrelay.core.relay._resolve_lastfm_network", AsyncMock(return_value=fake_network)):
+    creds_patch, pylast_patch = _lastfm_patches()
+    with creds_patch, pylast_patch:
         ok, err, skip_count = await write_to_lastfm(
             db, [TRACK_A], LFM_CONFIG, "plex", capture, dry_run=True
         )
 
     assert ok == 0
+    assert err == 0
     assert skip_count == 1
     assert calls == [(TRACK_A, "lastfm", False, None, True)]
     # No new SyncRecord was written
@@ -108,16 +140,14 @@ async def test_lastfm_real_run_after_dry_run_writes_same_tracks(db):
     async def capture_real(track, target, success, error, skipped=False):
         calls_real.append((success, skipped))
 
-    fake_network = MagicMock()
-
-    with patch("ratingrelay.core.relay._resolve_lastfm_network", AsyncMock(return_value=fake_network)):
+    creds_patch, pylast_patch = _lastfm_patches()
+    with creds_patch, pylast_patch:
         # Dry run — should NOT create SyncRecord
         await write_to_lastfm(db, [TRACK_A], LFM_CONFIG, "plex", capture_dry, dry_run=True)
         assert await _sync_record_count(db) == 0
 
         # Real run — should create SyncRecord
-        with patch("ratingrelay.core.relay.run_sync", new=AsyncMock(return_value=None)):
-            await write_to_lastfm(db, [TRACK_A], LFM_CONFIG, "plex", capture_real, dry_run=False)
+        await write_to_lastfm(db, [TRACK_A], LFM_CONFIG, "plex", capture_real, dry_run=False)
 
     assert any(s is True for s, _ in calls_real)
     assert await _sync_record_count(db) == 1
@@ -131,9 +161,8 @@ async def test_lastfm_dry_run_unmatched_is_error(db):
         calls.append((success, error, skipped))
 
     bad_track = {"artist": "", "title": ""}
-    fake_network = MagicMock()
-
-    with patch("ratingrelay.core.relay._resolve_lastfm_network", AsyncMock(return_value=fake_network)):
+    creds_patch, pylast_patch = _lastfm_patches()
+    with creds_patch, pylast_patch:
         ok, err, _ = await write_to_lastfm(
             db, [bad_track], LFM_CONFIG, "plex", capture, dry_run=True
         )
@@ -156,14 +185,9 @@ async def test_listenbrainz_dry_run_suppresses_write(db):
         calls.append((track, target, success, error, skipped))
 
     track_with_mbid = {**TRACK_A, "recording_mbid": "aaaaaaaa-0000-0000-0000-000000000001"}
-    fake_client = MagicMock()
-
-    with (
-        patch("ratingrelay.core.relay.get_credential", AsyncMock(return_value=MagicMock(token="tok"))),
-        patch("ratingrelay.core.relay.settings") as mock_settings,
-        patch("ratingrelay.core.relay.ListenBrainz", return_value=fake_client),
-    ):
-        mock_settings.listenbrainz_token = "tok"
+    creds_patch, lbz_patch = _listenbrainz_patches()
+    with creds_patch, lbz_patch as fake_listenbrainz:
+        fake_client = fake_listenbrainz.return_value
         ok, err, _ = await write_to_listenbrainz(
             db, [track_with_mbid], LBZ_CONFIG, "plex", capture, dry_run=True
         )
@@ -186,17 +210,13 @@ async def test_listenbrainz_dry_run_skipped_fires_on_track(db):
     async def capture(track, target, success, error, skipped=False):
         calls.append((success, skipped))
 
-    fake_client = MagicMock()
-
-    with (
-        patch("ratingrelay.core.relay.get_credential", AsyncMock(return_value=MagicMock(token="tok"))),
-        patch("ratingrelay.core.relay.settings") as mock_settings,
-        patch("ratingrelay.core.relay.ListenBrainz", return_value=fake_client),
-    ):
-        mock_settings.listenbrainz_token = "tok"
+    creds_patch, lbz_patch = _listenbrainz_patches()
+    with creds_patch, lbz_patch:
         ok, err, skip_count = await write_to_listenbrainz(
             db, [track_with_mbid], LBZ_CONFIG, "plex", capture, dry_run=True
         )
 
+    assert ok == 0
+    assert err == 0
     assert skip_count == 1
     assert calls == [(False, True)]

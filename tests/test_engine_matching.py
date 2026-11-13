@@ -62,10 +62,20 @@ def test_comparison_form_drops_quotes_but_keeps_punctuation():
         "Paranoid Android - Remastered",
         "Paranoid Android (feat. Somebody)",
         "Paranoid Android feat. Somebody",
+        # A production credit names who is on the recording, not which one it is.
+        "Paranoid Android (Prod. Flying Lotus)",
+        "Paranoid Android prod. Flying Lotus",
+        "Paranoid Android (Produced by Flying Lotus)",
     ],
 )
 def test_variant_form_removes_edition_noise(noisy):
     assert variant_form(noisy) == variant_form("Paranoid Android")
+
+
+@pytest.mark.parametrize("title", ["Prodigy", "Product of the 80s", "Proud"])
+def test_a_credit_prefix_is_only_a_credit(title):
+    """Whole words only: a title that merely starts with “prod” keeps its name."""
+    assert variant_form(title) == normalize(title)
 
 
 def test_variant_form_keeps_meaningful_suffixes():

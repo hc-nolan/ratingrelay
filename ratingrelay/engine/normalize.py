@@ -50,10 +50,16 @@ _EDITION_WORDS = (
     "feat",
     "ft",
     "featuring",
+    "prod",
+    "produced by",
 )
 _BRACKETED = re.compile(r"\s*[(\[]([^)\]]*)[)\]]")
 _DASH_SUFFIX = re.compile(r"\s+[-–—]\s+.*$")
-_FEATURE = re.compile(r"\s+(?:feat\.?|ft\.?|featuring)\s+.*$", re.IGNORECASE)
+# A credit says who else is on the recording, never which recording it is. Both
+# words are matched as whole words, so "Prodigy" and "Product" are safe.
+_FEATURE = re.compile(
+    r"\s+(?:feat\.?|ft\.?|featuring|prod\.?|produced by)\s+.*$", re.IGNORECASE
+)
 
 
 def normalize(text: str) -> str:

@@ -30,6 +30,15 @@ class Target(Protocol):
     async def plan(self, track: Track) -> WritePlan:
         """Match *track* and decide what to write, without writing it."""
 
+    def undoable(self, record: SyncedTrack) -> None:
+        """Check, without writing, that *record* says what we wrote there.
+
+        Must raise ``ValueError`` when it does not: the pipeline then leaves the
+        record alone rather than guessing at a rating that may not be ours to
+        clear. It exists separately from :meth:`undo` so that a dry run can make
+        the same promise a real run keeps.
+        """
+
     async def undo(self, record: SyncedTrack) -> None:
         """Revert a write we recorded, using the record's ``target_key``.
 

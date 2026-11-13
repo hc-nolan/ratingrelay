@@ -205,9 +205,16 @@ class PlexTarget(MappedTarget):
             commit=commit,
         )
 
-    async def undo(self, record: SyncedTrack) -> None:
-        """Clear the rating on every copy this tool rated, and only those."""
+    def _rating_keys(self, record: SyncedTrack) -> list[str]:
+        """The copies we rated, or ``ValueError`` if the record does not say."""
         if not record.target_key:
             raise ValueError("no recorded Plex rating keys")
-        for external_id in json.loads(record.target_key):
+        return list(json.loads(record.target_key))
+
+    def undoable(self, record: SyncedTrack) -> None:
+        self._rating_keys(record)
+
+    async def undo(self, record: SyncedTrack) -> None:
+        """Clear the rating on every copy this tool rated, and only those."""
+        for external_id in self._rating_keys(record):
             await self._library.rate(external_id, None)

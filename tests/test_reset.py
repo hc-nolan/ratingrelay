@@ -35,9 +35,12 @@ class FakeTarget:
         self.undone: list[str] = []
         self._refuse = set(refuse)
 
-    async def undo(self, record: SyncedTrack) -> None:
+    def undoable(self, record: SyncedTrack) -> None:
         if record.key in self._refuse:
             raise ValueError("no recorded Last.fm track name")
+
+    async def undo(self, record: SyncedTrack) -> None:
+        self.undoable(record)
         self.undone.append(record.key)
 
 
@@ -132,6 +135,26 @@ async def test_reset_keeps_a_record_it_cannot_undo(db):
     assert result["results"] == [{"service": "lastfm", "ok": 1, "err": 1, "skipped": 0}]
     remaining = await SqlSyncStore(db).records_for_target("lastfm")
     assert [record.key for _, record in remaining] == [track_key("Artist B", "Song")]
+
+
+async def test_reset_dry_run_refuses_the_same_records_a_real_run_refuses(db):
+    """The dry run is the authority: it must not promise an undo it cannot make."""
+    await _seed(db, "lastfm", "Artist A", "Artist B")
+
+    target = FakeTarget(refuse=(track_key("Artist B", "Song"),))
+    events, on_track = _capture()
+    with patch("ratingrelay.core.relay.adapters.target_for", AsyncMock(return_value=target)):
+        result = await execute_relay(
+            db,
+            ResetFromConfig(target_service="lastfm"),
+            [],
+            on_track=on_track,
+            dry_run=True,
+        )
+
+    assert target.undone == []
+    assert result["results"] == [{"service": "lastfm", "ok": 1, "err": 1, "skipped": 0}]
+    assert len(await SqlSyncStore(db).records_for_target("lastfm")) == 2
 
 
 async def test_reset_reports_an_unconfigured_target_without_undoing(db):

@@ -260,12 +260,8 @@ async def _reset_recorded(
         reverted = TrackOutcome(
             record.track, target_svc, OutcomeStatus.REVERTED, Reason.WITHDRAWN
         )
-        if dry_run:
-            await on_track(data, target_svc, True, None, True, reverted)
-            ok += 1
-            continue
         try:
-            await target.undo(record)
+            target.undoable(record)
         except ValueError as exc:
             # The record does not say what we wrote, so clearing anything could
             # remove a rating the user made. Leave it, and say why.
@@ -285,6 +281,12 @@ async def _reset_recorded(
             )
             err += 1
             continue
+        if dry_run:
+            await on_track(data, target_svc, True, None, True, reverted)
+            ok += 1
+            continue
+        try:
+            await target.undo(record)
         except Exception as exc:  # noqa: BLE001 - reported per track
             logger.error("Reset %s failed for '%s': %s", target_svc, record.key, exc)
             await on_track(

@@ -108,9 +108,17 @@ class LastFmTarget(MappedTarget):
             commit=commit,
         )
 
-    async def undo(self, record: SyncedTrack) -> None:
-        """Un-love what we loved, by the name we loved it under."""
+    def _track_name(self, record: SyncedTrack) -> tuple[str, str]:
+        """The name we loved it under, or ``ValueError`` if the record does not say."""
         if not record.target_key:
             raise ValueError("no recorded Last.fm track name")
         artist, title = json.loads(record.target_key)
+        return artist, title
+
+    def undoable(self, record: SyncedTrack) -> None:
+        self._track_name(record)
+
+    async def undo(self, record: SyncedTrack) -> None:
+        """Un-love what we loved, by the name we loved it under."""
+        artist, title = self._track_name(record)
         await self._client.unlove(artist, title)

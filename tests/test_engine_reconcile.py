@@ -286,6 +286,25 @@ async def test_dry_run_reports_the_withdrawal_without_undoing_it():
     assert set(store.records[("plex", "lastfm")]) == {gone.key}
 
 
+async def test_dry_run_does_not_promise_an_undo_a_real_run_cannot_make():
+    """A record without a target_key is skipped in both, never a phantom revert."""
+    target, client = _lastfm_target()
+    store = MemorySyncStore()
+    gone = Track("Artist", "Gone")
+    await store.remember("plex", "lastfm", SyncedTrack(gone.key, intent="love"))
+
+    dry = await pipeline.run_tracks(
+        [], [target], source_service="plex", sync_store=store, dry_run=True
+    )
+    real = await pipeline.run_tracks([], [target], source_service="plex", sync_store=store)
+
+    for outcome in (dry.outcomes[0], real.outcomes[0]):
+        assert outcome.status is OutcomeStatus.SKIPPED
+        assert outcome.reason is Reason.UNRECORDED_TARGET
+    assert client.unloves == []
+    assert set(store.records[("plex", "lastfm")]) == {gone.key}
+
+
 # ---------------------------------------------------------------------------
 # The record is also the MBID cache
 # ---------------------------------------------------------------------------

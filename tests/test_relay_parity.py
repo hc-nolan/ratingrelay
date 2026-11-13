@@ -60,6 +60,9 @@ class FakeTarget:
             commit=commit,
         )
 
+    def undoable(self, record) -> None:  # pragma: no cover - not exercised
+        pass
+
     async def undo(self, record) -> None:  # pragma: no cover - not exercised here
         self.writes.remove(record.key)
 

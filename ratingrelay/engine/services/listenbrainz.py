@@ -141,8 +141,9 @@ class ListenBrainzTarget(MappedTarget):
             commit=commit,
         )
 
-    async def undo(self, record: SyncedTrack) -> None:
-        """Submit a neutral score for the recording we gave feedback on.
+    @staticmethod
+    def _recorded_mbid(record: SyncedTrack) -> str:
+        """The recording we gave feedback on, or ``ValueError`` if unrecorded.
 
         Feedback is keyed by recording MBID, so a row written before
         ``target_key`` existed is still undoable when it recorded the MBID.
@@ -150,4 +151,11 @@ class ListenBrainzTarget(MappedTarget):
         mbid = record.target_key or record.recording_mbid
         if not mbid:
             raise ValueError("no recorded recording MBID")
-        await self._client.submit(0, mbid)
+        return mbid
+
+    def undoable(self, record: SyncedTrack) -> None:
+        self._recorded_mbid(record)
+
+    async def undo(self, record: SyncedTrack) -> None:
+        """Submit a neutral score for the recording we gave feedback on."""
+        await self._client.submit(0, self._recorded_mbid(record))

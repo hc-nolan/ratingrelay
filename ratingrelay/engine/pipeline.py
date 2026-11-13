@@ -119,8 +119,29 @@ async def _undo(
     source_service: str,
     dry_run: bool,
 ) -> TrackOutcome:
-    """Revert a write the source no longer wants, or say why we cannot."""
+    """Revert a write the source no longer wants, or say why we cannot.
+
+    The undoability check runs before the dry-run shortcut: a dry run must make the
+    promise a real run keeps, so a record we cannot undo is reported as skipped in
+    both, never as a revert that would not happen.
+    """
     track = record.track
+    try:
+        target.undoable(record)
+    except ValueError as exc:
+        # The record predates target_key, so we know we wrote here but not what:
+        # clearing it could remove a rating the user made themselves.
+        logger.warning(
+            "Cannot undo %s write for '%s': %s", target.service, record.key, exc
+        )
+        return TrackOutcome(
+            track,
+            target.service,
+            OutcomeStatus.SKIPPED,
+            Reason.UNRECORDED_TARGET,
+            str(exc),
+        )
+
     if dry_run:
         return TrackOutcome(
             track, target.service, OutcomeStatus.REVERTED, Reason.WITHDRAWN
@@ -128,12 +149,7 @@ async def _undo(
 
     try:
         await target.undo(record)
-    except ValueError as exc:
-        # The record predates target_key, so we know we wrote here but not what:
-        # clearing it could remove a rating the user made themselves.
-        logger.warning(
-            "Cannot undo %s write for '%s': %s", target.service, record.key, exc
-        )
+    except ValueError as exc:  # the record changed under us; same promise
         return TrackOutcome(
             track, target.service, OutcomeStatus.SKIPPED, Reason.UNRECORDED_TARGET, str(exc)
         )

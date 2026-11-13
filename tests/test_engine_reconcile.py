@@ -19,6 +19,7 @@ from ratingrelay.engine import (
 )
 from ratingrelay.engine.normalize import track_key
 from ratingrelay.engine.services.lastfm import LastFmTarget
+from ratingrelay.engine.services.musicbrainz import Resolution
 from ratingrelay.engine.services.listenbrainz import ListenBrainzTarget
 from ratingrelay.engine.services.plex import PlexTarget
 
@@ -71,7 +72,7 @@ class CountingResolver:
 
     async def __call__(self, track_mbid, artist, title):  # noqa: ARG002 - the resolver port
         self.calls += 1
-        return self.mbid
+        return Resolution(self.mbid) if self.mbid else Resolution()
 
 
 def _plex_target(candidates, **kwargs) -> tuple[PlexTarget, FakePlexLibrary]:

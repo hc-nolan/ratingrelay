@@ -22,6 +22,7 @@ from ratingrelay.engine import (
 from ratingrelay.engine import pipeline
 from ratingrelay.engine.services.lastfm import LastFmTarget
 from ratingrelay.engine.services.listenbrainz import ListenBrainzTarget
+from ratingrelay.engine.services.musicbrainz import Resolution
 from ratingrelay.engine.services.plex import PlexTarget
 from ratingrelay.engine.store import NullProgress
 
@@ -298,7 +299,7 @@ async def test_lastfm_target_reports_missing_metadata_without_writing():
 
 async def _resolver(mbid: Optional[str]):
     async def resolve(track_mbid, artist, title):  # noqa: ARG001 - signature is the port
-        return mbid
+        return Resolution(mbid) if mbid else Resolution()
 
     return resolve
 
@@ -333,6 +334,31 @@ async def test_listenbrainz_target_without_an_mbid_is_unmatched():
     assert outcome.reason is Reason.NO_RECORDING_MBID
     assert client.submissions == []
     assert store.records == {}
+
+
+async def test_listenbrainz_target_carries_the_lookups_proposals():
+    """An unmatched track reports what it nearly matched, so it can be resolved.
+
+    The resolver only writes on an exact match, but the ladder's looser rungs know
+    which recordings were close. Dropping them left the queue with a dead end:
+    the row said "no MBID" and offered nothing to act on.
+    """
+    client = FakeListenBrainzClient()
+    proposal = Candidate(artist="Artist A", title="Song A (Live)", recording_mbid="rec-live")
+
+    async def resolve(track_mbid, artist, title):  # noqa: ARG001 - the resolver port
+        return Resolution(proposals=(proposal,))
+
+    target = ListenBrainzTarget(client, MemoryMappingStore(), resolve)
+
+    report = await pipeline.run_tracks(
+        [Track("Artist", "Song")], [target], source_service="plex", sync_store=MemorySyncStore()
+    )
+
+    outcome = report.outcomes[0]
+    assert outcome.reason is Reason.NO_RECORDING_MBID
+    assert outcome.matches == (proposal,)
+    assert client.submissions == []
 
 
 async def test_listenbrainz_target_prefers_a_mapping_mbid():

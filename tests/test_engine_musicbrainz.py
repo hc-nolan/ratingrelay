@@ -11,6 +11,7 @@ from typing import Optional
 import pytest
 
 from ratingrelay.engine.services import musicbrainz
+from ratingrelay.engine.services.musicbrainz import Resolution
 
 
 def _recording(
@@ -50,7 +51,7 @@ def test_exact_match_wins_over_the_first_result(search):
 
     resolved = musicbrainz._lookup(None, "Sigur Rós", "Hoppípolla")
 
-    assert resolved == "mbid-right"
+    assert resolved.mbid == "mbid-right"
     assert all("tid:" not in call.get("query", "") for call in calls)
 
 
@@ -58,13 +59,13 @@ def test_a_fuzzy_first_result_is_not_guessed_at(search):
     """The bug this replaces: taking recordings[0] wrote a love on a guess."""
     search([_recording("mbid-maybe", "Sigur Ros", "Hoppipolla")])
 
-    assert musicbrainz._lookup(None, "Sigur Rós", "Hoppípolla") is None
+    assert musicbrainz._lookup(None, "Sigur Rós", "Hoppípolla").mbid is None
 
 
 def test_no_results_is_a_miss_not_an_error(search):
     search([])
 
-    assert musicbrainz._lookup(None, "Artist A", "Song A") is None
+    assert musicbrainz._lookup(None, "Artist A", "Song A").mbid is None
 
 
 def test_malformed_results_are_skipped(search):
@@ -76,14 +77,14 @@ def test_malformed_results_are_skipped(search):
         ]
     )
 
-    assert musicbrainz._lookup(None, "Artist A", "Song A") == "mbid-right"
+    assert musicbrainz._lookup(None, "Artist A", "Song A").mbid == "mbid-right"
 
 
 def test_a_non_exact_tier_is_not_used(search):
     """Variant and containment normally fold editions away; here they must not."""
     search([_recording("mbid-live", "Artist A", "Song A (Remastered 2011)")])
 
-    assert musicbrainz._lookup(None, "Artist A", "Song A") is None
+    assert musicbrainz._lookup(None, "Artist A", "Song A").mbid is None
 
 
 def test_a_track_mbid_shortcuts_the_search(search):
@@ -91,7 +92,7 @@ def test_a_track_mbid_shortcuts_the_search(search):
 
     resolved = musicbrainz._lookup("track-mbid", "Artist A", "Song A")
 
-    assert resolved == "mbid-from-track"
+    assert resolved.mbid == "mbid-from-track"
     assert calls == [{"query": "tid:track-mbid", "limit": 1}]
 
 
@@ -103,5 +104,29 @@ def test_a_search_failure_is_a_miss(monkeypatch):
 
     monkeypatch.setattr(musicbrainz.mbz, "search_recordings", boom)
 
-    assert musicbrainz._lookup(None, "Artist A", "Song A") is None
-    assert musicbrainz._lookup("track-mbid", "Artist A", "Song A") is None
+    assert musicbrainz._lookup(None, "Artist A", "Song A").mbid is None
+    assert musicbrainz._lookup("track-mbid", "Artist A", "Song A").mbid is None
+
+
+def test_a_miss_keeps_the_recordings_it_nearly_matched(search):
+    """The near misses are the queue's only way to resolve the track.
+
+    Exact-only is the write rule, not a reason to forget that the ladder found
+    something plausible. These come back as proposals, which nothing writes to.
+    """
+    search([_recording("mbid-live", "Artist A", "Song A (Live)")])
+
+    resolution = musicbrainz._lookup(None, "Artist A", "Song A")
+
+    assert resolution.mbid is None
+    assert [candidate.recording_mbid for candidate in resolution.proposals] == [
+        "mbid-live"
+    ]
+
+
+def test_an_exact_match_reports_no_proposals(search):
+    search([_recording("mbid-right", "Artist A", "Song A")])
+
+    resolution = musicbrainz._lookup(None, "Artist A", "Song A")
+
+    assert resolution == Resolution("mbid-right")

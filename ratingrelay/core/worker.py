@@ -28,11 +28,23 @@ _listeners: dict[str, list[asyncio.Queue]] = {}
 
 
 def _candidates_json(outcome: Optional[TrackOutcome]) -> Optional[str]:
-    """The ambiguous candidates attached to an outcome, as JSON for the UI."""
+    """The candidates attached to an outcome, as JSON for the UI.
+
+    ``recording_mbid`` rides along because it is what makes a ListenBrainz
+    candidate resolvable: feedback is keyed by MBID, so a name alone cannot be
+    turned into a mapping without looking the recording up again.
+    """
     if outcome is None or not outcome.matches:
         return None
     return json.dumps(
-        [{"artist": match.artist, "title": match.title} for match in outcome.matches]
+        [
+            {
+                "artist": match.artist,
+                "title": match.title,
+                "recording_mbid": match.recording_mbid,
+            }
+            for match in outcome.matches
+        ]
     )
 
 

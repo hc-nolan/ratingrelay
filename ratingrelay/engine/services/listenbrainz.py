@@ -14,6 +14,7 @@ from liblistenbrainz import ListenBrainz
 from ratingrelay.engine.credentials import ListenBrainzCredentials
 from ratingrelay.engine.plan import WritePlan
 from ratingrelay.engine.services import MappedTarget
+from ratingrelay.engine.services.musicbrainz import Resolution
 from ratingrelay.engine.store import MappingStore, SyncedTrack
 from ratingrelay.engine.thread import run_sync
 from ratingrelay.engine.types import (
@@ -27,7 +28,7 @@ from ratingrelay.engine.types import (
 PAGE_SIZE = 100
 RATE_LIMIT_BACKOFF_SECONDS = 60
 
-Resolver = Callable[[Optional[str], str, str], Awaitable[Optional[str]]]
+Resolver = Callable[[Optional[str], str, str], Awaitable[Resolution]]
 
 
 def _to_track(item: dict) -> Track:
@@ -107,16 +108,18 @@ class ListenBrainzTarget(MappedTarget):
         self._resolve = resolve
         self._score = score
 
-    async def recording_mbid(self, track: Track) -> Optional[str]:
+    async def resolution(self, track: Track) -> Resolution:
+        """The recording this track is, or the ones it was nearly."""
         artist, title, mapped_mbid = await self.mapped(track)
         if track.recording_mbid:
-            return track.recording_mbid
+            return Resolution(track.recording_mbid)
         if mapped_mbid:
-            return mapped_mbid
+            return Resolution(mapped_mbid)
         return await self._resolve(track.track_mbid, artist, title)
 
     async def plan(self, track: Track) -> WritePlan:
-        mbid = await self.recording_mbid(track)
+        resolution = await self.resolution(track)
+        mbid = resolution.mbid
         if not mbid:
             return WritePlan(
                 track,
@@ -124,6 +127,7 @@ class ListenBrainzTarget(MappedTarget):
                 OutcomeStatus.UNMATCHED,
                 Reason.NO_RECORDING_MBID,
                 "No MusicBrainz recording ID found",
+                matches=resolution.proposals,
             )
 
         score = self._score

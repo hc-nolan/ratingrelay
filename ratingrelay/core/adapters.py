@@ -8,21 +8,15 @@ database becomes the engine's two stores.
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ratingrelay.core.credentials import (
-    lastfm_credentials,
-    listenbrainz_credentials,
-    plex_credentials,
+from ratingrelay.core.factory import (  # re-exported for callers of adapters.stores
+    SOURCE_SERVICES,
+    TARGET_SERVICES,
+    mbid_cache,
+    source_for_service,
+    stores,
+    target_for_service,
 )
-from ratingrelay.db.store import SqlMappingStore, SqlMbidCache, SqlSyncStore
 from ratingrelay.engine.services import Source, Target
-from ratingrelay.engine.services.lastfm import LastFmClient, LastFmSource, LastFmTarget
-from ratingrelay.engine.services.listenbrainz import (
-    ListenBrainzClient,
-    ListenBrainzSource,
-    ListenBrainzTarget,
-)
-from ratingrelay.engine.services.musicbrainz import resolve_recording_mbid
-from ratingrelay.engine.services.plex import PlexLibrary, PlexSource, PlexTarget
 from ratingrelay.engine.types import Track
 from ratingrelay.schemas.relay import (
     LastFMFromConfig,
@@ -57,52 +51,32 @@ def track_to_dict(track: Track) -> dict:
     return out
 
 
-def stores(db: AsyncSession) -> tuple[SqlSyncStore, SqlMappingStore]:
-    """The engine's two stores, backed by the current session."""
-    return SqlSyncStore(db), SqlMappingStore(db)
-
-
-def mbid_cache(db: AsyncSession) -> SqlMbidCache:
-    """Resolved recording MBIDs, backed by the current session.
-
-    Separate from :func:`stores` because its rows outlive what a reset deletes.
-    """
-    return SqlMbidCache(db)
-
-
-def _score(feedback_type: str) -> int:
-    return 1 if feedback_type == "love" else -1
-
-
 async def source_for(db: AsyncSession, config: object) -> Source:
     """Build the source described by a request config."""
     if isinstance(config, PlexFromConfig):
-        library = PlexLibrary(await plex_credentials(db))
-        return PlexSource(library, config.rating_threshold, config.comparison)
+        return await source_for_service(
+            db,
+            "plex",
+            rating_threshold=config.rating_threshold,
+            comparison=config.comparison,
+        )
     if isinstance(config, LastFMFromConfig):
-        return LastFmSource(LastFmClient(await lastfm_credentials(db)))
+        return await source_for_service(db, "lastfm")
     if isinstance(config, ListenBrainzFromConfig):
-        client = ListenBrainzClient(await listenbrainz_credentials(db))
-        return ListenBrainzSource(client, _score(config.feedback_type))
+        return await source_for_service(
+            db, "listenbrainz", feedback_type=config.feedback_type
+        )
     raise ValueError(f"Unknown source service: {config}")
 
 
 async def target_for(db: AsyncSession, config: object) -> Target:
     """Build the target described by a request config."""
-    _, mappings = stores(db)
     if isinstance(config, PlexToConfig):
-        library = PlexLibrary(await plex_credentials(db))
-        return PlexTarget(library, mappings, config.rating)
+        return await target_for_service(db, "plex", plex_rating=config.rating)
     if isinstance(config, LastFMToConfig):
-        client = LastFmClient(await lastfm_credentials(db))
-        return LastFmTarget(client, mappings)
+        return await target_for_service(db, "lastfm")
     if isinstance(config, ListenBrainzToConfig):
-        client = ListenBrainzClient(await listenbrainz_credentials(db))
-        return ListenBrainzTarget(
-            client,
-            mappings,
-            resolve_recording_mbid,
-            _score(config.feedback_type),
-            cache=mbid_cache(db),
+        return await target_for_service(
+            db, "listenbrainz", feedback_type=config.feedback_type
         )
     raise ValueError(f"Unknown target service: {config}")

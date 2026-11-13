@@ -63,7 +63,7 @@ def _lastfm_patches():
     """Credential stub plus a fake pylast module, for the lifetime of one write."""
     return (
         patch(
-            "ratingrelay.core.adapters.lastfm_credentials",
+            "ratingrelay.core.factory.lastfm_credentials",
             AsyncMock(return_value=LFM_CREDS),
         ),
         patch("ratingrelay.engine.services.lastfm.pylast"),
@@ -73,7 +73,7 @@ def _lastfm_patches():
 def _listenbrainz_patches():
     return (
         patch(
-            "ratingrelay.core.adapters.listenbrainz_credentials",
+            "ratingrelay.core.factory.listenbrainz_credentials",
             AsyncMock(return_value=LBZ_CREDS),
         ),
         patch("ratingrelay.engine.services.listenbrainz.ListenBrainz"),

@@ -106,9 +106,11 @@ These are the point of the tool. v1 got them right; keep them that way.
   `ratingrelay.db.credentials`. Settings take precedence over the DB row.
 - **Auth is the Plex account, not a password store**: the API needs a session
   (`core/session.py`, signed with `settings.secret` + the Plex token) once a Plex
-  credential exists. `/api/auth/*` is always open; a fresh install is open so setup
-  can run; `auth = false` in `.config` turns enforcement off deliberately. Never
-  add a second identity — one user, one library.
+  credential exists. Sign with the **stored** token (`owner_token(db)`), never the
+  one a login just minted — Plex issues a fresh token per PIN login, so that cookie
+  verifies against nothing and the login 401s forever. `/api/auth/*` is always open;
+  a fresh install is open so setup can run; `auth = false` in `.config` turns
+  enforcement off deliberately. Never add a second identity — one user, one library.
 - **Jobs are data, not events**: progress lives in the `job` and `track_event` rows.
   The worker commits per track so the SSE stream can tail the database; there is no
   in-process registry to keep in sync. A run is stopped by `job.cancel_requested` at

@@ -269,3 +269,11 @@ once, racing Plex's confirmation. Fixed in `0a2a53b`.
 - **Fuzzy ladder re-points a record.** Mitigated: rungs above exact never write when
   more than one candidate matches, and holding an existing record on a new ambiguous
   match is a test case.
+
+### One asymmetry, on purpose
+
+`unrecorded_target` counts as a *skip* in a relay run and as an *error* in a reset.
+In a run, nobody asked about that row and leaving it alone is correct, so it must not
+turn a healthy run into a partial one. In a reset the user asked us to undo our
+writes, and a row we cannot undo is a failure of that request. Both are reported with
+the same typed reason, so the UI can present either framing without parsing text.

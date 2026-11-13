@@ -2,10 +2,8 @@
 	import { resolve } from '$app/paths';
 	import { SvelteSet } from 'svelte/reactivity';
 
-	interface Candidate {
-		artist: string;
-		title: string;
-	}
+	import CandidatePicker from '$lib/components/CandidatePicker.svelte';
+	import type { Candidate } from '$lib/types/relay';
 
 	interface UnmatchedTrack {
 		artist: string;
@@ -16,6 +14,7 @@
 		candidates: Candidate[];
 		count: number;
 		has_mapping: boolean;
+		last_failed: string;
 	}
 
 	const reasonLabel: Record<string, string> = {
@@ -113,6 +112,14 @@
 		} finally {
 			loading = false;
 		}
+	}
+
+	function pickCandidate(t: UnmatchedTrack, candidate: Candidate) {
+		const form = formState[trackKey(t)];
+		if (!form) return;
+		form.mappedArtist = candidate.artist;
+		form.mappedTitle = candidate.title;
+		form.recordingMbid = candidate.recording_mbid ?? '';
 	}
 
 	async function saveMapping(t: UnmatchedTrack) {
@@ -239,7 +246,7 @@
 										{#if reasonLabel[track.reason]}
 											<span class="fail-count">{reasonLabel[track.reason]}</span>
 										{/if}
-										<span class="fail-count">{track.count}× failed</span>
+										<span class="fail-count" title={track.last_failed}>{track.count}× failed</span>
 									</span>
 								</span>
 								<span class="expand-arrow" class:rotated={isOpen} aria-hidden="true">›</span>
@@ -247,6 +254,13 @@
 
 							{#if isOpen && form}
 								<div class="mapping-form">
+									{#if track.candidates.length > 0}
+										<CandidatePicker
+											candidates={track.candidates}
+											onpick={(candidate) => pickCandidate(track, candidate)}
+										/>
+									{/if}
+
 									<div class="form-hint">
 										Override the artist and title to search for in {serviceLabel[
 											track.target_service

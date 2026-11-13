@@ -10,7 +10,7 @@
 		actions,
 		children
 	}: {
-		/** The port name on the card: FROM, TO. */
+		/** The port name on the card: FROM, TO, TRIGGER. */
 		label: string;
 		tone?: 'source' | 'target' | 'danger' | 'neutral';
 		/** An unallocated node: dashed, no fill, and it invites a click. */
@@ -22,7 +22,7 @@
 
 	const accent: Record<string, string> = {
 		source: 'bg-primary',
-		target: 'bg-emerald-500',
+		target: 'bg-ok',
 		danger: 'bg-destructive',
 		neutral: 'bg-muted-foreground'
 	};
@@ -30,25 +30,21 @@
 
 <div
 	class={cn(
-		'relative w-full rounded-lg border bg-card text-card-foreground shadow-sm',
-		ghost ? 'border-border/60 bg-transparent shadow-none' : 'border-border',
+		'relative w-full rounded-lg border bg-card text-card-foreground',
+		ghost ? 'border-dashed border-border bg-transparent' : 'border-border',
 		!ghost && tone === 'danger' && 'border-destructive/40',
 		className
 	)}
 	data-tone={tone}
 >
-	<div class="flex items-center gap-2.5 px-5 pt-3">
-		<span class={cn('size-2 shrink-0 rounded-full', accent[tone])} aria-hidden="true"></span>
-		<span
-			class="font-heading text-xs font-semibold tracking-[0.18em] text-muted-foreground uppercase"
-		>
-			{label}
-		</span>
-		<div class="ml-auto flex items-center gap-1.5">
+	<div class="flex items-center gap-2 px-4 pt-2.5">
+		<span class={cn('size-1.5 shrink-0 rounded-full', accent[tone])} aria-hidden="true"></span>
+		<span class="eyebrow">{label}</span>
+		<div class="ml-auto flex items-center gap-1">
 			{@render actions?.()}
 		</div>
 	</div>
-	<div class="px-5 pt-3 pb-4">
+	<div class="px-4 pt-2 pb-3.5">
 		{@render children?.()}
 	</div>
 </div>

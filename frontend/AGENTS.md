@@ -46,10 +46,18 @@ After completing the code, ask the user if they want a playground link. Only cal
   add one; new UI uses the tokens (`bg-card`, `text-muted-foreground`,
   `border-border`), never literal colours.
 - **Home is a flow builder**, not a form: `src/lib/components/flow/` owns the
-  nodes, the connector and the run dock, `src/lib/components/jobs/` owns the
-  collapsible queue rail. The page keeps state and API calls; the setup wizard
-  below `{step === 'done'}` is a separate, older surface — leave it alone
-  unless a ticket says otherwise.
+  nodes, the connector and the run dock; `AppHeader` and `ActivityRail` frame
+  every signed-in page. The page keeps state and API calls.
+- **Reach for `src/lib/components/ui/` first** (`button`, `input`, `label`,
+  `checkbox`, `native-select`, `badge`, `card`, `collapsible`, `separator`). A
+  literal `<input>`/`<select>` or a hand-rolled `.btn` is a bug, not a shortcut.
+- **Status lives in `src/lib/format.ts`**: `statusLabel`/`statusTone` → `Tone`
+  (`ok|warn|err|info|muted`) → `TONE_DOT`/`TONE_TEXT`/`TONE_CHIP`. One meaning
+  per tone, and a zero error count is never red. Do not pick a colour per page.
+- **Four-step type scale** (`text-xs`, `text-sm`, `text-base`, `text-lg`/
+  `text-xl`). No arbitrary sizes. Numbers use tabular figures app-wide.
+- The canvas and the run dock share `max-w-4xl`; the canvas is its own scroll
+  container (`min-h-0 flex-1 overflow-y-auto`) and nothing inside it is sticky.
 - The canvas is a **vertical chain** (one source → N targets) on purpose: the
   engine takes exactly one source, so a free-form graph would promise fan-in the
   pipeline cannot deliver.

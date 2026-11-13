@@ -1,9 +1,16 @@
+/** A typed engine outcome: `written | reverted | skipped | unmatched | failed`. */
+export type Outcome = 'written' | 'reverted' | 'skipped' | 'unmatched' | 'failed';
+
 export interface TrackEvent {
 	artist: string;
 	title: string;
 	target: string;
 	success: boolean;
 	error?: string | null;
+	/** What the engine decided. Select on `reason`, never on `error` text. */
+	outcome?: Outcome | string | null;
+	reason?: string | null;
+	candidates?: unknown[];
 }
 
 export interface JobData {

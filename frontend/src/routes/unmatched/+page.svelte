@@ -1,9 +1,14 @@
 <script lang="ts">
-	import { resolve } from '$app/paths';
 	import { SvelteSet } from 'svelte/reactivity';
 
+	import AppHeader from '$lib/components/AppHeader.svelte';
 	import CandidatePicker from '$lib/components/CandidatePicker.svelte';
+	import { Button } from '$lib/components/ui/button';
+	import { Input } from '$lib/components/ui/input';
+	import ServiceMark from '$lib/components/flow/ServiceMark.svelte';
 	import type { Candidate } from '$lib/types/relay';
+	import type { SourceId } from '$lib/types/relay';
+	import { cn } from '$lib/utils';
 
 	interface UnmatchedTrack {
 		artist: string;
@@ -16,13 +21,6 @@
 		has_mapping: boolean;
 		last_failed: string;
 	}
-
-	const reasonLabel: Record<string, string> = {
-		no_match: 'No match',
-		ambiguous_match: 'Ambiguous',
-		no_recording_mbid: 'No MBID',
-		missing_metadata: 'Missing artist/title'
-	};
 
 	interface UnrevertableRecord {
 		artist: string;
@@ -44,11 +42,35 @@
 		created_at: string;
 	}
 
+	/** Rows shown per service group before a "show all" disclosure. */
+	const PER_GROUP = 12;
+
+	const SERVICE_LABEL: Record<string, string> = {
+		plex: 'Plex',
+		lastfm: 'Last.fm',
+		listenbrainz: 'ListenBrainz',
+		all: 'All services'
+	};
+
+	const SERVICE_ORDER = ['listenbrainz', 'lastfm', 'plex', 'all'];
+
+	const REASON_LABEL: Record<string, string> = {
+		no_match: 'no match',
+		ambiguous_match: 'ambiguous',
+		no_recording_mbid: 'no MBID',
+		missing_metadata: 'missing title'
+	};
+
 	let unmatched = $state<UnmatchedTrack[]>([]);
 	let mappings = $state<Mapping[]>([]);
 	let unrevertable = $state<UnrevertableRecord[]>([]);
 	let loading = $state(true);
 	let error = $state('');
+
+	let query = $state('');
+	let serviceFilter = $state('all');
+	/** Groups whose every row is on screen. */
+	const openGroups = new SvelteSet<string>();
 
 	// Per-track form state: keyed by `${artist}||${title}||${target_service}`
 	type FormKey = string;
@@ -85,7 +107,7 @@
 						mappedArtist: t.artist,
 						mappedTitle: t.title,
 						recordingMbid: '',
-						targetService: t.target_service === 'all' ? 'all' : t.target_service,
+						targetService: t.target_service,
 						saving: false,
 						saveError: ''
 					}
@@ -148,9 +170,7 @@
 			}
 			const mapping: Mapping = await res.json();
 			mappings = [mapping, ...mappings];
-			// Mark the unmatched track as mapped
 			unmatched = unmatched.map((u) => (trackKey(u) === k ? { ...u, has_mapping: true } : u));
-			// Collapse the form
 			expanded.delete(k);
 		} catch {
 			form.saveError = 'Network error';
@@ -164,10 +184,9 @@
 			const res = await fetch(`/api/relay/mappings/${id}`, { method: 'DELETE' });
 			if (!res.ok) return;
 			mappings = mappings.filter((m) => m.id !== id);
-			// Re-check unmatched tracks
 			await load();
 		} catch {
-			// silently ignore
+			// A failed delete leaves the row on screen; reloading is the repair.
 		}
 	}
 
@@ -175,688 +194,392 @@
 		load();
 	});
 
-	const serviceLabel: Record<string, string> = {
-		plex: 'Plex',
-		lastfm: 'Last.fm',
-		listenbrainz: 'ListenBrainz',
-		all: 'All services'
-	};
+	// ── Filtering and grouping ────────────────────────────────────────────────
+	const pending = $derived(unmatched.filter((u) => !u.has_mapping));
+	const resolved = $derived(unmatched.filter((u) => u.has_mapping));
+
+	const counts = $derived.by(() => {
+		const out: Record<string, number> = {};
+		for (const t of pending) out[t.target_service] = (out[t.target_service] ?? 0) + 1;
+		return out;
+	});
+
+	const filters = $derived([
+		{ id: 'all', label: 'All', count: pending.length },
+		...SERVICE_ORDER.filter((svc) => (counts[svc] ?? 0) > 0).map((svc) => ({
+			id: svc,
+			label: SERVICE_LABEL[svc] ?? svc,
+			count: counts[svc] ?? 0
+		}))
+	]);
+
+	const visibleTracks = $derived.by(() => {
+		const needle = query.trim().toLowerCase();
+		return pending
+			.filter((t) => serviceFilter === 'all' || t.target_service === serviceFilter)
+			.filter((t) => !needle || `${t.artist} ${t.title}`.toLowerCase().includes(needle));
+	});
+
+	/** One group per target service, biggest first: the queue is a workload. */
+	const groups = $derived.by(() => {
+		const by: Record<string, UnmatchedTrack[]> = {};
+		for (const t of visibleTracks) {
+			(by[t.target_service] ??= []).push(t);
+		}
+		return Object.entries(by)
+			.map(([service, rows]) => ({ service, rows }))
+			.sort(
+				(a, b) =>
+					b.rows.length - a.rows.length ||
+					SERVICE_ORDER.indexOf(a.service) - SERVICE_ORDER.indexOf(b.service)
+			);
+	});
 </script>
 
 <svelte:head>
-	<title>Unmatched Tracks · RatingRelay</title>
+	<title>Unmatched · RatingRelay</title>
 </svelte:head>
 
-<div class="page-root">
-	<div class="bg-noise" aria-hidden="true"></div>
+<div class="flex h-dvh w-full flex-col overflow-hidden bg-background text-foreground">
+	<AppHeader />
 
-	<main class="page-main">
-		<div class="top-bar">
-			<a href={resolve('/')} class="back-link">
-				<svg viewBox="0 0 16 16" fill="currentColor" width="12" height="12" aria-hidden="true">
-					<path
-						d="M10 3L5 8l5 5"
-						stroke="currentColor"
-						stroke-width="1.5"
-						fill="none"
-						stroke-linecap="round"
-						stroke-linejoin="round"
+	<main class="min-h-0 flex-1 overflow-y-auto">
+		<div class="mx-auto w-full max-w-4xl space-y-4 px-8 py-7">
+			<div>
+				<h1 class="text-xl font-semibold tracking-tight">Unmatched</h1>
+				<p class="mt-1 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+					Tracks that could not be matched in a target are held here rather than guessed at. A
+					mapping fixes the search for every future run.
+				</p>
+			</div>
+
+			{#if loading}
+				<p class="py-16 text-center text-sm text-muted-foreground">Loading…</p>
+			{:else if error}
+				<p class="py-16 text-center text-sm text-destructive">{error}</p>
+			{:else}
+				<!-- ── The queue ────────────────────────────────────────────────── -->
+				<div class="flex flex-wrap items-center gap-2">
+					<div
+						class="inline-flex items-center gap-0.5 rounded-md border border-border bg-card p-0.5"
+					>
+						{#each filters as f (f.id)}
+							<button
+								type="button"
+								onclick={() => (serviceFilter = f.id)}
+								aria-pressed={serviceFilter === f.id}
+								class={cn(
+									'inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-sm transition-colors',
+									serviceFilter === f.id
+										? 'bg-muted text-foreground'
+										: 'text-muted-foreground hover:text-foreground'
+								)}
+							>
+								{f.label}
+								<span class="font-mono text-xs tabular-nums opacity-60">{f.count}</span>
+							</button>
+						{/each}
+					</div>
+
+					<Input
+						bind:value={query}
+						type="search"
+						placeholder="Search artist or title…"
+						aria-label="Search unmatched tracks"
+						class="h-8 w-64 bg-card"
 					/>
-				</svg>
-				Home
-			</a>
-		</div>
-
-		<div class="page-heading">
-			<h1 class="page-title">Unmatched Tracks</h1>
-			<p class="page-subtitle">
-				Tracks that couldn't be matched in a target service. Define mappings to correct the search.
-			</p>
-		</div>
-
-		{#if loading}
-			<div class="empty-state">Loading…</div>
-		{:else if error}
-			<div class="error-state">{error}</div>
-		{:else}
-			<!-- Unmatched section -->
-			<div class="section-card">
-				<div class="section-label">
-					Needs attention
-					{#if unmatched.filter((u) => !u.has_mapping).length > 0}
-						<span class="badge">{unmatched.filter((u) => !u.has_mapping).length}</span>
-					{/if}
 				</div>
 
-				{#if unmatched.filter((u) => !u.has_mapping).length === 0}
-					<div class="empty-state-inner">No unresolved unmatched tracks. Nice!</div>
+				{#if pending.length === 0}
+					<div class="panel px-4 py-10 text-center">
+						<p class="text-sm text-foreground">Nothing is waiting.</p>
+						<p class="mt-1 text-sm text-muted-foreground">
+							Every track the relay has seen resolved to exactly one recording.
+						</p>
+					</div>
+				{:else if groups.length === 0}
+					<p class="panel px-4 py-10 text-center text-sm text-muted-foreground">
+						No unmatched tracks match this filter.
+					</p>
 				{:else}
-					{#each unmatched.filter((u) => !u.has_mapping) as track (trackKey(track))}
-						{@const k = trackKey(track)}
-						{@const form = formState[k]}
-						{@const isOpen = expanded.has(k)}
-						<div class="track-row">
-							<button class="track-summary" onclick={() => toggleExpand(track)}>
-								<span class="track-info">
-									<span class="track-name">{track.artist} – {track.title}</span>
-									<span class="track-meta">
-										<span class="service-chip"
-											>{serviceLabel[track.target_service] ?? track.target_service}</span
-										>
-										{#if reasonLabel[track.reason]}
-											<span class="fail-count">{reasonLabel[track.reason]}</span>
-										{/if}
-										<span class="fail-count" title={track.last_failed}>{track.count}× failed</span>
-									</span>
+					{#each groups as group (group.service)}
+						{@const isOpen = openGroups.has(group.service)}
+						{@const rows = isOpen ? group.rows : group.rows.slice(0, PER_GROUP)}
+						<section class="panel overflow-hidden">
+							<div class="flex items-center gap-2 border-b border-border px-3 py-2">
+								<span class="grid size-4 place-items-center">
+									{#if group.service === 'all'}
+										<span class="size-2 rounded-full bg-muted-foreground"></span>
+									{:else}
+										<ServiceMark service={group.service as SourceId} size={14} />
+									{/if}
 								</span>
-								<span class="expand-arrow" class:rotated={isOpen} aria-hidden="true">›</span>
-							</button>
+								<h2 class="text-sm font-medium text-foreground">
+									{SERVICE_LABEL[group.service] ?? group.service}
+								</h2>
+								<span class="font-mono text-xs text-muted-foreground tabular-nums">
+									{group.rows.length}
+								</span>
+							</div>
 
-							{#if isOpen && form}
-								<div class="mapping-form">
-									{#if track.candidates.length > 0}
-										<CandidatePicker
-											candidates={track.candidates}
-											onpick={(candidate) => pickCandidate(track, candidate)}
-										/>
-									{/if}
-
-									<div class="form-hint">
-										Override the artist and title to search for in {serviceLabel[
-											track.target_service
-										] ?? track.target_service}.
-									</div>
-
-									<div class="form-row">
-										<label class="form-label" for="ma-{k}">Search artist</label>
-										<input
-											id="ma-{k}"
-											class="form-input"
-											bind:value={form.mappedArtist}
-											placeholder={track.artist}
-										/>
-									</div>
-									<div class="form-row">
-										<label class="form-label" for="mt-{k}">Search title</label>
-										<input
-											id="mt-{k}"
-											class="form-input"
-											bind:value={form.mappedTitle}
-											placeholder={track.title}
-										/>
-									</div>
-
-									{#if track.target_service === 'listenbrainz'}
-										<div class="form-row">
-											<label class="form-label" for="mbid-{k}"
-												>Recording MBID <span class="optional">(optional, skips search)</span
-												></label
-											>
-											<input
-												id="mbid-{k}"
-												class="form-input"
-												bind:value={form.recordingMbid}
-												placeholder="e.g. 3a1f4c2e-…"
-											/>
-										</div>
-									{/if}
-
-									<div class="form-row">
-										<label class="form-label" for="svc-{k}">Apply to</label>
-										<select id="svc-{k}" class="form-select" bind:value={form.targetService}>
-											<option value="all">All services</option>
-											<option value="plex">Plex only</option>
-											<option value="lastfm">Last.fm only</option>
-											<option value="listenbrainz">ListenBrainz only</option>
-										</select>
-									</div>
-
-									{#if form.saveError}
-										<div class="form-error">{form.saveError}</div>
-									{/if}
-
-									<div class="form-actions">
+							<ul class="divide-y divide-border/60">
+								{#each rows as track (trackKey(track))}
+									{@const k = trackKey(track)}
+									{@const form = formState[k]}
+									{@const open = expanded.has(k)}
+									<li>
 										<button
-											class="btn-secondary"
+											type="button"
 											onclick={() => toggleExpand(track)}
-											disabled={form.saving}
+											aria-expanded={open}
+											class="flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-muted/40"
 										>
-											Cancel
+											<span class="min-w-0 flex-1">
+												<span class="block truncate text-sm text-foreground">
+													{track.artist}
+													<span class="text-muted-foreground">– {track.title}</span>
+												</span>
+												<span class="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs">
+													{#if REASON_LABEL[track.reason]}
+														<span class="text-warn">{REASON_LABEL[track.reason]}</span>
+													{/if}
+													<span class="text-muted-foreground" title={track.last_failed}>
+														{track.count}× failed
+													</span>
+													{#if track.candidates.length > 0}
+														<span class="text-muted-foreground">
+															· {track.candidates.length} candidates
+														</span>
+													{/if}
+												</span>
+											</span>
+											<span
+												class={cn(
+													'shrink-0 text-muted-foreground transition-transform',
+													open && 'rotate-90'
+												)}
+												aria-hidden="true"
+											>
+												›
+											</span>
 										</button>
-										<button
-											class="btn-primary"
-											onclick={() => saveMapping(track)}
-											disabled={form.saving}
-										>
-											{form.saving ? 'Saving…' : 'Save mapping'}
-										</button>
-									</div>
+
+										{#if open && form}
+											<div class="space-y-3 border-t border-border/60 bg-background/40 px-3 py-3">
+												{#if track.candidates.length > 0}
+													<CandidatePicker
+														candidates={track.candidates}
+														onpick={(candidate) => pickCandidate(track, candidate)}
+													/>
+												{/if}
+
+												<p class="text-xs text-muted-foreground">
+													Override the artist and title to search for in {SERVICE_LABEL[
+														track.target_service
+													] ?? track.target_service}.
+												</p>
+
+												<div class="grid gap-2 sm:grid-cols-2">
+													<label class="block">
+														<span class="text-xs text-muted-foreground">Search artist</span>
+														<input class="control mt-1 w-full" bind:value={form.mappedArtist} />
+													</label>
+													<label class="block">
+														<span class="text-xs text-muted-foreground">Search title</span>
+														<input class="control mt-1 w-full" bind:value={form.mappedTitle} />
+													</label>
+													{#if track.target_service === 'listenbrainz'}
+														<label class="block sm:col-span-2">
+															<span class="text-xs text-muted-foreground">
+																Recording MBID
+																<span class="opacity-70">(optional, skips the search)</span>
+															</span>
+															<input
+																class="control mt-1 w-full font-mono"
+																bind:value={form.recordingMbid}
+																placeholder="3a1f4c2e-…"
+															/>
+														</label>
+													{/if}
+													<label class="block">
+														<span class="text-xs text-muted-foreground">Apply to</span>
+														<select class="control mt-1 w-full" bind:value={form.targetService}>
+															<option value="all">All services</option>
+															<option value="plex">Plex only</option>
+															<option value="lastfm">Last.fm only</option>
+															<option value="listenbrainz">ListenBrainz only</option>
+														</select>
+													</label>
+												</div>
+
+												{#if form.saveError}
+													<p class="text-sm text-destructive">{form.saveError}</p>
+												{/if}
+
+												<div class="flex items-center gap-2">
+													<Button
+														variant="outline"
+														class="h-8 px-3 text-sm"
+														onclick={() => toggleExpand(track)}
+														disabled={form.saving}
+													>
+														Cancel
+													</Button>
+													<Button
+														class="h-8 px-3 text-sm"
+														onclick={() => saveMapping(track)}
+														disabled={form.saving}
+													>
+														{form.saving ? 'Saving…' : 'Save mapping'}
+													</Button>
+												</div>
+											</div>
+										{/if}
+									</li>
+								{/each}
+							</ul>
+
+							{#if group.rows.length > PER_GROUP}
+								<div class="border-t border-border px-3 py-1.5">
+									<button
+										type="button"
+										onclick={() =>
+											isOpen ? openGroups.delete(group.service) : openGroups.add(group.service)}
+										class="text-xs text-muted-foreground transition-colors hover:text-foreground"
+									>
+										{isOpen
+											? 'Show fewer'
+											: `Show all ${group.rows.length} (${group.rows.length - PER_GROUP} more)`}
+									</button>
 								</div>
 							{/if}
-						</div>
+						</section>
 					{/each}
 				{/if}
-			</div>
 
-			<!-- Already-mapped section -->
-			{#if unmatched.filter((u) => u.has_mapping).length > 0}
-				<div class="section-card resolved-section">
-					<div class="section-label">Resolved (mapping exists)</div>
-					{#each unmatched.filter((u) => u.has_mapping) as track (trackKey(track))}
-						<div class="track-row track-row-resolved">
-							<span class="track-info">
-								<span class="track-name resolved-name">{track.artist} – {track.title}</span>
-								<span class="track-meta">
-									<span class="service-chip"
-										>{serviceLabel[track.target_service] ?? track.target_service}</span
-									>
-								</span>
+				<!-- ── Resolved, mappings, and the writes a reset must leave be ─── -->
+				{#if resolved.length > 0}
+					<details class="panel group">
+						<summary
+							class="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-sm text-foreground"
+						>
+							<span class="eyebrow">Resolved by a mapping</span>
+							<span class="font-mono text-xs text-muted-foreground tabular-nums">
+								{resolved.length}
 							</span>
-							<span class="resolved-badge">mapped ✓</span>
-						</div>
-					{/each}
-				</div>
-			{/if}
-
-			<!-- Mappings section -->
-			<div class="section-card">
-				<div class="section-label">
-					All mappings
-					{#if mappings.length > 0}
-						<span class="badge badge-muted">{mappings.length}</span>
-					{/if}
-				</div>
-
-				{#if mappings.length === 0}
-					<div class="empty-state-inner">No mappings defined yet.</div>
-				{:else}
-					{#each mappings as m (m.id)}
-						<div class="mapping-row">
-							<div class="mapping-info">
-								<div class="mapping-original">{m.source_artist} – {m.source_title}</div>
-								<div class="mapping-arrow">↓</div>
-								<div class="mapping-override">
-									{m.mapped_artist} – {m.mapped_title}
-									{#if m.recording_mbid}
-										<span class="mbid-hint">mbid: {m.recording_mbid}</span>
-									{/if}
-								</div>
-							</div>
-							<div class="mapping-right">
-								<span class="service-chip"
-									>{serviceLabel[m.target_service] ?? m.target_service}</span
-								>
-								<button
-									class="delete-btn"
-									onclick={() => deleteMapping(m.id)}
-									title="Delete mapping"
-								>
-									<svg
-										viewBox="0 0 16 16"
-										fill="none"
-										stroke="currentColor"
-										stroke-width="1.5"
-										width="13"
-										height="13"
-									>
-										<path d="M3 4h10M6 4V2h4v2M5 4l.5 9h5L11 4" />
-									</svg>
-								</button>
-							</div>
-						</div>
-					{/each}
-				{/if}
-			</div>
-
-			<!-- Writes a reset cannot undo -->
-			{#if unrevertable.length > 0}
-				<div class="section-card">
-					<div class="section-label">
-						Cannot be undone
-						<span class="badge badge-muted">{unrevertable.length}</span>
-					</div>
-					<div class="section-note">
-						Written before RatingRelay recorded where it wrote. A reset left these alone rather than
-						guess, because clearing a wrong name removes somebody else's rating. Re-syncing the
-						track records them properly; names below are as stored (lowercase).
-					</div>
-					{#each unrevertable as r (`${r.target_service}::${r.artist}::${r.title}`)}
-						<div class="track-row">
-							<div class="track-row-static">
-								<span class="track-info">
-									<span class="track-name">{r.artist} – {r.title}</span>
-									<span class="track-meta">
-										<span class="service-chip"
-											>{serviceLabel[r.target_service] ?? r.target_service}</span
-										>
-										<span class="fail-count">{r.error}</span>
+							<span class="ml-auto text-xs text-muted-foreground group-open:hidden">show</span>
+							<span class="ml-auto hidden text-xs text-muted-foreground group-open:inline"
+								>hide</span
+							>
+						</summary>
+						<ul class="divide-y divide-border/60 border-t border-border">
+							{#each resolved as track (trackKey(track))}
+								<li class="flex items-center gap-2 px-3 py-1.5 text-sm">
+									<span class="min-w-0 flex-1 truncate">
+										{track.artist}
+										<span class="text-muted-foreground">– {track.title}</span>
 									</span>
-								</span>
-							</div>
+									<span class="shrink-0 text-xs text-ok">mapped</span>
+								</li>
+							{/each}
+						</ul>
+					</details>
+				{/if}
+
+				<details class="panel group">
+					<summary
+						class="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-sm text-foreground"
+					>
+						<span class="eyebrow">Mappings</span>
+						<span class="font-mono text-xs text-muted-foreground tabular-nums">
+							{mappings.length}
+						</span>
+						<span class="ml-auto text-xs text-muted-foreground group-open:hidden">show</span>
+						<span class="ml-auto hidden text-xs text-muted-foreground group-open:inline">hide</span>
+					</summary>
+					{#if mappings.length === 0}
+						<p class="border-t border-border px-3 py-6 text-center text-sm text-muted-foreground">
+							No mappings defined yet.
+						</p>
+					{:else}
+						<ul class="divide-y divide-border/60 border-t border-border">
+							{#each mappings as m (m.id)}
+								<li class="flex items-start gap-2 px-3 py-2">
+									<div class="min-w-0 flex-1 text-sm">
+										<div class="truncate text-muted-foreground">
+											{m.source_artist} – {m.source_title}
+										</div>
+										<div class="truncate text-foreground">
+											→ {m.mapped_artist} – {m.mapped_title}
+										</div>
+										{#if m.recording_mbid}
+											<div class="truncate font-mono text-xs text-muted-foreground">
+												{m.recording_mbid}
+											</div>
+										{/if}
+									</div>
+									<span class="shrink-0 text-xs text-muted-foreground">
+										{SERVICE_LABEL[m.target_service] ?? m.target_service}
+									</span>
+									<button
+										type="button"
+										onclick={() => deleteMapping(m.id)}
+										title="Delete mapping"
+										aria-label="Delete mapping"
+										class="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+									>
+										<svg
+											viewBox="0 0 16 16"
+											fill="none"
+											stroke="currentColor"
+											stroke-width="1.5"
+											width="12"
+											height="12"
+										>
+											<path d="M3 4h10M6 4V2h4v2M5 4l.5 9h5L11 4" />
+										</svg>
+									</button>
+								</li>
+							{/each}
+						</ul>
+					{/if}
+				</details>
+
+				{#if unrevertable.length > 0}
+					<details class="panel group">
+						<summary
+							class="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-sm text-foreground"
+						>
+							<span class="eyebrow text-warn">A reset cannot undo these</span>
+							<span class="font-mono text-xs text-warn tabular-nums">{unrevertable.length}</span>
+							<span class="ml-auto text-xs text-muted-foreground group-open:hidden">show</span>
+							<span class="ml-auto hidden text-xs text-muted-foreground group-open:inline"
+								>hide</span
+							>
+						</summary>
+						<div
+							class="border-t border-border px-3 py-2 text-xs leading-relaxed text-muted-foreground"
+						>
+							Written before RatingRelay recorded where it wrote. A reset left these alone rather
+							than guess, because clearing the wrong name removes somebody else's rating. Re-syncing
+							the track records them properly; names below are as stored (lowercase).
 						</div>
-					{/each}
-				</div>
+						<ul class="divide-y divide-border/60 border-t border-border">
+							{#each unrevertable as r (`${r.target_service}::${r.artist}::${r.title}`)}
+								<li class="flex items-start gap-2 px-3 py-1.5 text-sm">
+									<span class="min-w-0 flex-1 truncate">
+										{r.artist}
+										<span class="text-muted-foreground">– {r.title}</span>
+									</span>
+									<span class="shrink-0 text-xs text-muted-foreground">
+										{SERVICE_LABEL[r.target_service] ?? r.target_service}
+									</span>
+								</li>
+							{/each}
+						</ul>
+					</details>
+				{/if}
 			{/if}
-		{/if}
+		</div>
 	</main>
 </div>
-
-<style>
-	.page-root {
-		min-height: 100dvh;
-		display: grid;
-		place-items: start center;
-		background: oklch(0.12 0.01 40);
-		position: relative;
-		overflow: hidden;
-		padding: 2rem 1rem;
-	}
-
-	.bg-noise {
-		position: fixed;
-		inset: 0;
-		background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
-		background-size: 200px 200px;
-		pointer-events: none;
-		z-index: 0;
-		opacity: 0.6;
-	}
-
-	.page-main {
-		position: relative;
-		z-index: 1;
-		width: 100%;
-		max-width: 680px;
-		display: flex;
-		flex-direction: column;
-		gap: 0.75rem;
-	}
-
-	.top-bar {
-		display: flex;
-		align-items: center;
-		margin-bottom: 0.25rem;
-	}
-
-	.back-link {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.375rem;
-		font-size: 0.8rem;
-		font-family: var(--font-heading);
-		font-weight: 500;
-		color: oklch(0.45 0.015 40);
-		text-decoration: none;
-		transition: color 0.15s;
-	}
-	.back-link:hover {
-		color: oklch(0.7 0.02 40);
-	}
-
-	.page-heading {
-		margin-bottom: 0.5rem;
-	}
-
-	.page-title {
-		font-size: 1.125rem;
-		font-family: var(--font-heading);
-		font-weight: 700;
-		color: oklch(0.82 0.015 50);
-		margin: 0 0 0.25rem;
-		letter-spacing: -0.02em;
-	}
-
-	.page-subtitle {
-		font-size: 0.8rem;
-		color: oklch(0.42 0.01 40);
-		margin: 0;
-	}
-
-	.empty-state,
-	.error-state {
-		padding: 3rem 0;
-		text-align: center;
-		font-size: 0.875rem;
-		color: oklch(0.4 0.01 40);
-	}
-	.error-state {
-		color: oklch(0.6 0.18 22);
-	}
-
-	/* ── Section cards ────────────────────────────────────────────────────── */
-	.section-card {
-		background: oklch(0.16 0.015 38);
-		border: 1px solid oklch(0.22 0.02 38);
-	}
-
-	.section-label {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		font-size: 0.6rem;
-		letter-spacing: 0.12em;
-		text-transform: uppercase;
-		color: oklch(0.38 0.01 40);
-		padding: 0.625rem 1rem;
-		font-family: var(--font-heading);
-		font-weight: 700;
-		border-bottom: 1px solid oklch(0.2 0.01 40);
-	}
-
-	.badge {
-		font-size: 0.6875rem;
-		font-variant-numeric: tabular-nums;
-		background: oklch(0.55 0.16 38 / 0.18);
-		color: oklch(0.65 0.12 38);
-		padding: 0 0.35rem;
-		letter-spacing: 0;
-		text-transform: none;
-		font-weight: 600;
-	}
-	.badge-muted {
-		background: oklch(0.25 0.01 40);
-		color: oklch(0.48 0.01 40);
-	}
-
-	.empty-state-inner {
-		padding: 1.5rem 1rem;
-		font-size: 0.8125rem;
-		color: oklch(0.38 0.01 40);
-		text-align: center;
-	}
-
-	/* ── Track rows ───────────────────────────────────────────────────────── */
-	.track-row {
-		border-bottom: 1px solid oklch(0.185 0.01 40);
-	}
-	.track-row:last-child {
-		border-bottom: none;
-	}
-
-	.track-summary {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		width: 100%;
-		padding: 0.6rem 1rem;
-		background: none;
-		border: none;
-		cursor: pointer;
-		color: inherit;
-		text-align: left;
-		gap: 0.75rem;
-		transition: background 0.1s;
-	}
-	.track-summary:hover {
-		background: oklch(0.18 0.015 38);
-	}
-
-	.track-row-static {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: 0.6rem 1rem;
-		gap: 0.75rem;
-	}
-
-	.section-note {
-		padding: 0.75rem 1rem;
-		font-size: 0.75rem;
-		line-height: 1.5;
-		color: oklch(0.4 0.01 40);
-		border-bottom: 1px solid oklch(0.185 0.01 40);
-	}
-
-	.track-row-resolved .track-summary,
-	.track-row-resolved {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: 0.5rem 1rem;
-	}
-
-	.track-info {
-		display: flex;
-		flex-direction: column;
-		gap: 0.2rem;
-		min-width: 0;
-	}
-
-	.track-name {
-		font-size: 0.8125rem;
-		color: oklch(0.72 0.015 50);
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-	.resolved-name {
-		color: oklch(0.48 0.01 40);
-	}
-
-	.track-meta {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-	}
-
-	.service-chip {
-		font-size: 0.6rem;
-		letter-spacing: 0.06em;
-		text-transform: uppercase;
-		font-family: var(--font-heading);
-		font-weight: 600;
-		color: oklch(0.48 0.015 240);
-		border: 1px solid oklch(0.3 0.01 240 / 0.5);
-		padding: 0.1rem 0.35rem;
-	}
-
-	.fail-count {
-		font-size: 0.7rem;
-		color: oklch(0.42 0.01 40);
-	}
-
-	.expand-arrow {
-		font-size: 1rem;
-		color: oklch(0.35 0.01 40);
-		flex-shrink: 0;
-		transition: transform 0.15s;
-		line-height: 1;
-	}
-	.expand-arrow.rotated {
-		transform: rotate(90deg);
-	}
-
-	.resolved-badge {
-		font-size: 0.65rem;
-		color: oklch(0.58 0.14 140);
-		flex-shrink: 0;
-	}
-
-	/* ── Mapping form ─────────────────────────────────────────────────────── */
-	.mapping-form {
-		padding: 0.75rem 1rem 1rem;
-		background: oklch(0.14 0.012 38);
-		border-top: 1px solid oklch(0.2 0.01 40);
-		display: flex;
-		flex-direction: column;
-		gap: 0.6rem;
-	}
-
-	.form-hint {
-		font-size: 0.75rem;
-		color: oklch(0.42 0.01 40);
-	}
-
-	.form-row {
-		display: flex;
-		flex-direction: column;
-		gap: 0.2rem;
-	}
-
-	.form-label {
-		font-size: 0.65rem;
-		letter-spacing: 0.07em;
-		text-transform: uppercase;
-		font-family: var(--font-heading);
-		font-weight: 600;
-		color: oklch(0.42 0.01 40);
-	}
-
-	.optional {
-		font-size: 0.6rem;
-		letter-spacing: 0;
-		text-transform: none;
-		font-weight: 400;
-		color: oklch(0.38 0.01 40);
-	}
-
-	.form-input,
-	.form-select {
-		background: oklch(0.18 0.015 38);
-		border: 1px solid oklch(0.26 0.02 38);
-		color: oklch(0.78 0.015 50);
-		font-size: 0.8125rem;
-		padding: 0.4rem 0.6rem;
-		font-family: inherit;
-		width: 100%;
-		outline: none;
-		transition: border-color 0.15s;
-	}
-	.form-input:focus,
-	.form-select:focus {
-		border-color: oklch(0.55 0.16 38 / 0.6);
-	}
-	.form-select {
-		cursor: pointer;
-	}
-
-	.form-error {
-		font-size: 0.75rem;
-		color: oklch(0.65 0.18 22);
-	}
-
-	.form-actions {
-		display: flex;
-		gap: 0.5rem;
-		justify-content: flex-end;
-		margin-top: 0.25rem;
-	}
-
-	.btn-primary {
-		padding: 0.375rem 0.875rem;
-		font-size: 0.75rem;
-		font-family: var(--font-heading);
-		font-weight: 600;
-		background: oklch(0.55 0.16 38 / 0.2);
-		border: 1px solid oklch(0.55 0.16 38 / 0.5);
-		color: oklch(0.78 0.12 38);
-		cursor: pointer;
-		transition:
-			background 0.15s,
-			color 0.15s;
-	}
-	.btn-primary:hover:not(:disabled) {
-		background: oklch(0.55 0.16 38 / 0.3);
-		color: oklch(0.88 0.12 38);
-	}
-	.btn-primary:disabled {
-		opacity: 0.45;
-		cursor: not-allowed;
-	}
-
-	.btn-secondary {
-		padding: 0.375rem 0.75rem;
-		font-size: 0.75rem;
-		font-family: var(--font-heading);
-		font-weight: 500;
-		background: transparent;
-		border: 1px solid oklch(0.26 0.01 40);
-		color: oklch(0.45 0.01 40);
-		cursor: pointer;
-		transition:
-			border-color 0.15s,
-			color 0.15s;
-	}
-	.btn-secondary:hover:not(:disabled) {
-		border-color: oklch(0.38 0.01 40);
-		color: oklch(0.6 0.01 40);
-	}
-	.btn-secondary:disabled {
-		opacity: 0.45;
-		cursor: not-allowed;
-	}
-
-	/* ── Mapping rows ─────────────────────────────────────────────────────── */
-	.mapping-row {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 1rem;
-		padding: 0.625rem 1rem;
-		border-bottom: 1px solid oklch(0.185 0.01 40);
-	}
-	.mapping-row:last-child {
-		border-bottom: none;
-	}
-
-	.mapping-info {
-		display: flex;
-		flex-direction: column;
-		gap: 0.1rem;
-		min-width: 0;
-	}
-
-	.mapping-original {
-		font-size: 0.8rem;
-		color: oklch(0.52 0.01 40);
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-
-	.mapping-arrow {
-		font-size: 0.7rem;
-		color: oklch(0.35 0.01 40);
-		line-height: 1;
-	}
-
-	.mapping-override {
-		font-size: 0.8rem;
-		color: oklch(0.72 0.015 50);
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		flex-wrap: wrap;
-	}
-
-	.mbid-hint {
-		font-size: 0.65rem;
-		color: oklch(0.42 0.01 40);
-		font-family: monospace;
-	}
-
-	.mapping-right {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		flex-shrink: 0;
-	}
-
-	.delete-btn {
-		background: none;
-		border: none;
-		cursor: pointer;
-		color: oklch(0.4 0.01 40);
-		padding: 0.25rem;
-		display: flex;
-		align-items: center;
-		transition: color 0.15s;
-	}
-	.delete-btn:hover {
-		color: oklch(0.65 0.18 22);
-	}
-
-	.resolved-section {
-		opacity: 0.7;
-	}
-</style>

@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { Button } from '$lib/components/ui/button';
+	import { Checkbox } from '$lib/components/ui/checkbox';
 	import { repeatOptions } from '$lib/relay';
 	import { cn } from '$lib/utils';
+	import FlowNode from './FlowNode.svelte';
 
 	let {
 		repeat = $bindable(),
@@ -25,13 +27,15 @@
 	);
 </script>
 
-<div class="shrink-0 border-t border-border/70 bg-background/85 px-8 py-4 backdrop-blur">
-	<div class="mx-auto flex w-full max-w-4xl flex-wrap items-center gap-x-5 gap-y-3">
+<!-- The trigger is the last node in the chain, not a bar bolted to the bottom
+     of the screen: what you set here is part of the flow you just built. -->
+<FlowNode label="Trigger" tone={mode === 'reset' ? 'danger' : 'neutral'}>
+	<div class="flex flex-wrap items-center gap-x-4 gap-y-3">
 		{#if mode === 'run'}
-			<label class="flex items-center gap-2 text-base text-muted-foreground">
+			<label class="flex items-center gap-2 text-sm text-muted-foreground">
 				<span>Repeat</span>
 				<select
-					class="rounded-md border border-border bg-background px-2.5 py-1.5 text-base text-foreground"
+					class="h-8 rounded-md border border-border bg-background px-2 text-sm text-foreground"
 					bind:value={repeat}
 				>
 					{#each repeatOptions as opt (opt.value)}
@@ -42,23 +46,22 @@
 		{/if}
 
 		{#if mode === 'run' && repeat === 0}
-			<label class="flex cursor-pointer items-center gap-2 text-base text-muted-foreground">
-				<input
-					type="checkbox"
-					bind:checked={dryRun}
-					class="size-4 shrink-0 appearance-none rounded-sm border border-input bg-background checked:border-primary checked:bg-primary"
-				/>
+			<label class="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+				<Checkbox bind:checked={dryRun} />
 				<span>Dry run — write nothing</span>
 			</label>
 		{/if}
 
 		{#if mode === 'reset'}
-			<span class="text-base text-destructive">Writes that cannot be undone are left in place.</span
-			>
+			<span class="text-sm text-destructive">Writes that cannot be undone are left in place.</span>
 		{/if}
 
 		<Button
-			class={cn('ml-auto', mode === 'reset' && 'bg-destructive text-white hover:bg-destructive/90')}
+			size="lg"
+			class={cn(
+				'ml-auto h-9 px-4 text-sm',
+				mode === 'reset' && 'bg-destructive text-destructive-foreground hover:bg-destructive/90'
+			)}
 			disabled={!canRun || busy}
 			aria-busy={busy}
 			onclick={onrun}
@@ -90,4 +93,4 @@
 			{label}
 		</Button>
 	</div>
-</div>
+</FlowNode>

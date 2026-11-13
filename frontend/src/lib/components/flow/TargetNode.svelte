@@ -21,6 +21,11 @@
 		plexConfig?: PlexTargetConfig;
 		lbzConfig?: ListenBrainzTargetConfig;
 	} = $props();
+
+	const choices = [
+		{ value: 'love', label: 'Love' },
+		{ value: 'hate', label: 'Hate' }
+	] as const;
 </script>
 
 {#if allocated}
@@ -44,16 +49,14 @@
 			</button>
 		{/snippet}
 
-		<div class="flex items-center gap-3">
-			<ServiceMark service={option.id} size={24} />
-			<span class="font-heading text-lg font-medium">{option.name}</span>
-			<span
-				class="ml-auto inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/40 px-2.5 py-1 text-base"
-			>
+		<div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+			<ServiceMark service={option.id} size={22} />
+			<span class="text-lg font-medium">{option.name}</span>
+			<div class="ml-auto flex items-center gap-1.5">
 				{#if option.id === 'plex' && plexConfig}
-					<span class="text-muted-foreground">Rate as</span>
+					<span class="text-sm text-muted-foreground">Rate as</span>
 					<select
-						class="rounded bg-background px-1.5 py-0.5 text-base text-foreground"
+						class="h-8 rounded-md border border-border bg-background px-2 text-sm text-foreground"
 						bind:value={plexConfig.rating}
 					>
 						{#each plexStarOptions as opt (opt.value)}
@@ -61,40 +64,47 @@
 						{/each}
 					</select>
 				{:else if option.id === 'lastfm'}
-					<span class="text-muted-foreground">Love tracks</span>
+					<span class="text-sm text-muted-foreground">Love every track</span>
 				{:else if lbzConfig}
-					{#each [{ value: 'love', label: 'Love' }, { value: 'hate', label: 'Hate' }] as choice (choice.value)}
-						<button
-							type="button"
-							class={cn(
-								'rounded px-2.5 py-0.5 text-base transition-colors',
-								lbzConfig.feedbackType === choice.value
-									? 'bg-primary text-primary-foreground'
-									: 'text-muted-foreground hover:text-foreground'
-							)}
-							onclick={() => (lbzConfig.feedbackType = choice.value as 'love' | 'hate')}
-						>
-							{choice.label}
-						</button>
-					{/each}
+					<div
+						class="inline-flex items-center gap-0.5 rounded-md border border-border bg-background p-0.5"
+					>
+						{#each choices as choice (choice.value)}
+							<button
+								type="button"
+								class={cn(
+									'rounded px-2.5 py-0.5 text-sm transition-colors',
+									lbzConfig.feedbackType === choice.value
+										? 'bg-primary text-primary-foreground'
+										: 'text-muted-foreground hover:text-foreground'
+								)}
+								onclick={() => (lbzConfig.feedbackType = choice.value)}
+								aria-pressed={lbzConfig.feedbackType === choice.value}
+							>
+								{choice.label}
+							</button>
+						{/each}
+					</div>
 				{/if}
-			</span>
+			</div>
 		</div>
 	</FlowNode>
 {:else}
 	<button
 		type="button"
 		onclick={onadd}
-		class="group flex w-full items-center gap-3 rounded-lg border border-dashed border-border/70 px-4 py-3.5 text-left transition-colors hover:border-primary/60 hover:bg-primary/5"
+		class="group flex w-full items-center gap-2.5 rounded-lg border border-dashed border-border/70 px-4 py-2.5 text-left transition-colors hover:border-primary/60 hover:bg-primary/5"
 	>
-		<span
-			class="grid size-6 shrink-0 place-items-center rounded-full border border-border text-muted-foreground transition-colors group-hover:border-primary group-hover:text-primary"
+		<svg
+			viewBox="0 0 16 16"
+			width="11"
+			height="11"
+			class="shrink-0 text-muted-foreground transition-colors group-hover:text-primary"
+			aria-hidden="true"
 		>
-			<svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true">
-				<path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
-			</svg>
-		</span>
-		<span class="font-heading text-base font-medium">{option.name}</span>
-		<span class="truncate text-base text-muted-foreground">{option.hint}</span>
+			<path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+		</svg>
+		<span class="text-sm font-medium text-foreground">{option.name}</span>
+		<span class="truncate text-sm text-muted-foreground">{option.hint}</span>
 	</button>
 {/if}

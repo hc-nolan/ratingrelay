@@ -27,15 +27,15 @@ export function summarizeTargets(cfgs: Record<string, unknown>[]): string {
 /** Tailwind classes for a job's status dot, so no page has to own the rule. */
 export function statusColor(status: string): string {
 	const map: Record<string, string> = {
-		queued: 'bg-muted-foreground/60',
-		scheduled: 'bg-sky-500',
-		running: 'bg-amber-400 animate-pulse',
-		completed: 'bg-emerald-500',
-		partial: 'bg-amber-500',
+		queued: 'bg-muted-foreground/50',
+		scheduled: 'bg-muted-foreground/50',
+		running: 'bg-info animate-pulse',
+		completed: 'bg-ok',
+		partial: 'bg-warn',
 		failed: 'bg-destructive',
 		cancelled: 'bg-muted-foreground/30'
 	};
-	return map[status] ?? 'bg-muted-foreground/60';
+	return map[status] ?? 'bg-muted-foreground/50';
 }
 
 /** "in 3h 12m", "soon" — how long until a scheduled job next runs. */

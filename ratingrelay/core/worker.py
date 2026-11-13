@@ -9,6 +9,12 @@ at all, which is the whole point of the headless target.
 A running job is cancelled cooperatively: ``DELETE /api/relay/jobs/{id}`` sets
 ``job.cancel_requested``, and the worker checks that flag at each track boundary
 (after the track's event and sync record are written) and stops there.
+
+A job whose worker died is resumed, not repeated. The writes it made are in the
+sync store and its per-track events are in the journal, so a second attempt starts
+from those counters and does not re-journal the tracks the first attempt already
+reported (an ``already_synced`` outcome on a resumed attempt is the echo of work
+that was done before the crash, not work that just happened).
 """
 
 import asyncio
@@ -21,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ratingrelay.core.relay import execute_relay
 from ratingrelay.db import session_maker
-from ratingrelay.engine.types import TrackOutcome
+from ratingrelay.engine.types import Reason, TrackOutcome
 from ratingrelay.models.jobs import Job, TrackEvent
 from ratingrelay.schemas.relay import source_adapter as _source_adapter, targets_adapter as _targets_adapter
 from ratingrelay.settings import logger
@@ -80,15 +86,20 @@ async def run_job(job_id: str) -> None:
             return
 
         job.status = "running"
-        job.started_at = datetime.now(timezone.utc)
+        # A job that already started is being retried after its worker died.
+        # Its start time stays the first attempt's: it is one run.
+        resuming = job.started_at is not None
+        if not resuming:
+            job.started_at = datetime.now(timezone.utc)
         db.add(job)
         await db.commit()
         await db.refresh(job)
 
-        # Local counters (updated per track, flushed to DB at end)
-        tracks_ok = 0
-        tracks_err = 0
-        tracks_skipped = 0
+        # Local counters (flushed to the job row per track). A resumed attempt
+        # continues them rather than restarting, or the totals would shrink.
+        tracks_ok = job.tracks_ok if resuming else 0
+        tracks_err = job.tracks_err if resuming else 0
+        tracks_skipped = job.tracks_skipped if resuming else 0
 
         # 2. on_fetch_complete callback
         async def on_fetch_complete(count: int) -> None:
@@ -110,6 +121,18 @@ async def run_job(job_id: str) -> None:
             outcome: Optional[TrackOutcome] = None,
         ) -> None:
             nonlocal tracks_ok, tracks_err, tracks_skipped
+
+            if (
+                resuming
+                and outcome is not None
+                and outcome.reason is Reason.ALREADY_SYNCED
+            ):
+                # The attempt that did this work already reported it. Journalling
+                # it again would show every track twice and count the library a
+                # second time.
+                if await _cancel_requested(db, job_id):
+                    raise RunCancelled
+                return
 
             event = TrackEvent(
                 job_id=job_id,
@@ -153,23 +176,21 @@ async def run_job(job_id: str) -> None:
             targets = _targets_adapter.validate_json(job.targets_config)
 
             # 5. Execute
-            result = await execute_relay(db, source, targets, on_fetch_complete, on_track, job.dry_run)
+            await execute_relay(db, source, targets, on_fetch_complete, on_track, job.dry_run)
 
-            # 6. Determine final status
-            total_ok = sum(r["ok"] for r in result["results"])
-            total_err = sum(r["err"] for r in result["results"])
-            total_skipped = sum(r.get("skipped", 0) for r in result["results"])
-            if total_ok == 0 and total_err > 0:
+            # 6. Determine final status from the counters, which on a resumed
+            # attempt span both tries. Everything failed is a failed job.
+            if tracks_ok == 0 and tracks_err > 0:
                 final_status = "failed"
-            elif total_err > 0:
+            elif tracks_err > 0:
                 final_status = "partial"
             else:
                 final_status = "completed"
 
             job.status = final_status
-            job.tracks_ok = total_ok
-            job.tracks_err = total_err
-            job.tracks_skipped = total_skipped
+            job.tracks_ok = tracks_ok
+            job.tracks_err = tracks_err
+            job.tracks_skipped = tracks_skipped
             job.completed_at = datetime.now(timezone.utc)
             db.add(job)
             await db.commit()
@@ -250,7 +271,10 @@ async def worker_loop() -> None:
                 db.add(j)
             if stale:
                 await db.commit()
-                logger.info("Worker: reset %d stale running jobs to queued", len(stale))
+                logger.info(
+                    "Worker: %d job(s) were interrupted by a restart and will resume",
+                    len(stale),
+                )
     except Exception as exc:
         logger.exception("Worker: error resetting stale jobs: %s", exc)
 

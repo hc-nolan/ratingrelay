@@ -27,6 +27,12 @@ just build      # frontend bundle that FastAPI serves
   The API port lives in `.config` (`port`, plus a matching `base_url` — Plex OAuth
   redirects to `base_url`, so it must be browser-reachable). The Vite dev server
   proxies `/api` to `BACKEND_URL` (default `http://localhost:8100`).
+- Both bind every interface, so the app is reachable from the LAN at
+  `http://<host>:5173` (API: `:8100`). Vite only answers Host headers it knows: IP
+  addresses always pass, `.local` mDNS names are allowed by default, and anything
+  else goes in `DEV_ALLOWED_HOSTS` (comma separated, e.g. `ms01.lan`). The proxy
+  keeps the browser's Host header on the hop so the Plex OAuth callback comes back
+  to the origin the browser is actually using.
 - `.config` is gitignored and holds credentials. `.config.example` documents every
   key. Environment variables override `.config`; both override database-stored
   credentials (that hierarchy is the dev-override pattern — keep it).

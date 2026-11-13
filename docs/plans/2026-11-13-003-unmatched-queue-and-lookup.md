@@ -116,3 +116,39 @@ line of code to sneak in here.
   proposals into an unmatched outcome.
 - `tests/test_worker_candidates.py` — no candidates is `NULL`, not `[]`, and a
   candidate keeps its `recording_mbid`.
+
+## Live verification
+
+A dry `plex → listenbrainz` job run against the real accounts (16 min, see below)
+after the changes:
+
+```
+{"status":"partial","tracks_fetched":361,"tracks_ok":359,"tracks_err":2}
+```
+
+`GET /api/relay/unmatched` then returned **2 rows instead of 225** — the two
+tracks that are actually unmatched, both `no_recording_mbid`, both failed once
+in this run:
+
+```
+YAYAYI – Awesome | listenbrainz | no_recording_mbid | count=1
+    -> Amai – Awesome [88253524-1b51-4af3-b534-d7c76a33228b]
+slr – temp       | listenbrainz | no_recording_mbid | count=1
+```
+
+That first row is the whole point of the proposal work: the row names a
+recording with an MBID, so the mapping form can be filled from it instead of
+retyped. And it is a good example of why proposals are never written — Amai is
+not YAYAYI, and only a human can say whether that is the track.
+
+## The cost of a reset: 16 minutes
+
+This run was cold because the ListenBrainz reset in the v3 live pass deleted the
+`syncrecord` rows, and with them the recording MBIDs that had been resolved for
+those 361 tracks. MusicBrainz allows one request per second, so every track needed
+its own lookup again: ~353 sequential lookups is a 16-minute run, against 35
+seconds warm.
+
+The MBID is not really part of "what we wrote" — it is a cache of what the track
+*is* — so a reset should not have to throw it away. Ticket filed to keep the
+resolved MBID outside the intent record.

@@ -88,12 +88,12 @@ def human(
 
     if report.dry_run:
         lines.append("dry run — nothing was written")
-    lines.append(f"fetched {report.tracks_fetched} tracks in {duration:.1f}s")
+    lines.append(f"fetched {report.tracks_fetched} tracks")
     width = max((len(target.target) for target in report.targets), default=0)
     for target in report.targets:
         counts = "  ".join(f"{key} {getattr(target, key)}" for key in _STATUS_FIELDS)
         lines.append(f"  {target.target:<{width}}  {counts}")
-    lines.append(f"result: {report.status} ({_tally(report)})")
+    lines.append(f"result: {report.status} ({_tally(report)}) in {duration:.1f}s")
     return "\n".join(lines)
 
 

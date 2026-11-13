@@ -26,10 +26,12 @@
 	import AppHeader from '$lib/components/AppHeader.svelte';
 	import ServiceMark from '$lib/components/flow/ServiceMark.svelte';
 	import { Button } from '$lib/components/ui/button';
-	import { Input } from '$lib/components/ui/input';
 	import { NativeSelect } from '$lib/components/ui/native-select';
+	import ConnectionChip from '$lib/components/services/ConnectionChip.svelte';
+	import LastFmForm from '$lib/components/services/LastFmForm.svelte';
+	import ListenBrainzForm from '$lib/components/services/ListenBrainzForm.svelte';
 	import { cn } from '$lib/utils';
-	import { TONE_CHIP, type Tone } from '$lib/format';
+	import { TONE_CHIP, statusLabel, statusTone } from '$lib/format';
 
 	let { data }: { data: PageData } = $props();
 
@@ -49,10 +51,17 @@
 	);
 
 	// ── Wizard step (derived) ─────────────────────────────────────────────────
+	// Setup is not finished the moment a service answers: the user may still want
+	// to connect the other one, and being thrown onto the relay screen mid-setup
+	// is how you end up with one target and no way back to the form. Pressing
+	// "Start relaying" is what moves the page on — except for a returning user,
+	// who was already set up before this page loaded.
+	let started = $state(untrack(() => plex.status === 'connected' && !!plex.server_name && musicOk));
+
 	let step: SetupStep = $derived.by(() => {
 		if (plex.status !== 'connected') return 'plex';
 		if (!plex.server_name) return 'server-select';
-		if (!musicOk) return 'music-services';
+		if (!musicOk || !started) return 'music-services';
 		return 'done';
 	});
 
@@ -201,92 +210,6 @@
 		} finally {
 			loadingServers = false;
 		}
-	}
-
-	// ── LastFM credentials form ───────────────────────────────────────────────
-	let lastfmForm = $state({ api_key: '', api_secret: '', username: '', password: '' });
-	let lastfmError = $state('');
-
-	async function submitLastFMAuth() {
-		if (
-			!lastfmForm.api_key ||
-			!lastfmForm.api_secret ||
-			!lastfmForm.username ||
-			!lastfmForm.password
-		)
-			return;
-		lastfm.status = 'checking';
-		lastfmError = '';
-		try {
-			const res = await fetch('/api/lastfm/auth', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(lastfmForm)
-			});
-			if (!res.ok) {
-				const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
-				lastfmError = err.detail ?? 'Authentication failed';
-				lastfm.status = 'error';
-				return;
-			}
-			const body: { status: string; username?: string } = await res.json();
-			lastfm.status = body.status as LastFMAuthState['status'];
-			lastfm.username = body.username;
-		} catch {
-			lastfm.status = 'error';
-			lastfmError = 'Network error';
-		}
-	}
-
-	// ── ListenBrainz token flow ───────────────────────────────────────────────
-	let lbForm = $state({ username: '', token: '' });
-	let lbError = $state('');
-
-	async function submitListenBrainzToken() {
-		if (!lbForm.username.trim() || !lbForm.token.trim()) return;
-		listenbrainz.status = 'checking';
-		lbError = '';
-		try {
-			const res = await fetch('/api/listenbrainz/auth', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(lbForm)
-			});
-			if (!res.ok) {
-				const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
-				lbError = err.detail ?? 'Authentication failed';
-				listenbrainz.status = 'error';
-				return;
-			}
-			const body: { status: string; username?: string } = await res.json();
-			listenbrainz.status = body.status as ListenBrainzAuthState['status'];
-			listenbrainz.username = body.username;
-		} catch {
-			listenbrainz.status = 'error';
-			lbError = 'Network error';
-		}
-	}
-
-	// ── Helpers ───────────────────────────────────────────────────────────────
-	const statusLabel: Record<string, string> = {
-		checking: 'Checking…',
-		connected: 'Connected',
-		'needs-auth': 'Not connected',
-		disabled: 'Disabled',
-		error: 'Error'
-	};
-
-	/** A connection state borrows the same tones as a run status. */
-	const CONNECTION_TONE: Record<string, Tone> = {
-		connected: 'ok',
-		checking: 'info',
-		'needs-auth': 'warn',
-		disabled: 'muted',
-		error: 'err'
-	};
-
-	function statusToneOf(status: string): Tone {
-		return CONNECTION_TONE[status] ?? 'muted';
 	}
 
 	const wizardSteps = $derived([
@@ -695,7 +618,7 @@
 					<span
 						class={cn(
 							'inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs',
-							TONE_CHIP[statusToneOf(plex.status)]
+							TONE_CHIP[statusTone(plex.status)]
 						)}
 					>
 						{#if plex.status === 'checking'}
@@ -706,7 +629,7 @@
 								><path d="M13.5 3.5L6 11 2.5 7.5l-1 1L6 13l8.5-8.5z" /></svg
 							>
 						{/if}
-						{statusLabel[plex.status]}
+						{statusLabel(plex.status)}
 						{#if plex.username}
 							<span class="opacity-70">· {plex.username}</span>
 						{/if}
@@ -822,83 +745,16 @@
 							<h3 class="text-sm font-medium text-foreground">Last.fm</h3>
 							<p class="text-xs text-muted-foreground">Scrobble destination</p>
 						</div>
-						<span
-							class={cn(
-								'inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs',
-								TONE_CHIP[statusToneOf(lastfm.status)]
-							)}
-						>
-							{#if lastfm.status === 'checking'}
-								<span class="size-1.5 animate-pulse rounded-full bg-current" aria-hidden="true"
-								></span>
-							{:else if lastfm.status === 'connected'}
-								<svg
-									viewBox="0 0 16 16"
-									fill="currentColor"
-									width="10"
-									height="10"
-									aria-hidden="true"><path d="M13.5 3.5L6 11 2.5 7.5l-1 1L6 13l8.5-8.5z" /></svg
-								>
-							{/if}
-							{statusLabel[lastfm.status]}
-							{#if lastfm.username}
-								<span class="opacity-70">· {lastfm.username}</span>
-							{/if}
-						</span>
+						<ConnectionChip status={lastfm.status} username={lastfm.username} />
 					</div>
 					{#if lastfm.status !== 'connected' && lastfm.status !== 'disabled'}
 						<div class="mt-3 border-t border-border pt-3">
-							<p class="text-sm text-muted-foreground">
-								Get an API key and secret from
-								<a
-									class="text-primary hover:underline"
-									href="https://www.last.fm/api/account/create"
-									target="_blank"
-									rel="noopener">last.fm/api/account/create</a
-								>, then enter your credentials below.
-							</p>
-							<div class="mt-3 grid gap-2 sm:grid-cols-2">
-								<Input
-									bind:value={lastfmForm.api_key}
-									placeholder="API key"
-									autocomplete="off"
-									spellcheck={false}
-								/>
-								<Input
-									bind:value={lastfmForm.api_secret}
-									type="password"
-									placeholder="API secret"
-									autocomplete="off"
-									spellcheck={false}
-								/>
-								<Input
-									bind:value={lastfmForm.username}
-									placeholder="Username"
-									autocomplete="off"
-									spellcheck={false}
-								/>
-								<Input
-									bind:value={lastfmForm.password}
-									type="password"
-									placeholder="Password"
-									autocomplete="current-password"
-									onkeydown={(e) => e.key === 'Enter' && submitLastFMAuth()}
-								/>
-							</div>
-							{#if lastfmError}
-								<p class="mt-2 text-sm text-destructive" role="alert">{lastfmError}</p>
-							{/if}
-							<Button
-								class="mt-3 h-8 px-3 text-sm"
-								onclick={submitLastFMAuth}
-								disabled={lastfm.status === 'checking' ||
-									!lastfmForm.api_key ||
-									!lastfmForm.api_secret ||
-									!lastfmForm.username ||
-									!lastfmForm.password}
-							>
-								{lastfm.status === 'checking' ? 'Connecting…' : 'Connect Last.fm'}
-							</Button>
+							<LastFmForm
+								onsubmitted={(username) => {
+									lastfm.status = 'connected';
+									lastfm.username = username;
+								}}
+							/>
 						</div>
 					{/if}
 				</div>
@@ -917,73 +773,31 @@
 							<h3 class="text-sm font-medium text-foreground">ListenBrainz</h3>
 							<p class="text-xs text-muted-foreground">Scrobble destination</p>
 						</div>
-						<span
-							class={cn(
-								'inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs',
-								TONE_CHIP[statusToneOf(listenbrainz.status)]
-							)}
-						>
-							{#if listenbrainz.status === 'checking'}
-								<span class="size-1.5 animate-pulse rounded-full bg-current" aria-hidden="true"
-								></span>
-							{:else if listenbrainz.status === 'connected'}
-								<svg
-									viewBox="0 0 16 16"
-									fill="currentColor"
-									width="10"
-									height="10"
-									aria-hidden="true"><path d="M13.5 3.5L6 11 2.5 7.5l-1 1L6 13l8.5-8.5z" /></svg
-								>
-							{/if}
-							{statusLabel[listenbrainz.status]}
-							{#if listenbrainz.username}
-								<span class="opacity-70">· {listenbrainz.username}</span>
-							{/if}
-						</span>
+						<ConnectionChip status={listenbrainz.status} username={listenbrainz.username} />
 					</div>
 					{#if listenbrainz.status !== 'connected' && listenbrainz.status !== 'disabled'}
 						<div class="mt-3 border-t border-border pt-3">
-							<p class="text-sm text-muted-foreground">
-								Find your user token at
-								<a
-									class="text-primary hover:underline"
-									href="https://listenbrainz.org/profile/"
-									target="_blank"
-									rel="noopener">listenbrainz.org/profile</a
-								>
-								and paste it below.
-							</p>
-							<div class="mt-3 grid gap-2 sm:grid-cols-2">
-								<Input
-									bind:value={lbForm.username}
-									placeholder="Username"
-									autocomplete="off"
-									spellcheck={false}
-								/>
-								<Input
-									bind:value={lbForm.token}
-									type="password"
-									placeholder="User token"
-									autocomplete="off"
-									spellcheck={false}
-									onkeydown={(e) => e.key === 'Enter' && submitListenBrainzToken()}
-								/>
-							</div>
-							{#if lbError}
-								<p class="mt-2 text-sm text-destructive" role="alert">{lbError}</p>
-							{/if}
-							<Button
-								class="mt-3 h-8 px-3 text-sm"
-								onclick={submitListenBrainzToken}
-								disabled={!lbForm.username.trim() ||
-									!lbForm.token.trim() ||
-									listenbrainz.status === 'checking'}
-							>
-								{listenbrainz.status === 'checking' ? 'Verifying…' : 'Connect'}
-							</Button>
+							<ListenBrainzForm
+								onsubmitted={(username) => {
+									listenbrainz.status = 'connected';
+									listenbrainz.username = username;
+								}}
+							/>
 						</div>
 					{/if}
 				</div>
+				{#if musicOk}
+					<Button class="mt-6 h-8 w-full px-3 text-sm" onclick={() => (started = true)}>
+						Start relaying
+					</Button>
+					<p class="mt-2 text-center text-xs text-muted-foreground">
+						Both services stay in sync. You can add or replace one later from Services.
+					</p>
+				{:else}
+					<p class="mt-5 text-center text-xs text-muted-foreground">
+						Connect at least one service to continue.
+					</p>
+				{/if}
 			</section>
 		</div>
 	</div>

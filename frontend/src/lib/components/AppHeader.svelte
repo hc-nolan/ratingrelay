@@ -10,7 +10,8 @@
 	const links = [
 		{ href: resolve('/'), match: '/', label: 'Relay' },
 		{ href: resolve('/history'), match: '/history', label: 'History' },
-		{ href: resolve('/unmatched'), match: '/unmatched', label: 'Unmatched' }
+		{ href: resolve('/unmatched'), match: '/unmatched', label: 'Unmatched' },
+		{ href: resolve('/services'), match: '/services', label: 'Services' }
 	];
 
 	let unmatched = $state<number | null>(null);

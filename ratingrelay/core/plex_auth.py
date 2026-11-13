@@ -49,7 +49,15 @@ def create_session(forward_url: str) -> tuple[MyPlexPinLogin, str]:
     with the OAuth URL.  oauthUrl() must be called here because it triggers the
     PIN fetch (_getCode) that populates _id — calling .pin before that raises.
     """
-    pin_login = MyPlexPinLogin(oauth=True)
+    pin_login = MyPlexPinLogin(
+        oauth=True,
+        # plexapi calls itself "PlexAPI" in every request header, and Plex uses
+        # that to name the client in the sign-in prompt: "PlexAPI would like to
+        # sign into your account". The account owner is holding our app, so it
+        # says our name. The client identifier is left alone — changing it
+        # would show up as a second device in their Plex account.
+        headers={"X-Plex-Product": "RatingRelay"},
+    )
     oauth_url = pin_login.oauthUrl(forwardUrl=forward_url)
     pin_id = int(pin_login._id)
     _sessions[pin_id] = (pin_login, datetime.now(tz=timezone.utc))

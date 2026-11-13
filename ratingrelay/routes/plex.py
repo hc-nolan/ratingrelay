@@ -1,7 +1,7 @@
 import asyncio
 from typing import Callable, TypeVar
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 from plexapi.myplex import MyPlexAccount
 from plexapi.server import PlexServer
@@ -20,7 +20,7 @@ from ratingrelay.core.session import (
 )
 from ratingrelay.core.thread import run_sync
 from ratingrelay.db import get_async_session
-from ratingrelay.db.credentials import get_credential, upsert_credential
+from ratingrelay.db.credentials import delete_credential, get_credential, upsert_credential
 from ratingrelay.models.services import ServiceName
 from ratingrelay.schemas.plex import (
     PlexAuthInitResponse,
@@ -118,6 +118,23 @@ async def plex_auth_status(
     except Exception as exc:
         logger.error("Plex token validation failed: %s", exc)
         return PlexStatusResponse(status="needs-auth")
+
+
+@router.delete("/auth", response_model=PlexStatusResponse)
+async def plex_disconnect(
+    response: Response,
+    db: AsyncSession = Depends(get_async_session),
+) -> PlexStatusResponse:
+    """Forget the Plex account, and the login that was built on it.
+
+    The session cookie is signed with the owner's Plex token, so without that
+    token there is nothing to verify it against: the app returns to the open
+    state a fresh install starts in. The UI warns before calling this.
+    """
+    if await delete_credential(db, ServiceName.plex):
+        logger.info("Plex credentials removed")
+    response.delete_cookie(SESSION_COOKIE)
+    return await plex_auth_status(db)
 
 
 @router.post("/auth/init", response_model=PlexAuthInitResponse)

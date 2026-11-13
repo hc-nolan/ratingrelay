@@ -62,13 +62,20 @@ export function durationLabel(start?: string | null, end?: string | null): strin
 }
 
 export const STATUS_LABEL: Record<string, string> = {
+	// A run.
 	queued: 'Queued',
 	scheduled: 'Scheduled',
 	running: 'Running',
 	completed: 'Completed',
 	partial: 'Partial',
 	failed: 'Failed',
-	cancelled: 'Cancelled'
+	cancelled: 'Cancelled',
+	// A service connection, which shares the same pill.
+	checking: 'Checking…',
+	connected: 'Connected',
+	'needs-auth': 'Not connected',
+	disabled: 'Disabled',
+	error: 'Error'
 };
 
 export function statusLabel(status: string): string {
@@ -90,7 +97,13 @@ export function statusTone(status: string): Tone {
 		running: 'info',
 		queued: 'muted',
 		scheduled: 'muted',
-		cancelled: 'muted'
+		cancelled: 'muted',
+		// A connection: the same tones mean the same things.
+		connected: 'ok',
+		checking: 'info',
+		'needs-auth': 'warn',
+		disabled: 'muted',
+		error: 'err'
 	};
 	return map[status] ?? 'muted';
 }

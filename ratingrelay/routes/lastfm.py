@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ratingrelay.core.thread import run_sync
 from ratingrelay.db import get_async_session
-from ratingrelay.db.credentials import get_credential, upsert_credential
+from ratingrelay.db.credentials import delete_credential, get_credential, upsert_credential
 from ratingrelay.models.services import ServiceName
 from ratingrelay.schemas.lastfm import LastFMAuthRequest, LastFMStatusResponse
 from ratingrelay.settings import get_settings, logger
@@ -94,3 +94,18 @@ async def lastfm_auth(
     )
     logger.info("Last.fm authenticated as %s", username)
     return LastFMStatusResponse(status="connected", username=username)
+
+
+@router.delete("/auth", response_model=LastFMStatusResponse)
+async def lastfm_disconnect(
+    db: AsyncSession = Depends(get_async_session),
+) -> LastFMStatusResponse:
+    """Forget the stored Last.fm credentials.
+
+    Sync records are deliberately kept: they are what the relay wrote, and a
+    reconnected account has to be able to undo those rather than rediscover
+    them as if they were the user's own.
+    """
+    if await delete_credential(db, ServiceName.lastfm):
+        logger.info("Last.fm credentials removed")
+    return await lastfm_auth_status(db)

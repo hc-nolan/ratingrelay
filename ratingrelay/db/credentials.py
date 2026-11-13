@@ -40,3 +40,18 @@ async def upsert_credential(
     await db.commit()
     await db.refresh(cred)
     return cred
+
+
+async def delete_credential(db: AsyncSession, service: ServiceName) -> bool:
+    """Forget the credential for *service*. True if there was one to forget.
+
+    Only the credential row goes. Sync records stay: they are what the relay has
+    already written, and dropping them would leave it unable to undo a write it
+    made — the next run against a reconnected service reconciles against them.
+    """
+    existing = await get_credential(db, service)
+    if existing is None:
+        return False
+    await db.delete(existing)
+    await db.commit()
+    return True

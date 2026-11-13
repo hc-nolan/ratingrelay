@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ratingrelay.core.thread import run_sync
 from ratingrelay.db import get_async_session
-from ratingrelay.db.credentials import get_credential, upsert_credential
+from ratingrelay.db.credentials import delete_credential, get_credential, upsert_credential
 from ratingrelay.models.services import ServiceName
 from ratingrelay.schemas.listenbrainz import (
     ListenBrainzAuthRequest,
@@ -79,3 +79,13 @@ async def listenbrainz_auth(
     )
     logger.info("ListenBrainz authenticated as %s", body.username)
     return ListenBrainzStatusResponse(status="connected", username=body.username)
+
+
+@router.delete("/auth", response_model=ListenBrainzStatusResponse)
+async def listenbrainz_disconnect(
+    db: AsyncSession = Depends(get_async_session),
+) -> ListenBrainzStatusResponse:
+    """Forget the stored ListenBrainz credentials; sync records stay."""
+    if await delete_credential(db, ServiceName.listenbrainz):
+        logger.info("ListenBrainz credentials removed")
+    return await listenbrainz_auth_status(db)

@@ -31,6 +31,12 @@ router = APIRouter(prefix="/api/plex", tags=["plex"])
 
 CALLBACK_URL = f"{settings.base_url.rstrip('/')}/api/plex/auth/callback"
 
+# Plex confirms the PIN moments after it redirects the popup back to us, so a
+# single check races the confirmation. A few short retries here are what turn
+# "nothing happened, try again" into a login that just works.
+_CALLBACK_ATTEMPTS = 6
+_CALLBACK_DELAY = 1.0
+
 # Minimal HTML page served inside the OAuth popup after Plex redirects back.
 # Sends a postMessage to the opener and immediately closes itself.
 _POPUP_CLOSE_HTML = """<!DOCTYPE html>
@@ -46,6 +52,16 @@ _POPUP_CLOSE_HTML = """<!DOCTYPE html>
 <p>Authenticated. You can close this window.</p>
 </body>
 </html>""".format(target_origin=settings.base_url.rstrip("/"))
+
+# Served when Plex never confirmed the PIN inside the retry window. It must not
+# claim success: the opener waits for the status endpoint, not for this page.
+_POPUP_PENDING_HTML = """<!DOCTYPE html>
+<html>
+<head><title>Not connected</title></head>
+<body>
+<p>Plex did not confirm the login. Close this window and try again.</p>
+</body>
+</html>"""
 
 
 async def _get_token(db: AsyncSession) -> str | None:
@@ -116,25 +132,34 @@ async def plex_auth_callback(
     OAuth callback — Plex redirects the popup here after the user logs in.
 
     Iterates over all active PIN sessions to find the one Plex has confirmed.
-    Stores the token + username to the database, then serves a tiny HTML page
-    that sends postMessage to the opener and closes the popup.
+    Plex confirms a moment after the redirect, so the check is retried briefly
+    rather than racing it. Stores the token + username to the database, then
+    serves a tiny HTML page that tells the opener and closes the popup.
     """
     confirmed_token: str | None = None
     confirmed_pin_id: int | None = None
 
-    for pin_id, pin_login in iter_sessions():
-        try:
-            ok = await run_sync(pin_login.checkLogin)
-            if ok and pin_login.token:
-                confirmed_token = pin_login.token
-                confirmed_pin_id = pin_id
-                break
-        except Exception as exc:
-            logger.debug("PIN %s not yet confirmed: %s", pin_id, exc)
+    for attempt in range(_CALLBACK_ATTEMPTS):
+        for pin_id, pin_login in iter_sessions():
+            try:
+                ok = await run_sync(pin_login.checkLogin)
+                if ok and pin_login.token:
+                    confirmed_token = pin_login.token
+                    confirmed_pin_id = pin_id
+                    break
+            except Exception as exc:
+                logger.debug("PIN %s not yet confirmed: %s", pin_id, exc)
+        if confirmed_token:
+            break
+        if attempt + 1 < _CALLBACK_ATTEMPTS:
+            await asyncio.sleep(_CALLBACK_DELAY)
 
     if not confirmed_token or confirmed_pin_id is None:
-        logger.warning("Plex OAuth callback hit but no PIN confirmed yet")
-        return HTMLResponse(_POPUP_CLOSE_HTML)
+        logger.warning(
+            "Plex OAuth callback hit but no PIN was confirmed in %ss",
+            int(_CALLBACK_ATTEMPTS * _CALLBACK_DELAY),
+        )
+        return HTMLResponse(_POPUP_PENDING_HTML)
 
     remove_session(confirmed_pin_id)
 

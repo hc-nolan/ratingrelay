@@ -37,7 +37,13 @@
 	});
 
 	// ── Plex OAuth popup flow ─────────────────────────────────────────────────
+	// The popup redirects to our callback, which stores the token and tells us.
+	// We do not rely on that message: in dev the popup is served by the API on a
+	// different origin than the Vite UI, so the browser drops it and the wizard
+	// sits there until a manual refresh. Polling the status endpoint is the
+	// signal, and the message is only a shortcut.
 	let plexPopup: Window | null = null;
+	let plexTimer: ReturnType<typeof setInterval> | undefined;
 
 	async function startPlexAuth() {
 		plex.status = 'checking';
@@ -57,16 +63,42 @@
 			);
 
 			plex.status = 'needs-auth';
+			waitForPlexAuth();
 		} catch {
 			plex.status = 'error';
 		}
 	}
 
+	/** Poll until the callback has stored a token, the popup closes, or we give up. */
+	function waitForPlexAuth(deadline = Date.now() + 120_000) {
+		clearInterval(plexTimer);
+		plexTimer = setInterval(async () => {
+			const done = !plexPopup || plexPopup.closed;
+			const res = await fetch('/api/plex/auth/status').catch(() => null);
+			const body = res?.ok ? ((await res.json()) as { status: string; username?: string }) : null;
+
+			if (body?.status === 'connected') {
+				clearInterval(plexTimer);
+				plexPopup?.close();
+				plexPopup = null;
+				await refreshPlexStatus();
+				return;
+			}
+			if (done || Date.now() > deadline) {
+				clearInterval(plexTimer);
+				plexPopup = null;
+				plex.status = 'needs-auth';
+			}
+		}, 2000);
+	}
+
 	function handleMessage(event: MessageEvent) {
-		if (event.origin !== window.location.origin) return;
 		if (event.data !== 'plex:authed') return;
+		// Any origin will do: the message carries no data, and the status endpoint
+		// — not this event — is what decides whether we are connected.
 		plexPopup?.close();
 		plexPopup = null;
+		clearInterval(plexTimer);
 		refreshPlexStatus();
 	}
 
@@ -95,7 +127,10 @@
 
 	$effect(() => {
 		window.addEventListener('message', handleMessage);
-		return () => window.removeEventListener('message', handleMessage);
+		return () => {
+			window.removeEventListener('message', handleMessage);
+			clearInterval(plexTimer);
+		};
 	});
 
 	// ── Server selection ──────────────────────────────────────────────────────

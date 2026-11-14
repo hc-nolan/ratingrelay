@@ -47,15 +47,24 @@ After completing the code, ask the user if they want a playground link. Only cal
   `border-border`), never literal colours.
 - **Nothing blue.** The neutrals and the single accent are both warm (the accent
   is a bronze at hue ~58). Cyan, blue and the browser's own cool dark menus read
-  as a colder app on top of warm charcoal — the last one is why `layout.css`
-  opts every `<select>` into `appearance: base-select` and styles
-  `::picker(select)` with `--popover`.
+  as a colder app on top of warm charcoal.
+- **One typeface, and it is monospaced**: IBM Plex Mono, for body and headings
+  alike. Fixed-width is the point — counters, ratings and timings sit in
+  columns — and the drawn terminals keep it from reading like a coding default.
+- **Square by default**: `--radius` is `0`, so cards, panels, inputs, buttons and
+  chips all come out square. Dots and the progress bar keep their rounding
+  because they are not containers. Do not reintroduce a radius on one control.
 - **Home is a flow builder**, not a form: `src/lib/components/flow/` owns the
   nodes, the connector and the run dock; `AppHeader` and `ActivityRail` frame
   every signed-in page. The page keeps state and API calls.
 - **Reach for `src/lib/components/ui/` first** (`button`, `input`, `label`,
-  `checkbox`, `native-select`, `badge`, `card`, `collapsible`, `separator`). A
-  literal `<input>`/`<select>` or a hand-rolled `.btn` is a bug, not a shortcut.
+  `checkbox`, `select`, `badge`, `card`, `collapsible`, `separator`). A literal
+  `<input>`/`<select>` or a hand-rolled `.btn` is a bug, not a shortcut.
+- **There is no native `<select>` in this app.** The platform popup cannot be
+  styled, and in a browser that ignores `appearance: base-select` it falls back
+  to a control that paints a second caret over ours. `ui/select` wraps the
+  bits-ui listbox: square trigger, caret in its own gutter, our popover, rows,
+  highlight and checkmark — the same control everywhere.
 - **Status lives in `src/lib/format.ts`**: `statusLabel`/`statusTone` → `Tone`
   (`ok|warn|err|info|muted`) → `TONE_DOT`/`TONE_TEXT`/`TONE_CHIP`. One meaning
   per tone, and a zero error count is never red. Do not pick a colour per page.
@@ -66,3 +75,12 @@ After completing the code, ask the user if they want a playground link. Only cal
 - The canvas is a **vertical chain** (one source → N targets) on purpose: the
   engine takes exactly one source, so a free-form graph would promise fan-in the
   pipeline cannot deliver.
+- **Setup is a wizard until it is finished**: `/` shows the Plex → server →
+  music → start flow when the install is incomplete, and the relay screen once
+  Plex + a server + one music service are connected. Moving to the relay is an
+  explicit "Start relaying" — never a side effect of connecting a service.
+- **Credentials are managed at `/services`** after setup: one panel per service
+  with replace and disconnect. Disconnecting deletes the `ServiceCredential` row
+  and nothing else; sync records stay, because they are the only proof the relay
+  owns a rating over there. Plex is the exception the UI warns about, since the
+  session cookie is signed with its token.

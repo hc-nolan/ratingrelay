@@ -186,3 +186,27 @@ The worst surface before: 14 069 px, 200+ rows, no grouping. Now:
 - `svelte-check`: 0 errors, 0 warnings (was 24 warnings, 18 eslint errors).
 - Every surface screenshotted over CDP: shell, home, history, job detail,
   unmatched, and the setup wizard against a scratch database.
+
+## Addendum — what changed after the first pass
+
+Three of the decisions above were reversed while using the app, and the reasons
+are worth keeping:
+
+- **The accent is bronze, not cyan** (`oklch(0.71 0.126 58)`, with `--ring`,
+  `--info`, `--chart-1` and the sidebar following it). Warm neutrals under a cool
+  accent still read as two apps; a console wants one temperature. The service
+  marks kept their brand hue and lost their cool backdrops, and `theme-color` in
+  `app.html` went warm with them.
+- **The typeface is IBM Plex Mono for everything**, not Inter. The grid is the
+  point: counts, ratings and timings line up, and the drawn `a`/`g` keeps it
+  from looking like a coding default. Inter is uninstalled.
+- **`--radius` is 0.** The 10 px corners were the last thing making the app look
+  like the shadcn default. Square everything, including cards and chips; only
+  dots and the progress bar keep rounding.
+- **`native-select` is gone.** A native `<select>` cannot have its popup styled,
+  and in a browser that ignores `appearance: base-select` it also paints a
+  second caret over ours. `ui/select` wraps the bits-ui listbox instead: square
+  trigger, caret in a gutter, our own popover, rows, highlight and checkmark.
+- **Targets are one card that switches on**, not a ghost row that turns into a
+  separate `TO` node: the grid never reflows, the picked card gains a solid
+  accent edge, a tinted fill and its own configuration, and neighbours stay put.

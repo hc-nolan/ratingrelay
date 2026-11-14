@@ -34,14 +34,23 @@
 <div
 	class={cn(
 		'group relative flex flex-col gap-2 rounded-lg border px-4 py-3 transition-colors',
+		// On and off have to read at a glance: a picked target is filled and
+		// solid-edged, an unpicked one is hollow, dashed and quieter.
 		allocated
-			? 'border-primary/50 bg-primary/[0.06]'
-			: 'border-dashed border-border/70 bg-card/40 hover:border-primary/60 hover:bg-primary/5 active:scale-[0.99] motion-safe:transition-transform'
+			? 'border-primary bg-primary/15'
+			: 'border-dashed border-border/60 bg-transparent hover:border-primary/60 hover:bg-primary/5 active:scale-[0.99] motion-safe:transition-transform'
 	)}
 >
 	<div class="flex items-center gap-3">
-		<ServiceMark service={option.id} size={22} />
-		<span class="min-w-0 flex-1 text-base font-medium text-foreground">{option.name}</span>
+		<span class={allocated ? 'opacity-100' : 'opacity-60'}>
+			<ServiceMark service={option.id} size={22} />
+		</span>
+		<span
+			class={cn(
+				'min-w-0 flex-1 text-base font-medium',
+				allocated ? 'text-foreground' : 'text-muted-foreground'
+			)}>{option.name}</span
+		>
 
 		{#if allocated}
 			<button
@@ -63,7 +72,7 @@
 		{:else}
 			<!-- The whole card is the control; this is only the affordance. -->
 			<span
-				class="grid size-7 shrink-0 place-items-center rounded-md border border-border text-muted-foreground transition-colors group-hover:border-primary/60 group-hover:bg-primary/10 group-hover:text-primary group-active:bg-primary group-active:text-primary-foreground"
+				class="grid size-7 shrink-0 place-items-center rounded-md border border-border/60 text-muted-foreground/70 transition-colors group-hover:border-primary/60 group-hover:bg-primary/10 group-hover:text-primary group-active:bg-primary group-active:text-primary-foreground"
 				aria-hidden="true"
 			>
 				<svg viewBox="0 0 16 16" width="11" height="11">
@@ -111,7 +120,7 @@
 				</div>
 			{/if}
 		{:else}
-			<span class="truncate text-sm text-muted-foreground">{option.hint}</span>
+			<span class="truncate text-sm text-muted-foreground/70">{option.hint}</span>
 		{/if}
 	</div>
 

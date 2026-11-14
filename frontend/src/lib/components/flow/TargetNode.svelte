@@ -88,21 +88,32 @@
 		</div>
 	</FlowNode>
 {:else}
+	<!-- A ghost is a card you can pick, not a link: the whole surface answers to
+	     hover, press and keyboard focus, and picking it turns it into a node. -->
 	<button
 		type="button"
 		onclick={onadd}
-		class="group flex w-full items-center gap-2.5 rounded-lg border border-dashed border-border/70 px-4 py-2.5 text-left transition-colors hover:border-primary/60 hover:bg-primary/5"
+		aria-label="Add {option.name} as a target"
+		class={cn(
+			'group flex w-full items-center gap-3 rounded-lg border border-dashed border-border/70 bg-card/40 px-4 py-3 text-left',
+			'transition-colors motion-safe:transition-transform',
+			'hover:border-primary/60 hover:bg-primary/5',
+			'active:scale-[0.99] active:border-primary active:bg-primary/10',
+			'focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none'
+		)}
 	>
-		<svg
-			viewBox="0 0 16 16"
-			width="11"
-			height="11"
-			class="shrink-0 text-muted-foreground transition-colors group-hover:text-primary"
+		<ServiceMark service={option.id} size={22} />
+		<span class="min-w-0 flex-1">
+			<span class="block text-base font-medium text-foreground">{option.name}</span>
+			<span class="block truncate text-sm text-muted-foreground">{option.hint}</span>
+		</span>
+		<span
+			class="grid size-7 shrink-0 place-items-center rounded-md border border-border text-muted-foreground transition-colors group-hover:border-primary/60 group-hover:bg-primary/10 group-hover:text-primary group-active:bg-primary group-active:text-primary-foreground"
 			aria-hidden="true"
 		>
-			<path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
-		</svg>
-		<span class="text-sm font-medium text-foreground">{option.name}</span>
-		<span class="truncate text-sm text-muted-foreground">{option.hint}</span>
+			<svg viewBox="0 0 16 16" width="11" height="11">
+				<path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+			</svg>
+		</span>
 	</button>
 {/if}

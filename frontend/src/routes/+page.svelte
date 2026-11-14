@@ -510,7 +510,7 @@
 							{/if}
 
 							{#if allocatedTargets.length === 0 || showTargetPicker}
-								<div class="space-y-2">
+								<div class="grid gap-2 sm:grid-cols-2">
 									{#each ghostTargets as target (target.id)}
 										<TargetNode
 											option={target}

@@ -69,14 +69,14 @@ export const repeatOptions = [{ value: 0, label: 'Once' }, ...frequencyOptions];
 
 /** Plex stores ratings as 0–10; the UI says stars. */
 export const plexStarOptions = [
-	{ value: 1, label: '½★ 0.5 stars' },
-	{ value: 2, label: '★ 1 star' },
-	{ value: 3, label: '★½ 1.5 stars' },
-	{ value: 4, label: '★★ 2 stars' },
-	{ value: 5, label: '★★½ 2.5 stars' },
-	{ value: 6, label: '★★★ 3 stars' },
-	{ value: 7, label: '★★★½ 3.5 stars' },
-	{ value: 8, label: '★★★★ 4 stars' },
-	{ value: 9, label: '★★★★½ 4.5 stars' },
-	{ value: 10, label: '★★★★★ 5 stars' }
+	{ value: 1, label: '0.5 stars' },
+	{ value: 2, label: '1 star' },
+	{ value: 3, label: '1.5 stars' },
+	{ value: 4, label: '2 stars' },
+	{ value: 5, label: '2.5 stars' },
+	{ value: 6, label: '3 stars' },
+	{ value: 7, label: '3.5 stars' },
+	{ value: 8, label: '4 stars' },
+	{ value: 9, label: '4.5 stars' },
+	{ value: 10, label: '5 stars' }
 ];

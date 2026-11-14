@@ -2,7 +2,7 @@
 	import FlowNode from './FlowNode.svelte';
 	import ServiceMark from './ServiceMark.svelte';
 	import { plexStarOptions } from '$lib/relay';
-	import { NativeSelect } from '$lib/components/ui/native-select';
+	import { Select } from '$lib/components/ui/select';
 	import { cn } from '$lib/utils';
 	import type {
 		ListenBrainzSourceConfig,
@@ -74,15 +74,20 @@
 	<div class="mt-3 flex flex-wrap items-center gap-x-2 gap-y-2 border-t border-border/60 pt-3">
 		{#if selected === 'plex'}
 			<span class="text-sm text-muted-foreground">Rated</span>
-			<NativeSelect bind:value={plexConfig.comparison}>
-				<option value="gte">at least</option>
-				<option value="lte">at most</option>
-			</NativeSelect>
-			<NativeSelect bind:value={plexConfig.ratingThreshold} class="min-w-44">
-				{#each plexStarOptions as opt (opt.value)}
-					<option value={opt.value}>{opt.label}</option>
-				{/each}
-			</NativeSelect>
+			<Select
+				bind:value={plexConfig.comparison}
+				label="Rating comparison"
+				options={[
+					{ value: 'gte', label: 'at least' },
+					{ value: 'lte', label: 'at most' }
+				]}
+			/>
+			<Select
+				bind:value={plexConfig.ratingThreshold}
+				label="Rating threshold"
+				class="min-w-40"
+				options={plexStarOptions}
+			/>
 		{:else if selected === 'lastfm'}
 			<p class="text-sm text-muted-foreground">Every loved track on Last.fm.</p>
 		{:else if selected === 'listenbrainz'}

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Input } from '$lib/components/ui/input';
-	import { NativeSelect } from '$lib/components/ui/native-select';
+	import { Select } from '$lib/components/ui/select';
 	import AppHeader from '$lib/components/AppHeader.svelte';
 	import JobCard from '$lib/components/jobs/JobCard.svelte';
 	import { dayKey, dayLabel } from '$lib/format';
@@ -142,15 +142,12 @@
 						{/each}
 					</div>
 
-					<NativeSelect
+					<Select
 						bind:value={serviceFilter}
 						class="min-w-36 bg-card"
-						aria-label="Filter by service"
-					>
-						{#each services as svc (svc.id)}
-							<option value={svc.id}>{svc.label}</option>
-						{/each}
-					</NativeSelect>
+						label="Filter by service"
+						options={services.map((svc) => ({ value: svc.id, label: svc.label }))}
+					/>
 
 					<Input
 						bind:value={search}

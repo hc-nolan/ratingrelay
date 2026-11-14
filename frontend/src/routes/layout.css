@@ -1,7 +1,9 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
 @import 'shadcn-svelte/tailwind.css';
-@import '@fontsource-variable/inter';
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/500.css';
+@import '@fontsource/ibm-plex-mono/600.css';
 
 @custom-variant dark (&:is(.dark *));
 @plugin '@tailwindcss/forms';
@@ -63,10 +65,14 @@
 }
 
 @theme inline {
-	/* One family. Hierarchy comes from size and weight, not from a second face. */
-	--font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
-	--font-heading: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
-	--font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', monospace;
+	/* One family, and it is a monospaced one: this is a console that moves
+	   counts, ratings and timings around, so the grid the text sits on matters
+	   as much as the words. Hierarchy comes from size and weight, not from a
+	   second face. IBM Plex Mono over the usual coding faces because its
+	   terminals and its a/g are drawn rather than typed. */
+	--font-sans: 'IBM Plex Mono', ui-monospace, monospace;
+	--font-heading: 'IBM Plex Mono', ui-monospace, monospace;
+	--font-mono: 'IBM Plex Mono', ui-monospace, monospace;
 
 	--color-ok: var(--ok);
 	--color-warn: var(--warn);
@@ -120,9 +126,7 @@
 	body {
 		@apply bg-background text-foreground antialiased;
 		/* Numbers in a console line up: counters, timings, MBIDs. */
-		font-feature-settings:
-			'cv05' 1,
-			'tnum' 1;
+		font-feature-settings: 'tnum' 1;
 	}
 	html {
 		@apply font-sans;
@@ -130,51 +134,12 @@
 	::selection {
 		@apply bg-primary/30 text-foreground;
 	}
-
-	select option,
-	select optgroup {
-		background-color: var(--popover);
-		color: var(--popover-foreground);
-	}
-}
-
-/*
- * A native <select> is the right control for a 2-5 option list, but the browser
- * paints the menu itself, in its own cool dark grey — the one cold surface left
- * in an otherwise warm app. Where the browser has the customisable picker, the
- * menu is the page's to style and takes our popover.
- *
- * Deliberately unlayered: @tailwindcss/forms sets `appearance: none` on every
- * select inside the base layer, and a layered rule cannot beat it. Our own
- * chevron is what stays visible, so the browser's picker icon is hidden.
- */
-@supports (appearance: base-select) {
-	select {
-		appearance: base-select;
-		/* @tailwindcss/forms paints a chevron as a background image; with
-		   base-select there is a picker icon as well, and we draw our own. */
-		background-image: none;
-	}
-	select::picker-icon {
-		display: none;
-	}
-	::picker(select) {
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
-		background-color: var(--popover);
-		color: var(--popover-foreground);
-		box-shadow: 0 12px 32px -16px oklch(0 0 0 / 70%);
-		margin-block: 4px;
-	}
-	select option:checked {
-		background-color: var(--accent);
-	}
 }
 
 @layer components {
-	/* The small uppercase label that names a region: FROM, TO, TRIGGER, LOG. */
+	/* Port and section labels: FROM, TO, TRIGGER and the rail headings. */
 	.eyebrow {
-		@apply font-sans text-xs font-semibold tracking-[0.14em] text-muted-foreground uppercase;
+		@apply text-xs font-semibold tracking-[0.14em] text-muted-foreground uppercase;
 	}
 
 	/* A hairline card. The only container a page should need. */

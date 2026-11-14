@@ -26,7 +26,7 @@
 	import AppHeader from '$lib/components/AppHeader.svelte';
 	import ServiceMark from '$lib/components/flow/ServiceMark.svelte';
 	import { Button } from '$lib/components/ui/button';
-	import { NativeSelect } from '$lib/components/ui/native-select';
+	import { Select } from '$lib/components/ui/select';
 	import ConnectionChip from '$lib/components/services/ConnectionChip.svelte';
 	import LastFmForm from '$lib/components/services/LastFmForm.svelte';
 	import ListenBrainzForm from '$lib/components/services/ListenBrainzForm.svelte';
@@ -677,11 +677,15 @@
 								Select the server RatingRelay should read ratings from.
 							</p>
 							<div class="mt-3 flex items-center gap-2">
-								<NativeSelect bind:value={selectedServer} class="min-w-56">
-									{#each availableServers as srv (srv.name)}
-										<option value={srv.name}>{srv.name}</option>
-									{/each}
-								</NativeSelect>
+								<Select
+									bind:value={selectedServer}
+									class="min-w-56"
+									label="Plex server"
+									options={availableServers.map((srv) => ({
+										value: srv.name,
+										label: srv.name
+									}))}
+								/>
 								<Button
 									class="h-8 px-3 text-sm"
 									onclick={confirmServer}

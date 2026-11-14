@@ -7,7 +7,7 @@
 	import LastFmForm from '$lib/components/services/LastFmForm.svelte';
 	import ListenBrainzForm from '$lib/components/services/ListenBrainzForm.svelte';
 	import { Button } from '$lib/components/ui/button';
-	import { NativeSelect } from '$lib/components/ui/native-select';
+	import { Select } from '$lib/components/ui/select';
 	import type { PlexServerItem, ServiceStatus } from '$lib/types/auth';
 	import type { PageData } from './$types';
 
@@ -150,11 +150,12 @@
 					{:else if plex.status === 'connected'}
 						<div class="mt-3 flex flex-wrap items-center gap-2 border-t border-border pt-3">
 							{#if servers.length > 0}
-								<NativeSelect bind:value={selectedServer} class="min-w-56">
-									{#each servers as srv (srv.name)}
-										<option value={srv.name}>{srv.name}</option>
-									{/each}
-								</NativeSelect>
+								<Select
+									bind:value={selectedServer}
+									class="min-w-56"
+									label="Plex server"
+									options={servers.map((srv) => ({ value: srv.name, label: srv.name }))}
+								/>
 								<Button class="h-8 px-3 text-sm" onclick={saveServer} disabled={busy}>
 									Use this server
 								</Button>

@@ -2,7 +2,7 @@
 	import { plexStarOptions } from '$lib/relay';
 	import type { ListenBrainzTargetConfig, PlexTargetConfig, TargetOption } from '$lib/types/relay';
 	import { cn } from '$lib/utils';
-	import { NativeSelect } from '$lib/components/ui/native-select';
+	import { Select } from '$lib/components/ui/select';
 	import ServiceMark from './ServiceMark.svelte';
 
 	let {
@@ -91,11 +91,7 @@
 		{#if allocated}
 			{#if option.id === 'plex' && plexConfig}
 				<span class="mr-1.5 text-sm text-muted-foreground">Rate as</span>
-				<NativeSelect bind:value={plexConfig.rating}>
-					{#each plexStarOptions as opt (opt.value)}
-						<option value={opt.value}>{opt.label}</option>
-					{/each}
-				</NativeSelect>
+				<Select bind:value={plexConfig.rating} label="Rating to write" options={plexStarOptions} />
 			{:else if option.id === 'lastfm'}
 				<span class="text-sm text-muted-foreground">Love every track</span>
 			{:else if lbzConfig}

@@ -74,6 +74,7 @@ async def _add_event(
     artist: str,
     success: bool = True,
     reason: str | None = None,
+    outcome: str | None = None,
 ) -> None:
     async with factory() as db:
         db.add(
@@ -83,7 +84,7 @@ async def _add_event(
                 title="song",
                 target_service="lastfm",
                 success=success,
-                outcome="written" if success else "failed",
+                outcome=outcome or ("written" if success else "failed"),
                 reason=reason,
             )
         )
@@ -159,3 +160,25 @@ async def test_job_detail_carries_the_typed_reason(client, factory):
     assert event["reason"] == "already_synced"
     assert event["outcome"] == "failed"
     assert event["candidates"] == []
+
+
+async def test_job_detail_counts_each_destination_separately(client, factory):
+    """`tracks_ok` is a sum over targets; the UI needs the parts."""
+    job_id = await _make_job(factory, "completed")
+    await _add_event(factory, job_id, "one", success=True)
+    await _add_event(factory, job_id, "two", success=True)
+    await _add_event(
+        factory, job_id, "three", success=False, reason="already_synced", outcome="skipped"
+    )
+
+    res = await client.get(f"/api/relay/jobs/{job_id}")
+
+    assert res.status_code == 200
+    (tally,) = res.json()["by_target"]
+    assert tally == {
+        "service": "lastfm",
+        "written": 2,
+        "failed": 0,
+        "skipped": 1,
+        "unmatched": 0,
+    }

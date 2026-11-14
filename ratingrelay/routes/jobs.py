@@ -165,6 +165,32 @@ async def cancel_job(
     return _job_to_dict(job)
 
 
+def _counts_by_target(events) -> list[dict]:
+    """Per-destination counts for one job.
+
+    ``tracks_ok`` is a sum over every target, so a run that writes to Last.fm
+    and ListenBrainz reports "720 written" for 360 tracks. The UI shows one
+    count per destination instead, which is the number a person can check.
+    """
+    counts: dict[str, dict[str, int]] = {}
+    for event in events:
+        bucket = counts.setdefault(
+            event.target_service, {"written": 0, "failed": 0, "skipped": 0, "unmatched": 0}
+        )
+        outcome = event.outcome or ("written" if event.success else "skipped")
+        if outcome in bucket:
+            bucket[outcome] += 1
+        elif event.success:
+            bucket["written"] += 1
+        else:
+            bucket["skipped"] += 1
+    return [
+        {"service": service, **tally}
+        for service, tally in sorted(counts.items())
+        if any(tally.values())
+    ]
+
+
 @router.get("/jobs/{job_id}")
 async def get_job(
     job_id: str,
@@ -181,6 +207,7 @@ async def get_job(
     )
     events = te_result.scalars().all()
     d = _job_to_dict(job)
+    d["by_target"] = _counts_by_target(events)
     d["events"] = [
         {
             "artist": e.artist,

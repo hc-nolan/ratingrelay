@@ -13,6 +13,14 @@ export interface TrackEvent {
 	candidates?: unknown[];
 }
 
+export interface TargetTally {
+	service: string;
+	written: number;
+	failed: number;
+	skipped: number;
+	unmatched: number;
+}
+
 export interface JobData {
 	id: string;
 	status: string;
@@ -31,4 +39,6 @@ export interface JobData {
 	dry_run: boolean;
 	cancel_requested?: boolean;
 	events?: TrackEvent[];
+	/** One tally per destination; `tracks_ok` is the sum across them. */
+	by_target?: TargetTally[];
 }

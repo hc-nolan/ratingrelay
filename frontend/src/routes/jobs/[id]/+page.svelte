@@ -11,7 +11,7 @@
 		TONE_DOT,
 		whenLabel
 	} from '$lib/format';
-	import { frequencyOptions, summarizeSource, summarizeTargets } from '$lib/relay';
+	import { frequencyOptions, summarizeSource, summarizeTargets, serviceLabels } from '$lib/relay';
 	import type { JobData, TrackEvent } from '$lib/types/jobs';
 	import { cn } from '$lib/utils';
 
@@ -137,13 +137,49 @@
 	const tone = $derived(statusTone(job?.status ?? ''));
 	const total = $derived((job?.tracks_ok ?? 0) + (job?.tracks_err ?? 0));
 
+	/**
+	 * One tile per destination, because "720 written" is two numbers added
+	 * together and neither of them is checkable. Falls back to the aggregate
+	 * when the job carries no per-target tally (older runs, no events).
+	 */
+	const writeTiles = $derived.by(() => {
+		// Live events first: a running job's tallies move as tracks land, and
+		// the stream does not re-send the server's snapshot.
+		if (events.length > 0) {
+			const counts: Record<string, number> = {};
+			for (const evt of events) {
+				if (bucketOf(evt) === 'written') counts[evt.target] = (counts[evt.target] ?? 0) + 1;
+			}
+			return Object.entries(counts)
+				.sort(([a], [b]) => a.localeCompare(b))
+				.map(([service, value]) => ({
+					label: serviceLabels[service] ?? service,
+					value,
+					tone: value > 0 ? 'text-ok' : 'text-foreground'
+				}));
+		}
+
+		const tally = job?.by_target ?? [];
+		if (tally.length > 0) {
+			return tally.map((t) => ({
+				label: serviceLabels[t.service] ?? t.service,
+				value: t.written,
+				tone: t.written > 0 ? 'text-ok' : 'text-foreground'
+			}));
+		}
+
+		return [
+			{
+				label: job?.dry_run ? 'Would sync' : 'Written',
+				value: job?.tracks_ok ?? 0,
+				tone: (job?.tracks_ok ?? 0) > 0 ? 'text-ok' : 'text-foreground'
+			}
+		];
+	});
+
 	const stats = $derived([
 		{ label: 'Fetched', value: job?.tracks_fetched ?? 0, tone: 'text-foreground' },
-		{
-			label: job?.dry_run ? 'Would sync' : 'Written',
-			value: job?.tracks_ok ?? 0,
-			tone: (job?.tracks_ok ?? 0) > 0 ? 'text-ok' : 'text-foreground'
-		},
+		...writeTiles,
 		{
 			label: 'Failed',
 			value: job?.tracks_err ?? 0,
@@ -252,7 +288,7 @@
 						{/if}
 					</div>
 
-					<div class="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+					<div class="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
 						{#each stats as stat (stat.label)}
 							<div class="rounded-md border border-border bg-background/40 px-3 py-2">
 								<div class={cn('font-mono text-xl leading-none tabular-nums', stat.tone)}>

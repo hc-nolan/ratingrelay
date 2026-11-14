@@ -1,4 +1,4 @@
-const serviceLabels: Record<string, string> = {
+export const serviceLabels: Record<string, string> = {
 	plex: 'Plex',
 	lastfm: 'Last.fm',
 	listenbrainz: 'ListenBrainz'

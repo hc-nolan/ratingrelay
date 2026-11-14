@@ -279,7 +279,6 @@
 	);
 
 	const allocatedTargets = $derived(availableTargets.filter((t) => isAllocated(t.id)));
-	const ghostTargets = $derived(availableTargets.filter((t) => !isAllocated(t.id)));
 
 	/** Services a reset can clear: the ones we hold credentials for. */
 	const resetOptions = $derived<SourceOption[]>([
@@ -481,56 +480,24 @@
 					{#if selectedSource !== 'reset'}
 						<FlowLink />
 
-						{#if allocatedTargets.length > 0}
-							<div class="space-y-2.5">
-								{#each allocatedTargets as target (target.id)}
-									<TargetNode
-										option={target}
-										allocated={true}
-										onadd={() => {}}
-										onremove={() => setAllocated(target.id, false)}
-										plexConfig={target.id === 'plex' ? plexTargetConfig : undefined}
-										lbzConfig={target.id === 'listenbrainz' ? lbzTargetConfig : undefined}
-									/>
-								{/each}
-							</div>
-						{/if}
+						<p class="-mt-1 mb-3 text-center text-xs text-muted-foreground">
+							Where should these ratings go?
+						</p>
 
-						{#if ghostTargets.length > 0}
-							{#if allocatedTargets.length === 0}
-								<p class="-mt-1 mb-3 text-center text-xs text-muted-foreground">
-									Where should these ratings go?
-								</p>
-							{:else}
-								<p
-									class="mx-auto mb-2 w-fit bg-background px-2 text-center text-xs text-muted-foreground"
-								>
-									Add another, or queue the run below
-								</p>
-								<FlowLink />
-							{/if}
-
-							<!-- A target you have not picked yet stays on screen after you pick
-							     another one: syncing to both is the normal case, not a detour
-							     through a "add" button that hides the choice again. -->
-							<div
-								class={cn(
-									'grid gap-2',
-									// One left over: give it the full width of the node above it
-									// rather than leaving a half-width card hanging in the grid.
-									ghostTargets.length > 1 && 'sm:grid-cols-2'
-								)}
-							>
-								{#each ghostTargets as target (target.id)}
-									<TargetNode
-										option={target}
-										allocated={false}
-										onadd={() => setAllocated(target.id, true)}
-										onremove={() => {}}
-									/>
-								{/each}
-							</div>
-						{/if}
+						<!-- Every target keeps its card and its place. Picking one switches
+						     that card on; it does not move the row around underneath you. -->
+						<div class="grid gap-2 sm:grid-cols-2">
+							{#each availableTargets as target (target.id)}
+								<TargetNode
+									option={target}
+									allocated={isAllocated(target.id)}
+									onadd={() => setAllocated(target.id, true)}
+									onremove={() => setAllocated(target.id, false)}
+									plexConfig={target.id === 'plex' ? plexTargetConfig : undefined}
+									lbzConfig={target.id === 'listenbrainz' ? lbzTargetConfig : undefined}
+								/>
+							{/each}
+						</div>
 					{/if}
 
 					<FlowLink />

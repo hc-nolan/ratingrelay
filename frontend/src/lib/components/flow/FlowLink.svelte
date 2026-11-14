@@ -18,7 +18,7 @@
 			onclick={onadd}
 			aria-label={label}
 			title={label}
-			class="relative z-10 grid size-8 place-items-center rounded-full border bg-background text-muted-foreground transition-colors hover:border-primary hover:text-primary focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+			class="relative z-10 grid size-8 place-items-center border bg-background text-muted-foreground transition-colors hover:border-primary hover:text-primary focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
 			class:border-primary={active}
 			class:text-primary={active}
 		>

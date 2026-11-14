@@ -48,7 +48,9 @@
 	--chart-4: oklch(0.664 0.192 22.5);
 	--chart-5: oklch(0.7 0.014 48);
 
-	--radius: 0.625rem;
+	/* Square by default: this is a console, and a 0 radius is the one shape
+	   that makes controls, cards and chips read as the same instrument. */
+	--radius: 0rem;
 	--sidebar: oklch(0.19 0.01 46);
 	--sidebar-foreground: oklch(0.947 0.005 60);
 	--sidebar-primary: oklch(0.71 0.126 58);

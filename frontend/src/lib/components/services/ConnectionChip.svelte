@@ -7,7 +7,7 @@
 <!-- One status pill for every service panel: same shape everywhere, and the
      tone comes from the connection state rather than being chosen per service. -->
 <div
-	class="inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs {TONE_CHIP[
+	class="inline-flex shrink-0 items-center gap-1.5 border px-2 py-0.5 text-xs {TONE_CHIP[
 		statusTone(status)
 	]}"
 >

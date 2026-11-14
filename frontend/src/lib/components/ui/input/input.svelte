@@ -17,12 +17,12 @@
 	data-slot="input"
 	{type}
 	class={cn(
-		'flex h-9 w-full min-w-0 rounded-md border border-input bg-background px-2.5 py-1.5 text-base text-foreground shadow-none transition-colors',
+		'flex h-9 w-full min-w-0 border border-border bg-background px-2.5 py-1.5 text-sm text-foreground transition-colors',
 		'placeholder:text-muted-foreground/70',
+		'hover:border-border/80',
 		'focus-visible:border-primary/60 focus-visible:outline-none',
 		'disabled:cursor-not-allowed disabled:opacity-50',
 		'aria-invalid:border-destructive',
-		'md:text-sm',
 		className
 	)}
 	{...restProps}

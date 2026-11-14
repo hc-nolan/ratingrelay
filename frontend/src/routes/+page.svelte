@@ -431,7 +431,7 @@
 				<div class="flex flex-wrap items-center gap-1.5">
 					{#if plex.status === 'connected'}
 						<span
-							class="inline-flex items-center gap-1 rounded-full border border-border px-1.5 py-0.5 text-xs text-muted-foreground"
+							class="inline-flex items-center gap-1 border border-border px-1.5 py-0.5 text-xs text-muted-foreground"
 						>
 							<ServiceMark service="plex" size={12} />
 							{plex.server_name ?? 'Plex'}
@@ -439,7 +439,7 @@
 					{/if}
 					{#if lastfm.status === 'connected'}
 						<span
-							class="inline-flex items-center gap-1 rounded-full border border-border px-1.5 py-0.5 text-xs text-muted-foreground"
+							class="inline-flex items-center gap-1 border border-border px-1.5 py-0.5 text-xs text-muted-foreground"
 						>
 							<ServiceMark service="lastfm" size={12} />
 							{lastfm.username}
@@ -447,7 +447,7 @@
 					{/if}
 					{#if listenbrainz.status === 'connected'}
 						<span
-							class="inline-flex items-center gap-1 rounded-full border border-border px-1.5 py-0.5 text-xs text-muted-foreground"
+							class="inline-flex items-center gap-1 border border-border px-1.5 py-0.5 text-xs text-muted-foreground"
 						>
 							<ServiceMark service="listenbrainz" size={12} />
 							{listenbrainz.username}
@@ -480,9 +480,7 @@
 					{#if selectedSource !== 'reset'}
 						<FlowLink />
 
-						<p class="-mt-1 mb-3 text-center text-xs text-muted-foreground">
-							Where should these ratings go?
-						</p>
+						<p class="eyebrow mx-auto mb-3 w-fit bg-background px-2 text-center">To</p>
 
 						<!-- Every target keeps its card and its place. Picking one switches
 						     that card on; it does not move the row around underneath you. -->
@@ -556,7 +554,7 @@
 						<span class="flex items-center gap-1.5">
 							<span
 								class={cn(
-									'grid size-5 place-items-center rounded-full border font-mono text-xs tabular-nums',
+									'grid size-5 place-items-center border font-mono text-xs tabular-nums',
 									s.done
 										? 'border-ok/40 bg-ok/15 text-ok'
 										: s.active
@@ -590,7 +588,7 @@
 					</div>
 					<span
 						class={cn(
-							'inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs',
+							'inline-flex shrink-0 items-center gap-1.5 border px-2 py-0.5 text-xs',
 							TONE_CHIP[statusTone(plex.status)]
 						)}
 					>
@@ -649,7 +647,7 @@
 					{#if plex.server_name}
 						<span
 							class={cn(
-								'inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs',
+								'inline-flex shrink-0 items-center gap-1.5 border px-2 py-0.5 text-xs',
 								TONE_CHIP.ok
 							)}
 						>

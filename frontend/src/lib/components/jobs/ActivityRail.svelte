@@ -29,7 +29,7 @@
 	<div class="flex items-center gap-2 border-b border-border px-4 py-2.5">
 		<span class="eyebrow">Activity</span>
 		{#if active.length > 0}
-			<span class="rounded-full bg-info/15 px-1.5 py-px font-mono text-xs text-info tabular-nums">
+			<span class="bg-info/15 px-1.5 py-px font-mono text-xs text-info tabular-nums">
 				{active.length} live
 			</span>
 		{/if}

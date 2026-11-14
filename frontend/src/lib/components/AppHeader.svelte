@@ -82,9 +82,7 @@
 			>
 				{link.label}
 				{#if link.match === '/unmatched' && unmatched}
-					<span
-						class="rounded-full bg-warn/15 px-1.5 py-px font-mono text-xs text-warn tabular-nums"
-					>
+					<span class="bg-warn/15 px-1.5 py-px font-mono text-xs text-warn tabular-nums">
 						{unmatched}
 					</span>
 				{/if}

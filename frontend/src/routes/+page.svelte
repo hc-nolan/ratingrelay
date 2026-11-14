@@ -234,7 +234,6 @@
 	let lbzTargetConfig = $state<ListenBrainzTargetConfig>({ feedbackType: 'love' });
 
 	/** Whether the ghost list under the last node is showing. */
-	let showTargetPicker = $state(false);
 
 	let relaying = $state(false);
 	let relayError = $state('');
@@ -503,27 +502,34 @@
 									Where should these ratings go?
 								</p>
 							{:else}
-								<FlowLink
-									onadd={() => (showTargetPicker = !showTargetPicker)}
-									active={showTargetPicker}
-								/>
+								<p
+									class="mx-auto mb-2 w-fit bg-background px-2 text-center text-xs text-muted-foreground"
+								>
+									Add another, or queue the run below
+								</p>
+								<FlowLink />
 							{/if}
 
-							{#if allocatedTargets.length === 0 || showTargetPicker}
-								<div class="grid gap-2 sm:grid-cols-2">
-									{#each ghostTargets as target (target.id)}
-										<TargetNode
-											option={target}
-											allocated={false}
-											onadd={() => {
-												setAllocated(target.id, true);
-												showTargetPicker = false;
-											}}
-											onremove={() => {}}
-										/>
-									{/each}
-								</div>
-							{/if}
+							<!-- A target you have not picked yet stays on screen after you pick
+							     another one: syncing to both is the normal case, not a detour
+							     through a "add" button that hides the choice again. -->
+							<div
+								class={cn(
+									'grid gap-2',
+									// One left over: give it the full width of the node above it
+									// rather than leaving a half-width card hanging in the grid.
+									ghostTargets.length > 1 && 'sm:grid-cols-2'
+								)}
+							>
+								{#each ghostTargets as target (target.id)}
+									<TargetNode
+										option={target}
+										allocated={false}
+										onadd={() => setAllocated(target.id, true)}
+										onremove={() => {}}
+									/>
+								{/each}
+							</div>
 						{/if}
 					{/if}
 

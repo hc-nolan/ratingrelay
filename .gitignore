@@ -32,3 +32,4 @@ frontend/.svelte-kit/
 
 # Editor / OS
 .DS_Store
+.playwright-mcp/

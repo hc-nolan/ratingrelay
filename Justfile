@@ -62,3 +62,13 @@ build:
 # Apply database migrations.
 migrate:
     uv run alembic upgrade head
+
+# Demo: API on :8199 with a seeded throwaway database, Vite on :5174. No real services are called.
+demo:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    trap 'kill 0' EXIT INT TERM
+    uv run python scripts/demo.py &
+    (cd frontend && BACKEND_URL="http://localhost:8199" pnpm exec vite dev --port 5174 --strictPort) &
+    wait
+

@@ -126,6 +126,20 @@ what it wrote, so if you reconnect later it picks up where it left off.
 Disconnecting **Plex** also signs you out, because your Plex account is how you log
 in to RatingRelay. You'll be asked to confirm first.
 
+## Keeping it private
+
+RatingRelay is built for one person on a home network. Keep it off the open
+internet. If you need it away from home, use a VPN, not a port forward. Your Plex
+account is the only login it has, so:
+
+- **Finish setup as soon as it starts.** Until a Plex account is connected, anyone
+  who can reach the app can use it. The first account to connect becomes the owner.
+- **Disconnecting Plex opens it up again** until you reconnect. Do it from a network
+  you trust.
+- **Only approve Plex sign-ins you started.** RatingRelay can't tell who opened a
+  Plex sign-in prompt. If you approve a link someone else sent you, they get signed
+  in to your RatingRelay.
+
 ## Your data
 
 Everything RatingRelay knows is kept in the `ratingrelay-data` Docker volume. That

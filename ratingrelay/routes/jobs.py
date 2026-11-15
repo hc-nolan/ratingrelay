@@ -19,7 +19,7 @@ from typing import AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,6 +33,12 @@ router = APIRouter(prefix="/api/relay", tags=["jobs"])
 
 _TERMINAL_STATUSES = {"completed", "partial", "failed", "cancelled"}
 _ACTIVE_STATUSES = {"queued", "running", "scheduled"}
+
+# A recurring relay runs at most once a minute and at least once a year. The
+# worker adds the interval to "now" to schedule the next run, so zero or a
+# negative number would be a run that is always already due: back-to-back
+# runs forever, each one a full walk of every service.
+_MAX_INTERVAL_MINUTES = 365 * 24 * 60
 # How often the stream looks for new rows. A run writes about one track a
 # second, so a second of lag is below the resolution of the progress bar.
 _STREAM_POLL_SECONDS = 1.0
@@ -44,7 +50,7 @@ class JobCreateRequest(BaseModel):
     source: FromConfig
     targets: list[ToConfig]
     recurring: bool = False
-    interval_minutes: int | None = None
+    interval_minutes: int | None = Field(default=None, ge=1, le=_MAX_INTERVAL_MINUTES)
     dry_run: bool = False
     # A one-off override of the mass-undo guard, for the run after a refusal.
     allow_mass_undo: bool = False
@@ -107,6 +113,10 @@ async def create_job(
         raise HTTPException(
             status_code=400, detail="allow_mass_undo and recurring cannot both be true"
         )
+    if body.recurring and isinstance(body.source, ResetFromConfig):
+        # A reset is an undo someone asked for; repeating it would clear
+        # whatever was rated since, on a timer nobody is watching.
+        raise HTTPException(status_code=400, detail="A reset cannot be recurring")
 
     source_json = _source_adapter.dump_json(body.source).decode()
     targets_json = _targets_adapter.dump_json(body.targets).decode()

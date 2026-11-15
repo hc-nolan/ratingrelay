@@ -152,3 +152,32 @@ async def test_opposite_directions_may_share_a_pair(client):
     resp = await client.post("/api/relay/jobs", json={"source": hates, "targets": [LFM_TARGET]})
     assert loves.status_code == 201
     assert resp.status_code == 201
+
+
+# ---------------------------------------------------------------------------
+# Recurring bounds
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("interval", [0, -5, 365 * 24 * 60 + 1])
+async def test_an_interval_out_of_bounds_is_rejected(client, interval):
+    """0 or less rescheduled the job into the past, so it ran back to back."""
+    resp = await client.post(
+        "/api/relay/jobs", json={**PAYLOAD, "recurring": True, "interval_minutes": interval}
+    )
+    assert resp.status_code == 422
+
+
+async def test_a_reset_cannot_be_recurring(client):
+    """A wipe on a timer would clear every rating each time it came round."""
+    resp = await client.post(
+        "/api/relay/jobs",
+        json={
+            "source": {"service": "reset", "target_service": "lastfm", "all": True},
+            "targets": [],
+            "recurring": True,
+            "interval_minutes": 60,
+        },
+    )
+    assert resp.status_code == 400
+

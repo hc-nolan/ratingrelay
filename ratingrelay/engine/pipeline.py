@@ -183,7 +183,20 @@ async def _undo(
     return TrackOutcome(track, target.service, OutcomeStatus.REVERTED, Reason.WITHDRAWN)
 
 
-async def _reconcile(
+# A reconcile that would undo more than this share of a target's records, and
+# at least this many of them, is refused unless the run allows it. Losing most
+# of your loves in one night is far likelier to be a source that answered with
+# an empty or truncated list than to be what the user did.
+MASS_UNDO_RATIO = 0.5
+MASS_UNDO_MIN = 10
+
+
+def is_mass_undo(withdrawn: int, recorded: int) -> bool:
+    """Whether undoing *withdrawn* of *recorded* records needs an explicit yes."""
+    return withdrawn >= MASS_UNDO_MIN and withdrawn > recorded * MASS_UNDO_RATIO
+
+
+async def _reconcile(  # pylint: disable=too-many-arguments
     target: Target,
     *,
     synced: dict[str, SyncedTrack],
@@ -191,16 +204,36 @@ async def _reconcile(
     sync_store: SyncStore,
     source_service: str,
     dry_run: bool,
+    allow_mass_undo: bool,
 ) -> list[TrackOutcome]:
     """Undo the writes whose track the source has stopped rating.
 
     Only rows we recorded are considered, and inside them only rows that say
     what was written — that is the whole of "only undo our own writes".
+
+    A mass undo (see :func:`is_mass_undo`) is refused as a whole: every record
+    it would have undone fails with ``MASS_UNDO_REFUSED`` and stays recorded,
+    so the run is partial and the next run asks again. Dry run refuses the same
+    way, because it promises what a real run would do.
     """
+    withdrawn = [record for key, record in synced.items() if key not in seen]
+    if not allow_mass_undo and is_mass_undo(len(withdrawn), len(synced)):
+        # Each entry point says how to allow it; the engine says only what.
+        detail = f"would undo {len(withdrawn)} of {len(synced)} recorded writes"
+        logger.warning("Refusing mass undo on %s: %s", target.service, detail)
+        return [
+            TrackOutcome(
+                record.track,
+                target.service,
+                OutcomeStatus.FAILED,
+                Reason.MASS_UNDO_REFUSED,
+                detail,
+            )
+            for record in withdrawn
+        ]
+
     outcomes = []
-    for key, record in synced.items():
-        if key in seen:
-            continue
+    for record in withdrawn:
         outcomes.append(
             await _undo(
                 record,
@@ -221,6 +254,7 @@ async def run_tracks(
     sync_store: SyncStore,
     progress: ProgressSink = NO_PROGRESS,
     dry_run: bool = False,
+    allow_mass_undo: bool = False,
 ) -> RunReport:
     """Relay an already-fetched track list to every target, then reconcile.
 
@@ -252,6 +286,7 @@ async def run_tracks(
             sync_store=sync_store,
             source_service=source_service,
             dry_run=dry_run,
+            allow_mass_undo=allow_mass_undo,
         ):
             outcomes.append(outcome)
             await progress.outcome(outcome)
@@ -275,6 +310,7 @@ async def run(
     sync_store: SyncStore,
     progress: ProgressSink = NO_PROGRESS,
     dry_run: bool = False,
+    allow_mass_undo: bool = False,
 ) -> RunReport:
     """Fetch from *source*, then relay to every target."""
     tracks = await attempt(
@@ -289,4 +325,5 @@ async def run(
         source_service=source.service,
         progress=progress,
         dry_run=dry_run,
+        allow_mass_undo=allow_mass_undo,
     )

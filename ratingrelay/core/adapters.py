@@ -12,6 +12,7 @@ from ratingrelay.core.factory import (  # re-exported for callers of adapters.st
     SOURCE_SERVICES,
     TARGET_SERVICES,
     mbid_cache,
+    relay_identity,
     source_for_service,
     stores,
     target_for_service,
@@ -66,6 +67,17 @@ async def source_for(db: AsyncSession, config: object) -> Source:
         return await source_for_service(
             db, "listenbrainz", feedback_type=config.feedback_type
         )
+    raise ValueError(f"Unknown source service: {config}")
+
+
+def relay_for(config: object) -> str:
+    """The relay identity of a request's source config (see ``relay_identity``)."""
+    if isinstance(config, PlexFromConfig):
+        return relay_identity("plex", comparison=config.comparison)
+    if isinstance(config, LastFMFromConfig):
+        return relay_identity("lastfm")
+    if isinstance(config, ListenBrainzFromConfig):
+        return relay_identity("listenbrainz", feedback_type=config.feedback_type)
     raise ValueError(f"Unknown source service: {config}")
 
 

@@ -103,6 +103,12 @@ These are the point of the tool. v1 got them right; keep them that way.
    A rating that changed re-propagates; a love that was withdrawn gets un-loved.
 3. **Only undo our own writes.** Never clear a target rating this tool did not create.
    Reset is an explicit, narrow action — never a whole-service wipe by default.
+   Sync records are keyed by source, target **and relay** (the direction the source
+   reads, `relay_identity` in `core/factory.py`), so a love relay and a hate relay
+   on one pair never reconcile against each other. A reconcile that would undo most
+   of a target (`pipeline.is_mass_undo`) is refused unless that one run allows it
+   (`--allow-mass-undo`, `allow_mass_undo` on a non-recurring job); never make the
+   override persistent.
 4. **Dry run must be the real pipeline.** Fetch, match and reconcile run as usual;
    only the write calls are suppressed. Dry-run output is the authority on what a
    real run would do, so divergence between them is a bug, not a caveat.

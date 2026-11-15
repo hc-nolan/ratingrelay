@@ -339,3 +339,62 @@ async def test_the_recorded_mbid_is_what_an_undo_uses():
 
     assert client.submissions == [(0, "rec-1")]
     assert resolver.calls == 0
+
+
+async def _loved(count: int) -> tuple[MemorySyncStore, list[Track]]:
+    store = MemorySyncStore()
+    tracks = [Track("Artist", f"Song {n}") for n in range(count)]
+    for track in tracks:
+        await store.remember(
+            "plex",
+            "lastfm",
+            SyncedTrack(track.key, intent="love", target_key=f'["Artist", "{track.title}"]'),
+        )
+    return store, tracks
+
+
+async def test_a_mass_undo_is_refused_and_keeps_every_record():
+    """A source that answers with nothing must not un-love the whole account."""
+    target, client = _lastfm_target()
+    store, _ = await _loved(pipeline.MASS_UNDO_MIN)
+
+    for dry_run in (True, False):
+        report = await pipeline.run_tracks(
+            [], [target], source_service="plex", sync_store=store, dry_run=dry_run
+        )
+
+        assert {o.status for o in report.outcomes} == {OutcomeStatus.FAILED}
+        assert {o.reason for o in report.outcomes} == {Reason.MASS_UNDO_REFUSED}
+        assert len(report.outcomes) == pipeline.MASS_UNDO_MIN
+        assert report.status != "completed"
+    assert client.unloves == []
+    assert len(store.records[("plex", "lastfm")]) == pipeline.MASS_UNDO_MIN
+
+
+async def test_a_mass_undo_runs_when_the_run_allows_it():
+    target, client = _lastfm_target()
+    store, _ = await _loved(pipeline.MASS_UNDO_MIN)
+
+    report = await pipeline.run_tracks(
+        [], [target], source_service="plex", sync_store=store, allow_mass_undo=True
+    )
+
+    assert {o.status for o in report.outcomes} == {OutcomeStatus.REVERTED}
+    assert len(client.unloves) == pipeline.MASS_UNDO_MIN
+    assert store.records[("plex", "lastfm")] == {}
+
+
+async def test_withdrawing_a_minority_is_an_ordinary_reconcile():
+    target, client = _lastfm_target()
+    store, tracks = await _loved(2 * pipeline.MASS_UNDO_MIN)
+    kept = tracks[: pipeline.MASS_UNDO_MIN]
+
+    report = await pipeline.run_tracks(kept, [target], source_service="plex", sync_store=store)
+
+    assert len(client.unloves) == pipeline.MASS_UNDO_MIN
+    assert Reason.MASS_UNDO_REFUSED not in {o.reason for o in report.outcomes}
+
+
+def test_a_small_library_is_never_a_mass_undo():
+    assert not pipeline.is_mass_undo(pipeline.MASS_UNDO_MIN - 1, pipeline.MASS_UNDO_MIN - 1)
+    assert pipeline.is_mass_undo(pipeline.MASS_UNDO_MIN, pipeline.MASS_UNDO_MIN)

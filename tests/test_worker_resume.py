@@ -90,7 +90,7 @@ async def _events(factory, job_id: str) -> list[TrackEvent]:
 async def test_a_restarted_job_resumes_its_counters_and_its_journal(monkeypatch, factory):
     job_id = await _interrupted_job(factory)
 
-    async def fake_execute(db, source, targets, on_fetch_complete, on_track, dry_run):
+    async def fake_execute(db, source, targets, on_fetch_complete, on_track, dry_run, **_):
         await on_fetch_complete(10)
         # Nine of the ten were converged by the attempt that died; only the tenth
         # is left. The echo of the nine must not be recorded again.
@@ -146,7 +146,7 @@ async def test_a_first_attempt_still_journals_what_was_already_in_sync(monkeypat
         await db.commit()
         job_id = job.id
 
-    async def fake_execute(db, source, targets, on_fetch_complete, on_track, dry_run):
+    async def fake_execute(db, source, targets, on_fetch_complete, on_track, dry_run, **_):
         await on_fetch_complete(2)
         await on_track(
             {"artist": "in sync", "title": "song"},
@@ -183,7 +183,7 @@ async def test_a_resumed_job_can_still_be_cancelled(monkeypatch, factory):
     """Cancelling a job that is already resuming has to work too."""
     job_id = await _interrupted_job(factory)
 
-    async def fake_execute(db, source, targets, on_fetch_complete, on_track, dry_run):
+    async def fake_execute(db, source, targets, on_fetch_complete, on_track, dry_run, **_):
         await on_fetch_complete(2)
         await on_track(
             {"artist": "in sync", "title": "song"},

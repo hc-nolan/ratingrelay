@@ -110,7 +110,7 @@ async def test_lastfm_dry_run_suppresses_write(db):
 async def test_lastfm_dry_run_skipped_track_fires_on_track(db):
     """Already-synced tracks: on_track called with skipped=True, no new SyncRecord."""
     # Pre-populate sync history, with the intent this track now implies
-    await SqlSyncStore(db).remember(
+    await SqlSyncStore(db, "love").remember(
         "plex", "lastfm", SyncedTrack(track_key("Artist A", "Song A"), intent="love")
     )
     before = await _sync_record_count(db)
@@ -208,7 +208,7 @@ async def test_listenbrainz_dry_run_suppresses_write(db):
 async def test_listenbrainz_dry_run_skipped_fires_on_track(db):
     """Already-synced LBZ track in dry-run: on_track called with skipped=True."""
     track_with_mbid = {**TRACK_A, "recording_mbid": "aaaaaaaa-0000-0000-0000-000000000001"}
-    await SqlSyncStore(db).remember(
+    await SqlSyncStore(db, "love").remember(
         "plex", "listenbrainz", SyncedTrack(track_key("Artist A", "Song A"), intent="love")
     )
 

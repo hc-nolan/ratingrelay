@@ -10,7 +10,7 @@ import json
 from typing import Optional, TextIO
 
 from ratingrelay.cli.config import RelaySpec
-from ratingrelay.engine.types import OutcomeStatus, RunReport
+from ratingrelay.engine.types import OutcomeStatus, Reason, RunReport
 
 # A report that is 20 MB because the library moved is not machine-readable in
 # practice; details are capped and the document says so.
@@ -94,7 +94,20 @@ def human(
         counts = "  ".join(f"{key} {getattr(target, key)}" for key in _STATUS_FIELDS)
         lines.append(f"  {target.target:<{width}}  {counts}")
     lines.append(f"result: {report.status} ({_tally(report)}) in {duration:.1f}s")
+    lines.extend(_refusals(report))
     return "\n".join(lines)
+
+
+def _refusals(report: RunReport) -> list[str]:
+    """One line per target whose mass undo was refused, saying how to allow it."""
+    refused: dict[str, str] = {}
+    for outcome in report.outcomes:
+        if outcome.reason is Reason.MASS_UNDO_REFUSED:
+            refused.setdefault(outcome.target, outcome.detail or "")
+    return [
+        f"refused on {target}: {detail} (pass --allow-mass-undo)"
+        for target, detail in refused.items()
+    ]
 
 
 def _tally(report: RunReport) -> str:

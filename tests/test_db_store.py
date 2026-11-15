@@ -40,7 +40,7 @@ async def _rows(db: AsyncSession) -> list[SyncRecord]:
 
 
 async def test_round_trip_keeps_the_intent_and_the_target_key(db):
-    store = SqlSyncStore(db)
+    store = SqlSyncStore(db, "love")
     await store.remember(
         "plex",
         "lastfm",
@@ -65,7 +65,7 @@ async def test_round_trip_keeps_the_intent_and_the_target_key(db):
 
 
 async def test_a_second_write_replaces_the_first_rather_than_duplicating(db):
-    store = SqlSyncStore(db)
+    store = SqlSyncStore(db, "love")
     await store.remember("plex", "plex", SyncedTrack(TRACK_KEY, intent="rating:8.0", rating=8.0))
     await store.remember(
         "plex", "plex", SyncedTrack(TRACK_KEY, intent="rating:10.0", rating=10.0, target_key='["1"]')
@@ -80,7 +80,7 @@ async def test_a_second_write_replaces_the_first_rather_than_duplicating(db):
 
 
 async def test_load_is_scoped_to_one_source_and_target_pair(db):
-    store = SqlSyncStore(db)
+    store = SqlSyncStore(db, "love")
     await store.remember("plex", "lastfm", SyncedTrack(TRACK_KEY, intent="love"))
     await store.remember("lastfm", "plex", SyncedTrack(TRACK_KEY, intent="rating:10.0"))
     await store.remember("plex", "listenbrainz", SyncedTrack(TRACK_KEY, intent="love"))
@@ -90,7 +90,7 @@ async def test_load_is_scoped_to_one_source_and_target_pair(db):
 
 
 async def test_forget_drops_one_record(db):
-    store = SqlSyncStore(db)
+    store = SqlSyncStore(db, "love")
     await store.remember("plex", "lastfm", SyncedTrack(TRACK_KEY, intent="love"))
 
     await store.forget("plex", "lastfm", TRACK_KEY)
@@ -100,7 +100,7 @@ async def test_forget_drops_one_record(db):
 
 
 async def test_forget_target_drops_only_that_target(db):
-    store = SqlSyncStore(db)
+    store = SqlSyncStore(db, "love")
     await store.remember("plex", "lastfm", SyncedTrack(TRACK_KEY, intent="love"))
     await store.remember("plex", "listenbrainz", SyncedTrack(TRACK_KEY, intent="love"))
 
@@ -138,3 +138,74 @@ async def test_mapping_store_prefers_a_service_specific_override(db):
 
     assert (await store.load("lastfm"))[TRACK_KEY] == TrackMapping("Lastfm Only", "Lastfm Only")
     assert (await store.load("plex"))[TRACK_KEY] == TrackMapping("Everything", "Everything")
+
+
+def _love(key: str) -> SyncedTrack:
+    return SyncedTrack(key=key, recording_mbid=None, intent="love", rating=None, target_key=key)
+
+
+async def test_relays_on_one_pair_keep_their_records_apart(db):
+    """A love relay and a hate relay to the same target never see each other's rows."""
+    loves, hates = SqlSyncStore(db, "love"), SqlSyncStore(db, "hate")
+    await loves.remember("listenbrainz", "plex", _love("a"))
+    await hates.remember("listenbrainz", "plex", _love("b"))
+
+    assert set(await loves.load("listenbrainz", "plex")) == {"a"}
+    assert set(await hates.load("listenbrainz", "plex")) == {"b"}
+
+    await loves.forget("listenbrainz", "plex", "b")
+    assert set(await hates.load("listenbrainz", "plex")) == {"b"}
+
+
+async def test_rows_from_before_relays_are_claimed_by_the_first_relay_to_load(db):
+    db.add(SyncRecord(source_service="plex", target_service="lastfm", normalized_key="a"))
+    db.add(SyncRecord(source_service="plex", target_service="listenbrainz", normalized_key="b"))
+    await db.commit()
+
+    assert set(await SqlSyncStore(db, "love").load("plex", "lastfm")) == {"a"}
+    assert await SqlSyncStore(db, "hate").load("plex", "lastfm") == {}
+    relays = {(row.target_service, row.relay) for row in await _rows(db)}
+    assert relays == {("lastfm", "love"), ("listenbrainz", "")}
+
+
+async def test_an_unscoped_store_refuses_to_write(db):
+    with pytest.raises(ValueError):
+        await SqlSyncStore(db).remember("plex", "lastfm", _love("a"))
+
+
+async def test_a_love_relay_and_a_hate_relay_do_not_revert_each_other(db):
+    """ListenBrainz loves and hates both into Plex: every run used to undo the other."""
+    from ratingrelay.engine import pipeline
+    from ratingrelay.engine.services.plex import PlexTarget
+    from ratingrelay.engine.store import MemoryMappingStore
+    from ratingrelay.engine.types import Candidate, Track
+
+    class Library:
+        def __init__(self):
+            self.ratings = {}
+
+        async def candidates(self):
+            return (
+                Candidate("A", "Loved", external_id="1"),
+                Candidate("B", "Hated", external_id="2"),
+            )
+
+        async def rate(self, key, rating):
+            self.ratings[key] = rating
+
+    class Source:
+        service = "listenbrainz"
+
+        def __init__(self, tracks):
+            self.tracks = tracks
+
+        async def fetch(self):
+            return self.tracks
+
+    library = Library()
+    runs = [("love", Track("A", "Loved"), 10.0), ("hate", Track("B", "Hated"), 2.0)]
+    for relay, track, rating in runs * 2:
+        target = PlexTarget(library, MemoryMappingStore(), rating)
+        await pipeline.run(Source([track]), [target], sync_store=SqlSyncStore(db, relay))
+
+    assert library.ratings == {"1": 10.0, "2": 2.0}

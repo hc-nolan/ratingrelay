@@ -3,6 +3,7 @@
 	import { resolve } from '$app/paths';
 	import type { PageData } from './$types';
 	import AppHeader from '$lib/components/AppHeader.svelte';
+	import MassUndoNotice from '$lib/components/jobs/MassUndoNotice.svelte';
 	import {
 		durationLabel,
 		statusLabel,
@@ -93,7 +94,8 @@
 		missing_metadata: 'missing artist or title',
 		not_configured: 'service not configured',
 		write_failed: 'write failed',
-		unrecorded_target: 'no recorded write'
+		unrecorded_target: 'no recorded write',
+		mass_undo_refused: 'mass undo refused'
 	};
 
 	function describe(evt: TrackEvent): string {
@@ -318,6 +320,10 @@
 						<p class="mt-2 text-sm text-destructive">{cancelError}</p>
 					{/if}
 				</section>
+
+				{#if TERMINAL.has(job.status)}
+					<MassUndoNotice {job} {events} />
+				{/if}
 
 				<!-- ── What it did ──────────────────────────────────────────────── -->
 				<section class="panel overflow-hidden">

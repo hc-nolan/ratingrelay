@@ -128,6 +128,12 @@ def _add_run_flags(parser: argparse.ArgumentParser) -> None:
         help="fetch, match and reconcile for real; write nothing",
     )
     parser.add_argument(
+        "--allow-mass-undo",
+        action="store_true",
+        help="undo even when most of a target's recorded writes were withdrawn "
+        "(refused by default: that is usually a source that answered short)",
+    )
+    parser.add_argument(
         "--json", action="store_true", help="print a machine-readable report"
     )
     parser.add_argument(
@@ -143,6 +149,7 @@ def spec_from_args(args: argparse.Namespace) -> RelaySpec:
         source=args.source,
         targets=tuple(args.targets) or ("lastfm",),
         dry_run=getattr(args, "dry_run", False),
+        allow_mass_undo=args.allow_mass_undo,
         rating_threshold=args.rating_threshold,
         comparison=args.comparison,
         feedback_type=args.feedback_type,
@@ -188,7 +195,7 @@ async def run_relay(
             )
             for name in spec.targets
         ]
-        sync_store, _ = stores(db)
+        sync_store, _ = stores(db, spec.relay)
         logger.info("Starting relay %s: %s", spec.name, spec.summary)
         report = await pipeline.run(
             source,
@@ -196,6 +203,7 @@ async def run_relay(
             sync_store=sync_store,
             progress=progress if progress is not None else pipeline.NO_PROGRESS,
             dry_run=spec.dry_run,
+            allow_mass_undo=spec.allow_mass_undo,
         )
         logger.info("Relay %s finished: %s", spec.name, report.status)
         return report
@@ -313,7 +321,9 @@ def main(
         if args.command == "relay":
             specs = (spec_from_args(args),)
         else:
-            specs = _select(load_relays(args.config), args.only, args.dry_run)
+            specs = _select(
+                load_relays(args.config), args.only, args.dry_run, args.allow_mass_undo
+            )
     except ConfigError as exc:
         print(f"{PROGRAM}: {exc}", file=err)
         return EXIT_FAILED
@@ -335,9 +345,12 @@ def main(
 
 
 def _select(
-    specs: Sequence[RelaySpec], only: Sequence[str], dry_run: bool
+    specs: Sequence[RelaySpec],
+    only: Sequence[str],
+    dry_run: bool,
+    allow_mass_undo: bool = False,
 ) -> tuple[RelaySpec, ...]:
-    """The relays to run, with ``--only`` and ``--dry-run`` applied."""
+    """The relays to run, with ``--only``, ``--dry-run`` and ``--allow-mass-undo`` applied."""
     chosen = tuple(specs)
     if only:
         known = {spec.name for spec in specs}
@@ -350,6 +363,8 @@ def _select(
         chosen = tuple(spec for spec in specs if spec.name in only)
     if dry_run:
         chosen = tuple(replace(spec, dry_run=True) for spec in chosen)
+    if allow_mass_undo:
+        chosen = tuple(replace(spec, allow_mass_undo=True) for spec in chosen)
     return chosen
 
 

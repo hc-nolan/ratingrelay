@@ -53,7 +53,7 @@ async def test_a_cancel_request_stops_the_run_at_a_track_boundary(monkeypatch, f
     job_id = await _queue_job(factory)
     seen: list[int] = []
 
-    async def fake_execute(db, source, targets, on_fetch_complete, on_track, dry_run):
+    async def fake_execute(db, source, targets, on_fetch_complete, on_track, dry_run, **_):
         await on_fetch_complete(5)
         for n in range(1, 6):
             seen.append(n)
@@ -104,7 +104,7 @@ async def test_a_cancel_requested_before_the_fetch_stops_without_writing(monkeyp
 
     written: list[int] = []
 
-    async def fake_execute(db, source, targets, on_fetch_complete, on_track, dry_run):
+    async def fake_execute(db, source, targets, on_fetch_complete, on_track, dry_run, **_):
         await on_fetch_complete(3)
         written.append(1)  # unreachable
         return {"results": []}

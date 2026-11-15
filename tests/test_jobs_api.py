@@ -97,3 +97,58 @@ async def test_dry_run_in_detail_response(client):
     job_id = (await client.post("/api/relay/jobs", json={**PAYLOAD, "dry_run": True})).json()["id"]
     detail = (await client.get(f"/api/relay/jobs/{job_id}")).json()
     assert detail["dry_run"] is True
+
+
+# ---------------------------------------------------------------------------
+# Mass-undo override and relays that would share sync records
+# ---------------------------------------------------------------------------
+
+
+async def test_allow_mass_undo_and_recurring_returns_400(client):
+    resp = await client.post(
+        "/api/relay/jobs",
+        json={**PAYLOAD, "allow_mass_undo": True, "recurring": True, "interval_minutes": 60},
+    )
+    assert resp.status_code == 400
+
+
+async def test_allow_mass_undo_is_stored_and_returned(client):
+    resp = await client.post("/api/relay/jobs", json={**PAYLOAD, "allow_mass_undo": True})
+    assert resp.status_code == 201
+    assert resp.json()["allow_mass_undo"] is True
+    plain = await client.post(
+        "/api/relay/jobs", json={**PAYLOAD, "targets": [{"service": "listenbrainz"}]}
+    )
+    assert plain.json()["allow_mass_undo"] is False
+
+
+async def test_the_override_may_run_beside_its_recurring_relay(client):
+    recurring = await client.post(
+        "/api/relay/jobs", json={**PAYLOAD, "recurring": True, "interval_minutes": 60}
+    )
+    assert recurring.status_code == 201
+
+    override = await client.post("/api/relay/jobs", json={**PAYLOAD, "allow_mass_undo": True})
+    assert override.status_code == 201
+
+
+async def test_a_relay_that_would_fight_an_active_one_is_refused(client):
+    """Same source, target and direction, different threshold: each undoes the other."""
+    first = await client.post("/api/relay/jobs", json=PAYLOAD)
+    assert first.status_code == 201
+
+    looser = {**PLEX_SOURCE, "rating_threshold": 4.0}
+    resp = await client.post(
+        "/api/relay/jobs",
+        json={"source": looser, "targets": [{"service": "listenbrainz"}, LFM_TARGET]},
+    )
+    assert resp.status_code == 409
+    assert first.json()["id"] in resp.json()["detail"]
+
+
+async def test_opposite_directions_may_share_a_pair(client):
+    loves = await client.post("/api/relay/jobs", json=PAYLOAD)
+    hates = {**PLEX_SOURCE, "rating_threshold": 2.0, "comparison": "lte"}
+    resp = await client.post("/api/relay/jobs", json={"source": hates, "targets": [LFM_TARGET]})
+    assert loves.status_code == 201
+    assert resp.status_code == 201

@@ -176,7 +176,15 @@ async def run_job(job_id: str) -> None:
             targets = _targets_adapter.validate_json(job.targets_config)
 
             # 5. Execute
-            await execute_relay(db, source, targets, on_fetch_complete, on_track, job.dry_run)
+            await execute_relay(
+                db,
+                source,
+                targets,
+                on_fetch_complete,
+                on_track,
+                job.dry_run,
+                allow_mass_undo=job.allow_mass_undo,
+            )
 
             # 6. Determine final status from the counters, which on a resumed
             # attempt span both tries. Everything failed is a failed job.

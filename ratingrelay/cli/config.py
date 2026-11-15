@@ -61,6 +61,9 @@ class RelaySpec:  # pylint: disable=too-many-instance-attributes
     feedback_type: str = "love"
     # Plex as a target.
     plex_rating: float = 10.0
+    # Only ever set from the command line, never from relays.toml: a file key
+    # would switch the guard off for every unattended run after this one.
+    allow_mass_undo: bool = False
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -94,6 +97,19 @@ class RelaySpec:  # pylint: disable=too-many-instance-attributes
             raise ConfigError(f"{self.name}: rating_threshold must be between 1 and 10")
         if not 1.0 <= self.plex_rating <= 10.0:
             raise ConfigError(f"{self.name}: plex_rating must be between 1 and 10")
+
+    @property
+    def relay(self) -> str:
+        """Which relay's sync records this spec reconciles against."""
+        # Lazy, like the CLI's other factory imports: reading a config file
+        # should not need settings or a database.
+        from ratingrelay.core.factory import (  # pylint: disable=import-outside-toplevel
+            relay_identity,
+        )
+
+        return relay_identity(
+            self.source, comparison=self.comparison, feedback_type=self.feedback_type
+        )
 
     @property
     def summary(self) -> str:
@@ -163,4 +179,28 @@ def load_relays(path: str | Path = DEFAULT_CONFIG) -> tuple[RelaySpec, ...]:
         if spec.name in seen:
             raise ConfigError(f"{config_path}: duplicate relay name {spec.name!r}")
         seen.add(spec.name)
+    _refuse_shared_records(config_path, specs)
     return specs
+
+
+def _refuse_shared_records(config_path: Path, specs: tuple[RelaySpec, ...]) -> None:
+    """Two writing relays that would reconcile against the same records.
+
+    Sync records are kept per source, target and direction. Two relays that
+    agree on all three but differ in, say, the Plex threshold would each undo
+    the tracks only the other one passes, every run. A dry run writes nothing,
+    so it may share records with the relay it previews.
+    """
+    owners: dict[tuple[str, str, str], str] = {}
+    for spec in specs:
+        if spec.dry_run:
+            continue
+        for target in spec.targets:
+            address = (spec.source, target, spec.relay)
+            if address in owners:
+                raise ConfigError(
+                    f"{config_path}: relays {owners[address]!r} and {spec.name!r} both "
+                    f"write {spec.relay}s from {spec.source} to {target}; each would "
+                    "undo what only the other one relays. Merge them into one relay."
+                )
+            owners[address] = spec.name

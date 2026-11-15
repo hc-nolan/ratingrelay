@@ -33,9 +33,34 @@ SOURCE_SERVICES = ("plex", "lastfm", "listenbrainz")
 TARGET_SERVICES = ("plex", "lastfm", "listenbrainz")
 
 
-def stores(db: AsyncSession) -> tuple[SqlSyncStore, SqlMappingStore]:
-    """The engine's two stores, backed by the current session."""
-    return SqlSyncStore(db), SqlMappingStore(db)
+def relay_identity(
+    service: str, *, comparison: str = "gte", feedback_type: str = "love"
+) -> str:
+    """Which relay a source config is, for keeping its sync records apart.
+
+    The identity is the direction the source reads — ``love`` or ``hate`` — and
+    nothing finer. Two relays on one pair that read opposite directions must not
+    reconcile against each other's writes; one relay whose threshold moved must,
+    because a track that no longer passes is a withdrawal to undo.
+    """
+    if service == "plex":
+        return "love" if comparison == "gte" else "hate"
+    if service == "lastfm":
+        return "love"
+    if service == "listenbrainz":
+        return "love" if feedback_type == "love" else "hate"
+    raise ValueError(f"Unknown source service: {service}")
+
+
+def stores(
+    db: AsyncSession, relay: Optional[str] = None
+) -> tuple[SqlSyncStore, SqlMappingStore]:
+    """The engine's two stores, backed by the current session.
+
+    *relay* (from :func:`relay_identity`) scopes the sync store; a run must pass
+    it. Only readers that span relays — reset, the queue — leave it out.
+    """
+    return SqlSyncStore(db, relay), SqlMappingStore(db)
 
 
 def mbid_cache(db: AsyncSession) -> SqlMbidCache:

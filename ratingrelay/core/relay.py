@@ -153,7 +153,10 @@ async def _write(
             await on_track(track, target_service(config), False, str(exc), False, None)
         return 0, len(tracks), 0
 
-    sync_store, _ = adapters.stores(db)
+    # These helpers relay a pre-fetched list with no source config, so they
+    # carry no direction; they write under the love relay, as every relay from
+    # Last.fm and every default-config relay does.
+    sync_store, _ = adapters.stores(db, adapters.relay_identity(source_service))
     report = await pipeline.run_tracks(
         [adapters.track_from_dict(track) for track in tracks],
         [target],
@@ -249,14 +252,14 @@ async def _reset_recorded(
     try:
         target = await adapters.target_for(db, _RESET_TARGET_CONFIGS[target_svc])
     except ValueError as exc:
-        for _, record in records:
+        for _, _, record in records:
             await on_track(
                 adapters.track_to_dict(record.track), target_svc, False, str(exc), False
             )
         return _reset_result(target_svc, 0, len(records))
 
     ok = err = 0
-    for source_service, record in records:
+    for *written_by, record in records:  # (source_service, relay)
         data = adapters.track_to_dict(record.track)
         reverted = TrackOutcome(
             record.track, target_svc, OutcomeStatus.REVERTED, Reason.WITHDRAWN
@@ -304,7 +307,7 @@ async def _reset_recorded(
             )
             err += 1
             continue
-        await store.forget(source_service, target_svc, record.key)
+        await store.forget_record(*written_by, target_svc, record.key)
         await on_track(data, target_svc, True, None, False, reverted)
         ok += 1
     return _reset_result(target_svc, ok, err)
@@ -440,6 +443,8 @@ async def execute_relay(
     on_fetch_complete: Optional[Callable[[int], Awaitable[None]]] = None,
     on_track: TrackCallback = _noop_track,
     dry_run: bool = False,
+    *,
+    allow_mass_undo: bool = False,
 ) -> dict:
     """
     Fetch tracks from source and relay to all targets.
@@ -465,7 +470,7 @@ async def execute_relay(
         except ValueError as exc:
             unconfigured.append((target_service(config), str(exc)))
 
-    sync_store, _ = adapters.stores(db)
+    sync_store, _ = adapters.stores(db, adapters.relay_for(source))
     report = await pipeline.run_tracks(
         tracks,
         ready,
@@ -473,6 +478,7 @@ async def execute_relay(
         source_service=source_service,
         progress=progress,
         dry_run=dry_run,
+        allow_mass_undo=allow_mass_undo,
     )
 
     counts = {result.target: result for result in report.targets}

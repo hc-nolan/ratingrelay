@@ -187,6 +187,7 @@ writes, so its counts are what a real run would do.
 | `--config PATH` | `run`, `list` | relay definitions to read (default `relays.toml`) |
 | `--only NAME` | `run` | run just the named relay; repeatable |
 | `--dry-run` | `relay`, `run` | fetch, match and reconcile for real; write nothing |
+| `--allow-mass-undo` | `relay`, `run` | this run only: undo even when most of a target's changes were withdrawn (see below) |
 | `--json` | `relay`, `run` | one machine-readable document instead of the human summary |
 | `--verbose` | `relay`, `run` | a line per track, on stderr |
 
@@ -214,6 +215,23 @@ plex_rating = 10.0
 
 Unknown keys are an error, so a typo can't make a cron job silently do nothing.
 
+Two relays may share a source and a target if they read opposite directions (Plex
+loves and Plex hates, both to ListenBrainz). Two that read the same direction, such
+as two Plex thresholds into one target, are refused: each run would undo what only
+the other one passes. Merge them into one relay.
+
+### When a run refuses to undo
+
+If a run would take back more than half of what RatingRelay has written to a
+target, and at least 10 changes, it takes back none of them. The tracks are counted
+as failed, the run exits 1, and the summary names the target. That almost always
+means the source answered with an empty or short list, not that you un-loved most
+of your library overnight.
+
+If you really did, run once with `--allow-mass-undo`, or use **Run once and allow
+the undo** on that run's page in the web app. There is no config key for it, so a
+scheduled run never switches the guard off.
+
 ### cron
 
 ```cron
@@ -232,7 +250,8 @@ A clean run prints a short summary; failures are loud. Exit codes:
 | 2 | could not complete (bad config, missing database, fetch error) |
 
 Unmatched tracks don't count as failures. They're counted in the output and listed
-on the web app's **Unmatched** page. A dry run can only exit 0 or 2.
+on the web app's **Unmatched** page. A dry run exits 1 only where the real run would
+refuse a mass undo, and 0 or 2 otherwise.
 
 ## Development
 

@@ -23,9 +23,10 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ratingrelay.core import adapters
 from ratingrelay.db import get_async_session, session_maker
 from ratingrelay.models.jobs import Job, TrackEvent
-from ratingrelay.schemas.relay import FromConfig, ToConfig, source_adapter as _source_adapter, targets_adapter as _targets_adapter
+from ratingrelay.schemas.relay import FromConfig, ResetFromConfig, ToConfig, source_adapter as _source_adapter, targets_adapter as _targets_adapter
 from ratingrelay.settings import logger
 
 router = APIRouter(prefix="/api/relay", tags=["jobs"])
@@ -45,6 +46,8 @@ class JobCreateRequest(BaseModel):
     recurring: bool = False
     interval_minutes: int | None = None
     dry_run: bool = False
+    # A one-off override of the mass-undo guard, for the run after a refusal.
+    allow_mass_undo: bool = False
 
 
 def _job_to_dict(job: Job) -> dict:
@@ -64,6 +67,7 @@ def _job_to_dict(job: Job) -> dict:
         "tracks_err": job.tracks_err,
         "tracks_skipped": job.tracks_skipped,
         "dry_run": job.dry_run,
+        "allow_mass_undo": job.allow_mass_undo,
         "cancel_requested": job.cancel_requested,
     }
 
@@ -75,6 +79,21 @@ def _canonical_key(source_json: str, targets_json: str) -> str:
     return json.dumps({"source": source, "targets": targets}, sort_keys=True)
 
 
+def _record_addresses(source: FromConfig, targets: list[ToConfig]) -> set[tuple[str, str, str]]:
+    """The (source, target, relay) sync records a job reconciles against."""
+    if isinstance(source, ResetFromConfig):
+        return set()
+    relay = adapters.relay_for(source)
+    return {(source.service, target.service, relay) for target in targets}
+
+
+def _stored_record_addresses(job: Job) -> set[tuple[str, str, str]]:
+    return _record_addresses(
+        _source_adapter.validate_json(job.source_config),
+        _targets_adapter.validate_json(job.targets_config),
+    )
+
+
 @router.post("/jobs", status_code=201)
 async def create_job(
     body: JobCreateRequest,
@@ -83,6 +102,11 @@ async def create_job(
     """Queue a new relay job. Returns 409 if an equivalent active job exists."""
     if body.dry_run and body.recurring:
         raise HTTPException(status_code=400, detail="dry_run and recurring cannot both be true")
+    if body.allow_mass_undo and body.recurring:
+        # The override is for one run a human looked at, not every run after it.
+        raise HTTPException(
+            status_code=400, detail="allow_mass_undo and recurring cannot both be true"
+        )
 
     source_json = _source_adapter.dump_json(body.source).decode()
     targets_json = _targets_adapter.dump_json(body.targets).decode()
@@ -94,12 +118,29 @@ async def create_job(
             select(Job).where(Job.status.in_(list(_ACTIVE_STATUSES)), Job.dry_run.is_(False))
         )
         active_jobs = result.scalars().all()
+        new_records = _record_addresses(body.source, body.targets)
         for existing in active_jobs:
             existing_key = _canonical_key(existing.source_config, existing.targets_config)
             if existing_key == new_key:
+                # The worker runs one job at a time and an identical relay is
+                # idempotent, so the one-off override of a recurring relay may
+                # sit beside it; any other duplicate is a double click.
+                if body.allow_mass_undo:
+                    continue
                 raise HTTPException(
                     status_code=409,
                     detail=f"An equivalent job is already {existing.status} (id={existing.id})",
+                )
+            shared = new_records & _stored_record_addresses(existing)
+            if shared:
+                source, target, relay = sorted(shared)[0]
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Job {existing.id} ({existing.status}) already relays {relay}s "
+                        f"from {source} to {target} with different settings; each run "
+                        "would undo what only the other one passes. Edit or cancel it."
+                    ),
                 )
 
     job = Job(
@@ -108,6 +149,7 @@ async def create_job(
         recurring=body.recurring,
         interval_minutes=body.interval_minutes,
         dry_run=body.dry_run,
+        allow_mass_undo=body.allow_mass_undo,
     )
     db.add(job)
     await db.commit()

@@ -98,6 +98,7 @@ class Reason(str, Enum):
     WRITE_FAILED = "write_failed"
     WITHDRAWN = "withdrawn"
     UNRECORDED_TARGET = "unrecorded_target"
+    MASS_UNDO_REFUSED = "mass_undo_refused"
 
 
 @dataclass(frozen=True, slots=True)

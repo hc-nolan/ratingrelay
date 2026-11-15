@@ -132,6 +132,23 @@ def test_dry_run_flag_reaches_the_spec():
     assert spec.dry_run is True
 
 
+def test_allow_mass_undo_is_off_unless_asked_for(tmp_path):
+    relay = cli.build_parser().parse_args(["relay", "--allow-mass-undo"])
+    assert cli.spec_from_args(relay).allow_mass_undo is True
+    assert cli.spec_from_args(cli.build_parser().parse_args(["relay"])).allow_mass_undo is False
+
+    specs = load_relays(_write(tmp_path, '[[relay]]\nname = "one"\n'))
+    assert [s.allow_mass_undo for s in cli._select(specs, [], False)] == [False]  # pylint: disable=protected-access
+    assert [s.allow_mass_undo for s in cli._select(specs, [], False, True)] == [True]  # pylint: disable=protected-access
+
+
+def test_a_config_file_cannot_switch_the_mass_undo_guard_off(tmp_path):
+    path = _write(tmp_path, '[[relay]]\nallow_mass_undo = true\n')
+
+    with pytest.raises(ConfigError, match="unknown key"):
+        load_relays(path)
+
+
 def test_plex_options_reach_the_spec():
     args = cli.build_parser().parse_args(
         [
@@ -230,6 +247,48 @@ def test_an_unknown_key_is_an_error(tmp_path):
 
     with pytest.raises(ConfigError, match="unknown key"):
         load_relays(path)
+
+
+def test_two_relays_writing_the_same_records_are_an_error(tmp_path):
+    """Same source, target and direction: each would undo what only the other passes."""
+    path = _write(
+        tmp_path,
+        """
+[[relay]]
+name = "strict"
+rating_threshold = 9.0
+targets = ["lastfm"]
+[[relay]]
+name = "loose"
+rating_threshold = 6.0
+targets = ["listenbrainz", "lastfm"]
+""",
+    )
+
+    with pytest.raises(ConfigError, match="'strict' and 'loose' both write loves"):
+        load_relays(path)
+
+
+def test_relays_may_share_a_pair_in_opposite_directions_or_as_a_dry_run(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+[[relay]]
+name = "loves"
+targets = ["listenbrainz"]
+[[relay]]
+name = "hates"
+comparison = "lte"
+rating_threshold = 2.0
+targets = ["listenbrainz"]
+[[relay]]
+name = "preview"
+targets = ["listenbrainz"]
+dry_run = true
+""",
+    )
+
+    assert [spec.relay for spec in load_relays(path)] == ["love", "hate", "love"]
 
 
 def test_duplicate_names_are_an_error(tmp_path):
@@ -401,7 +460,7 @@ targets = ["lastfm"]
 [[relay]]
 name = "two"
 source = "plex"
-targets = ["lastfm"]
+targets = ["listenbrainz"]
 """,
     )
 
@@ -447,3 +506,36 @@ def test_the_cli_imports_no_web_framework_or_request_schemas():
                 ):
                     offenders.append(f"{path}: {name}")
     assert offenders == []
+
+
+def test_the_report_says_why_a_mass_undo_failed_and_how_to_allow_it():
+    from ratingrelay.cli import report as cli_report  # pylint: disable=import-outside-toplevel
+    from ratingrelay.engine.types import (  # pylint: disable=import-outside-toplevel
+        OutcomeStatus,
+        Reason,
+        RunReport,
+        TargetReport,
+        TrackOutcome,
+    )
+
+    outcomes = tuple(
+        TrackOutcome(
+            Track("A", f"S{n}"),
+            "lastfm",
+            OutcomeStatus.FAILED,
+            Reason.MASS_UNDO_REFUSED,
+            "would undo 12 of 12 recorded writes",
+        )
+        for n in range(12)
+    )
+    run = RunReport(
+        source="plex",
+        tracks_fetched=0,
+        targets=(TargetReport.from_outcomes("lastfm", outcomes),),
+        outcomes=outcomes,
+    )
+
+    text = cli_report.human(RelaySpec(name="nightly"), run, 1.0)
+
+    assert text.count("refused on lastfm") == 1
+    assert "would undo 12 of 12 recorded writes (pass --allow-mass-undo)" in text

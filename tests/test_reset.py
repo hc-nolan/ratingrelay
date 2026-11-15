@@ -56,7 +56,7 @@ async def db():
 
 
 async def _seed(db: AsyncSession, service: str = "lastfm", *artists: str) -> None:
-    store = SqlSyncStore(db)
+    store = SqlSyncStore(db, "love")
     for artist in artists:
         await store.remember(
             "plex",
@@ -134,7 +134,7 @@ async def test_reset_keeps_a_record_it_cannot_undo(db):
     assert target.undone == [track_key("Artist A", "Song")]
     assert result["results"] == [{"service": "lastfm", "ok": 1, "err": 1, "skipped": 0}]
     remaining = await SqlSyncStore(db).records_for_target("lastfm")
-    assert [record.key for _, record in remaining] == [track_key("Artist B", "Song")]
+    assert [record.key for _, _, record in remaining] == [track_key("Artist B", "Song")]
 
 
 async def test_reset_dry_run_refuses_the_same_records_a_real_run_refuses(db):

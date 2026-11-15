@@ -483,8 +483,17 @@
 						<p class="eyebrow mx-auto mb-3 w-fit bg-background px-2 text-center">To</p>
 
 						<!-- Every target keeps its card and its place. Picking one switches
-						     that card on; it does not move the row around underneath you. -->
-						<div class="grid gap-2 sm:grid-cols-2">
+						     that card on; it does not move the row around underneath you.
+						     A lone configured target sits centred, at the width it would have
+						     beside a second one, so the row never reads as half-empty. -->
+						<div
+							class={cn(
+								'grid gap-2',
+								availableTargets.length > 1
+									? 'sm:grid-cols-2'
+									: 'sm:mx-auto sm:w-[calc(50%-0.25rem)]'
+							)}
+						>
 							{#each availableTargets as target (target.id)}
 								<TargetNode
 									option={target}

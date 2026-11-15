@@ -22,7 +22,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ratingrelay.core.relay import execute_relay
@@ -77,6 +77,20 @@ def _candidates_json(outcome: Optional[TrackOutcome]) -> Optional[str]:
 # ---------------------------------------------------------------------------
 
 
+async def _claim(db: AsyncSession, job: Job) -> bool:
+    """Mark *job* running, but only if it is still queued.
+
+    A cancel that landed after the loop picked the job is the newer decision,
+    and an unconditional write of ``running`` would overwrite it.
+    """
+    result = await db.execute(
+        update(Job).where(Job.id == job.id, Job.status == "queued").values(status="running")
+    )
+    await db.commit()
+    await db.refresh(job)
+    return result.rowcount == 1
+
+
 async def run_job(job_id: str) -> None:
     async with session_maker() as db:
         # 1. Load job and mark as running
@@ -84,8 +98,10 @@ async def run_job(job_id: str) -> None:
         if job is None:
             logger.error("Worker: job %s not found", job_id)
             return
+        if not await _claim(db, job):
+            logger.info("Worker: job %s is %s, not queued; skipping", job_id, job.status)
+            return
 
-        job.status = "running"
         # A job that already started is being retried after its worker died.
         # Its start time stays the first attempt's: it is one run.
         resuming = job.started_at is not None

@@ -147,3 +147,26 @@ async def test_a_stale_running_job_with_a_cancel_request_does_not_resume(monkeyp
     job = await _get_job(factory, job_id)
     assert job.status == "cancelled"
     assert job.completed_at is not None
+
+
+async def test_a_cancelled_job_is_not_claimed_by_the_worker(monkeypatch, factory):
+    """A cancel landing just before the claim used to be overwritten by 'running'."""
+    job_id = await _queue_job(factory)
+    async with factory() as db:
+        row = await db.get(Job, job_id)
+        row.status = "cancelled"
+        db.add(row)
+        await db.commit()
+
+    async def must_not_run(*_args, **_kwargs):
+        raise AssertionError("a cancelled job ran")
+
+    monkeypatch.setattr(worker, "session_maker", factory)
+    monkeypatch.setattr(worker, "execute_relay", must_not_run)
+
+    await worker.run_job(job_id)
+
+    job = await _get_job(factory, job_id)
+    assert job.status == "cancelled"
+    assert job.started_at is None
+

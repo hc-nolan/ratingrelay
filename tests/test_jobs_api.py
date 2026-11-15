@@ -181,3 +181,33 @@ async def test_a_reset_cannot_be_recurring(client):
     )
     assert resp.status_code == 400
 
+
+async def test_cancelling_a_job_the_worker_just_claimed_flags_it_instead(client, db_engine):
+    """The cancel read 'queued', the worker claimed it, the cancel wrote 'cancelled'
+    over a running job. Now the cancel only wins on a job still waiting."""
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    from ratingrelay.models.jobs import Job
+
+    job_id = (await client.post("/api/relay/jobs", json=PAYLOAD)).json()["id"]
+    factory = async_sessionmaker(db_engine, class_=AsyncSession, expire_on_commit=False)
+    async with factory() as db:
+        row = await db.get(Job, job_id)
+        row.status = "running"
+        db.add(row)
+        await db.commit()
+
+    resp = await client.delete(f"/api/relay/jobs/{job_id}")
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "running"
+    assert resp.json()["cancel_requested"] is True
+
+
+async def test_cancelling_a_queued_job_cancels_it(client):
+    job_id = (await client.post("/api/relay/jobs", json=PAYLOAD)).json()["id"]
+
+    resp = await client.delete(f"/api/relay/jobs/{job_id}")
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "cancelled"

@@ -20,7 +20,7 @@ from typing import AsyncGenerator
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ratingrelay.core import adapters
@@ -209,9 +209,22 @@ async def cancel_job(
             status_code=409,
             detail=f"Cannot cancel a job with status '{job.status}'",
         )
-    job.status = "cancelled"
-    job.completed_at = datetime.now(timezone.utc)
-    db.add(job)
+    # The worker may claim this job between the read above and this write, so
+    # cancel only if it is still waiting; the worker's claim is conditional the
+    # same way, and exactly one of the two wins. Losing means it started: ask
+    # it to stop instead, which it checks before its first write.
+    result = await db.execute(
+        update(Job)
+        .where(Job.id == job_id, Job.status.in_(("queued", "scheduled")))
+        .values(
+            status="cancelled",
+            cancel_requested=True,
+            completed_at=datetime.now(timezone.utc),
+        )
+    )
+    if result.rowcount == 0:
+        await db.execute(update(Job).where(Job.id == job_id).values(cancel_requested=True))
+        logger.info("Job %s started before it could be cancelled; asked it to stop", job_id)
     await db.commit()
     await db.refresh(job)
     return _job_to_dict(job)

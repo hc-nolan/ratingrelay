@@ -1,6 +1,35 @@
-__pycache__
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
 .venv
+
+# Local configuration and secrets. Never commit these.
+.config
 *.env
-*.log
+relays.toml
+
+# Databases
 *.db
-MYCOMPOSE.yml
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Frontend
+node_modules/
+frontend/build/
+frontend/.svelte-kit/
+
+# Editor / OS
+.DS_Store
+.playwright-mcp/

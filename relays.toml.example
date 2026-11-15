@@ -1,0 +1,16 @@
+# The relays `ratingrelay run` executes, in order. Copy to `relays.toml`.
+#
+# Every key below is optional except `source` and `targets`; unknown keys are an
+# error on purpose. Secrets never live here — the CLI reads credentials from
+# `.config` (or the environment), then from the relay's database.
+
+[[relay]]
+name = "nightly"
+source = "plex"
+targets = ["lastfm", "listenbrainz"]
+# Plex as a source: which rated tracks count.
+rating_threshold = 8.0
+comparison = "gte"          # gte: at least the threshold · lte: at most
+# Last.fm / ListenBrainz: which feedback to relay.
+feedback_type = "love"      # love or hate
+# dry_run = true            # fetch, match and reconcile, but write nothing

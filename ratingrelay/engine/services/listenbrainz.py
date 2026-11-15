@@ -1,0 +1,186 @@
+"""ListenBrainz: feedback is keyed by recording MBID, so matching means resolving one.
+
+The lookup is injected rather than imported: a test (or a future offline mode)
+can hand the target its own resolver, and the target stays free of MusicBrainz
+network behaviour.
+"""
+
+import asyncio
+from dataclasses import dataclass, field
+from typing import Callable, Awaitable, Optional
+
+from liblistenbrainz import ListenBrainz
+
+from ratingrelay.engine.credentials import ListenBrainzCredentials
+from ratingrelay.engine.plan import WritePlan
+from ratingrelay.engine.services import MappedTarget
+from ratingrelay.engine.services.musicbrainz import Resolution
+from ratingrelay.engine.store import MappingStore, MbidCache, NullMbidCache, SyncedTrack
+from ratingrelay.engine.thread import run_sync
+from ratingrelay.engine.types import (
+    Intent,
+    IntentKind,
+    OutcomeStatus,
+    Reason,
+    Track,
+)
+
+PAGE_SIZE = 100
+RATE_LIMIT_BACKOFF_SECONDS = 60
+
+Resolver = Callable[[Optional[str], str, str], Awaitable[Resolution]]
+
+
+def _to_track(item: dict) -> Track:
+    metadata = item.get("track_metadata", {})
+    return Track(
+        artist=metadata.get("artist_name", ""),
+        title=metadata.get("track_name", ""),
+        recording_mbid=item.get("recording_mbid") or None,
+    )
+
+
+class ListenBrainzClient:
+    """An async facade over the ListenBrainz client, including its paging."""
+
+    def __init__(self, credentials: ListenBrainzCredentials):
+        self._credentials = credentials
+        self._client = ListenBrainz()
+        self._client.set_auth_token(credentials.token)
+
+    async def feedback(self, score: int) -> list[Track]:
+        """All feedback this account holds at *score* (1 love, -1 hate)."""
+        username = self._credentials.username
+        tracks: list[Track] = []
+        offset = 0
+        while True:
+            response = await run_sync(
+                lambda o=offset: self._client.get_user_feedback(
+                    username, score, True, PAGE_SIZE, o
+                )
+            )
+            if response is None:
+                break
+            batch = response.get("feedback", [])
+            tracks.extend(_to_track(item) for item in batch)
+            if len(batch) < PAGE_SIZE:
+                break
+            offset += PAGE_SIZE
+        return tracks
+
+    async def submit(self, score: int, mbid: str) -> None:
+        """Submit feedback, backing off once if the service rate-limits us."""
+        try:
+            await run_sync(lambda: self._client.submit_user_feedback(score, mbid))
+        except Exception as exc:  # noqa: BLE001 - inspected below
+            if "429" not in str(exc):
+                raise
+            await asyncio.sleep(RATE_LIMIT_BACKOFF_SECONDS)
+            await run_sync(lambda: self._client.submit_user_feedback(score, mbid))
+
+
+@dataclass
+class ListenBrainzSource:
+    """The account's feedback at one score."""
+
+    client: ListenBrainzClient
+    score: int = 1
+    service: str = field(default="listenbrainz", init=False)
+
+    async def fetch(self) -> list[Track]:
+        return await self.client.feedback(self.score)
+
+
+class ListenBrainzTarget(MappedTarget):
+    """Submits feedback for a resolved recording MBID."""
+
+    service = "listenbrainz"
+
+    def __init__(
+        self,
+        client: ListenBrainzClient,
+        mappings: MappingStore,
+        resolve: Resolver,
+        score: int = 1,
+        cache: Optional[MbidCache] = None,
+    ):
+        super().__init__(mappings)
+        self._client = client
+        self._resolve = resolve
+        self._score = score
+        self._cache = cache or NullMbidCache()
+
+    async def resolution(self, track: Track) -> Resolution:
+        """The recording this track is, or the ones it was nearly.
+
+        Order is authority: what the source said, then what a human decided,
+        then what we resolved before, then the network. The cache sits *below*
+        the mapping on purpose — a cache that outranked a user's correction
+        would make the correction stop working the once.
+        """
+        artist, title, mapped_mbid = await self.mapped(track)
+        if track.recording_mbid:
+            return Resolution(track.recording_mbid)
+        if mapped_mbid:
+            return Resolution(mapped_mbid)
+        cached = await self._cache.get(track.key)
+        if cached:
+            return Resolution(cached)
+        return await self._resolve(track.track_mbid, artist, title)
+
+    async def plan(self, track: Track) -> WritePlan:
+        resolution = await self.resolution(track)
+        mbid = resolution.mbid
+        if not mbid:
+            return WritePlan(
+                track,
+                self.service,
+                OutcomeStatus.UNMATCHED,
+                Reason.NO_RECORDING_MBID,
+                "No MusicBrainz recording ID found",
+                matches=resolution.proposals,
+            )
+
+        score = self._score
+        cache = self._cache
+
+        async def commit() -> None:
+            await self._client.submit(score, mbid)
+            # After the write, never before: a dry run does not reach here, and
+            # a failed submit must not teach the cache an answer no run kept.
+            await cache.put(track.key, track.artist, track.title, mbid)
+
+        kind = IntentKind.LOVE if score > 0 else IntentKind.HATE
+        return WritePlan(
+            track,
+            self.service,
+            recording_mbid=mbid,
+            intent=Intent(kind),
+            target_key=mbid,
+            commit=commit,
+        )
+
+    @staticmethod
+    def _recorded_mbid(record: SyncedTrack) -> str:
+        """The recording we gave feedback on, or ``ValueError`` if unrecorded.
+
+        Feedback is keyed by recording MBID, so a row written before
+        ``target_key`` existed is still undoable when it recorded the MBID.
+        """
+        mbid = record.target_key or record.recording_mbid
+        if not mbid:
+            raise ValueError("no recorded recording MBID")
+        return mbid
+
+    @staticmethod
+    def undoable(record: SyncedTrack) -> None:
+        """Raise exactly when :meth:`undo` would refuse this record.
+
+        Static so that "could we undo this?" can be answered from the record
+        alone, without building a client or touching the network.
+        """
+        ListenBrainzTarget._recorded_mbid(record)
+
+    async def undo(self, record: SyncedTrack) -> None:
+        """Submit a neutral score for the recording we gave feedback on."""
+        await self._client.submit(0, self._recorded_mbid(record))

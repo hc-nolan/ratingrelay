@@ -144,6 +144,9 @@ These are the point of the tool. v1 got them right; keep them that way.
   verifies against nothing and the login 401s forever. `/api/auth/*` is always open;
   a fresh install is open so setup can run; `auth = false` in `.config` turns
   enforcement off deliberately. Never add a second identity — one user, one library.
+  A Plex PIN is redeemable only by the browser that opened it (the `relay_pin`
+  cookie, `core/plex_auth.py`), and the setup callback refuses a Plex account other
+  than the stored owner — keep both, or a guessed PIN id hands over the relay.
 - **Jobs are data, not events**: progress lives in the `job` and `track_event` rows.
   The worker commits per track so the SSE stream can tail the database; there is no
   in-process registry to keep in sync. A run is stopped by `job.cancel_requested` at

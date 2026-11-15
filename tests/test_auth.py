@@ -204,9 +204,20 @@ def plex_identifies(monkeypatch):
 
 
 class _FakePin:
-    def __init__(self, token):
-        self.token = token
+    """plexapi's PIN login, minus plex.tv. The token is whatever the test says."""
+
+    def __init__(self, state, **_kwargs):
+        self._state = state
+        self._id = None
+
+    @property
+    def token(self):
+        return self._state["token"]
+
+    def oauthUrl(self, forwardUrl):  # noqa: N802,N803 - plexapi's spelling
+        assert forwardUrl.endswith("/api/auth/plex/done")
         self._id = 77
+        return "https://app.plex.tv/auth"
 
     def checkLogin(self):  # noqa: N802 - plexapi's spelling
         return self.token is not None
@@ -214,23 +225,20 @@ class _FakePin:
 
 @pytest.fixture
 def pins(monkeypatch):
-    """Stub the Plex PIN store so no test ever talks to plex.tv."""
-    from ratingrelay.routes import auth as auth_routes
+    """Stub plex.tv so no test talks to it; the PIN registry itself is real."""
+    from ratingrelay.core import plex_auth
 
-    state = {"token": None, "removed": []}
+    state = {"token": None}
+    plex_auth._sessions.clear()
+    monkeypatch.setattr(plex_auth, "MyPlexPinLogin", lambda **kw: _FakePin(state, **kw))
+    yield state
+    plex_auth._sessions.clear()
 
-    def _create(forward_url):
-        assert forward_url.endswith("/api/auth/plex/done")
-        pin = _FakePin(None)
-        pin._id = 77
-        return pin, "https://app.plex.tv/auth"
 
-    monkeypatch.setattr(auth_routes, "create_session", _create)
-    monkeypatch.setattr(auth_routes, "get_session", lambda pin_id: _FakePin(state["token"]))
-    monkeypatch.setattr(
-        auth_routes, "remove_session", lambda pin_id: state["removed"].append(pin_id)
-    )
-    return state
+async def _open_pin(client) -> None:
+    """Start a login the way the SPA does, so this browser holds the PIN cookie."""
+    res = await client.post("/api/auth/plex/init")
+    assert res.status_code == 200, res.text
 
 
 async def test_confirming_as_the_owner_sets_a_session(client, factory, pins, plex_identifies):
@@ -238,6 +246,7 @@ async def test_confirming_as_the_owner_sets_a_session(client, factory, pins, ple
 
     pins["token"] = OWNER_TOKEN
 
+    await _open_pin(client)
     res = await client.get("/api/auth/plex/poll", params={"pin_id": 77})
 
     assert res.status_code == 200
@@ -259,6 +268,7 @@ async def test_a_login_mints_a_new_token_but_signs_with_the_configured_one(
     plex_identifies["freshly-minted-token"] = ("12345", "chunned")
     pins["token"] = "freshly-minted-token"
 
+    await _open_pin(client)
     res = await client.get("/api/auth/plex/poll", params={"pin_id": 77})
 
     assert res.status_code == 200
@@ -279,6 +289,7 @@ async def test_confirming_as_somebody_else_is_refused(client, factory, pins, ple
     plex_identifies["stranger-token"] = ("99999", "stranger")
     pins["token"] = "stranger-token"
 
+    await _open_pin(client)
     res = await client.get("/api/auth/plex/poll", params={"pin_id": 77})
 
     assert res.status_code == 403
@@ -289,19 +300,52 @@ async def test_an_unconfirmed_pin_is_just_pending(client, factory, pins):
     await _configure_owner(factory)
     pins["token"] = None
 
+    await _open_pin(client)
     res = await client.get("/api/auth/plex/poll", params={"pin_id": 77})
 
     assert res.status_code == 200
     assert res.json() == {"status": "pending", "username": None}
 
 
-async def test_an_unknown_pin_is_gone(client, pins, monkeypatch):
-    from ratingrelay.routes import auth as auth_routes
-
-    monkeypatch.setattr(auth_routes, "get_session", lambda pin_id: None)
+async def test_an_unknown_pin_is_gone(client, pins):
+    await _open_pin(client)
     res = await client.get("/api/auth/plex/poll", params={"pin_id": 1})
 
     assert res.status_code == 404
+
+
+async def test_a_pin_is_only_redeemable_by_the_browser_that_opened_it(
+    client, factory, pins, plex_identifies
+):
+    """Knowing a PIN id is not enough: whoever polls it first used to get the session."""
+    await _configure_owner(factory)
+    await _open_pin(client)
+    pins["token"] = OWNER_TOKEN
+
+    client.cookies.clear()
+    stolen = await client.get("/api/auth/plex/poll", params={"pin_id": 77})
+    assert stolen.status_code == 404
+    assert SESSION_COOKIE not in stolen.cookies
+
+    client.cookies.set("relay_pin", "a-guess", path="/api")
+    guessed = await client.get("/api/auth/plex/poll", params={"pin_id": 77})
+    assert guessed.status_code == 404
+
+
+async def test_a_login_sets_the_pin_cookie_and_clears_it_once_redeemed(
+    client, factory, pins, plex_identifies
+):
+    await _configure_owner(factory)
+    init = await client.post("/api/auth/plex/init")
+    header = init.headers["set-cookie"].lower()
+    assert "relay_pin=" in header and "httponly" in header and "samesite=lax" in header
+
+    pins["token"] = OWNER_TOKEN
+    res = await client.get("/api/auth/plex/poll", params={"pin_id": 77})
+
+    assert res.status_code == 200
+    cleared = [h.lower() for h in res.headers.get_list("set-cookie") if h.startswith("relay_pin=")]
+    assert cleared and "max-age=0" in cleared[0]
 
 
 async def test_logout_clears_the_cookie(client, factory):

@@ -39,6 +39,7 @@ class FakePinLogin:
 
 
 class FakeAccount:
+    id = 12345
     username = "chunned"
 
 
@@ -73,11 +74,35 @@ async def app_client():
     await engine.dispose()
 
 
-async def _callback(client: AsyncClient, pin_login, *, recorder: Recorder):
-    """Hit the callback with fakes in place and no real delays."""
+NONCE = "this-browser"
+
+
+async def _callback(
+    client: AsyncClient,
+    pin_login,
+    *,
+    recorder: Recorder,
+    nonce: str | None = NONCE,
+    owner: tuple[str, str] | None = None,
+):
+    """Hit the callback with fakes in place and no real delays.
+
+    The PIN belongs to the browser holding ``NONCE``; *nonce* is the cookie this
+    request carries. *owner* is the Plex account already configured, if any.
+    """
+    from ratingrelay.core.plex_auth import PIN_COOKIE
+
+    client.cookies.clear()
+    if nonce is not None:
+        client.cookies.set(PIN_COOKIE, nonce)
+
+    def sessions_for(candidate):
+        return [(1, pin_login)] if candidate == NONCE else []
+
     with (
-        patch("ratingrelay.routes.plex.iter_sessions", lambda: [(1, pin_login)]),
+        patch("ratingrelay.routes.plex.sessions_for", sessions_for),
         patch("ratingrelay.routes.plex.MyPlexAccount", lambda token: FakeAccount()),
+        patch("ratingrelay.routes.plex.owner_identity", AsyncMock(return_value=owner)),
         patch("ratingrelay.routes.plex.upsert_credential", recorder),
         patch("ratingrelay.routes.plex.asyncio.sleep", AsyncMock()),
     ):
@@ -114,6 +139,43 @@ async def test_an_unconfirmed_pin_stores_nothing_and_says_so(app_client):
     assert recorder.calls == []
     assert "plex:authed" not in response.text
     assert "did not confirm" in response.text
+
+
+async def test_a_pin_this_browser_did_not_open_is_ignored(app_client):
+    """Another browser's PIN, or none at all: nothing is stored, no session."""
+    for nonce in (None, "someone-else"):
+        recorder = Recorder()
+
+        response = await _callback(app_client, FakePinLogin(), recorder=recorder, nonce=nonce)
+
+        assert recorder.calls == []
+        assert "plex:authed" not in response.text
+        assert "relay_session" not in response.cookies
+
+
+async def test_reconnecting_as_the_owner_is_stored(app_client):
+    recorder = Recorder()
+
+    response = await _callback(
+        app_client, FakePinLogin(), recorder=recorder, owner=("12345", "chunned")
+    )
+
+    assert recorder.calls == [(ServiceName.plex, {"token": "plex-token", "username": "chunned"})]
+    assert "plex:authed" in response.text
+
+
+async def test_another_account_cannot_replace_the_owner(app_client):
+    """Connecting a second Plex account would hand the relay to whoever owns it."""
+    recorder = Recorder()
+
+    response = await _callback(
+        app_client, FakePinLogin(), recorder=recorder, owner=("99999", "the-owner")
+    )
+
+    assert response.status_code == 403
+    assert recorder.calls == []
+    assert "plex:authed" not in response.text
+    assert "relay_session" not in response.cookies
 
 
 # ---------------------------------------------------------------------------

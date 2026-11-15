@@ -5,9 +5,18 @@ A MyPlexPinLogin instance must remain alive while we wait for the user to
 complete the OAuth flow in the popup window.  We key each session on the
 integer PIN id returned by plexapi and clean it up once the token is
 retrieved or the TTL is exceeded.
+
+Every PIN belongs to the browser that opened it. ``init`` hands that browser a
+random nonce in a short-lived cookie (:data:`PIN_COOKIE`), and only a request
+carrying the same nonce can redeem the PIN. Without that, the PIN id was the
+whole secret: a stranger could redeem a login the owner started (the ids are
+small and sequential), or confirm their own PIN and have the owner's browser
+complete it through the callback.
 """
 
+import hmac
 import logging
+import secrets
 from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
@@ -39,14 +48,50 @@ def public_url(base_url: str, request_base_url: str, path: str) -> str:
 # TTL for an unconfirmed session (plexapi default timeout is 120 s)
 _SESSION_TTL = timedelta(minutes=5)
 
-# { pin_id: (pin_login_instance, created_at) }
-_sessions: dict[int, tuple[MyPlexPinLogin, datetime]] = {}
+# The cookie holding the nonce that owns this browser's pending PIN. It lives as
+# long as the PIN does and is only ever sent to the API.
+PIN_COOKIE = "relay_pin"
+_PIN_COOKIE_PATH = "/api"
+
+# { pin_id: (pin_login_instance, created_at, nonce) }
+_sessions: dict[int, tuple[MyPlexPinLogin, datetime, str]] = {}
 
 
-def create_session(forward_url: str) -> tuple[MyPlexPinLogin, str]:
+def new_nonce() -> str:
+    """A fresh owner for a PIN; goes to the browser that asked for it."""
+    return secrets.token_urlsafe(32)
+
+
+def set_pin_cookie(response, request, nonce: str) -> None:
+    """Hand *nonce* to the browser starting the login.
+
+    ``Lax`` because the callback is a top-level navigation back from
+    app.plex.tv, which ``Strict`` would strip the cookie from.
     """
-    Create a new MyPlexPinLogin OAuth session, store it, and return it along
-    with the OAuth URL.  oauthUrl() must be called here because it triggers the
+    response.set_cookie(
+        PIN_COOKIE,
+        nonce,
+        max_age=int(_SESSION_TTL.total_seconds()),
+        httponly=True,
+        samesite="lax",
+        secure=request.url.scheme == "https",
+        path=_PIN_COOKIE_PATH,
+    )
+
+
+def clear_pin_cookie(response) -> None:
+    response.delete_cookie(PIN_COOKIE, path=_PIN_COOKIE_PATH)
+
+
+def _owns(nonce: str, candidate: str | None) -> bool:
+    return bool(nonce) and bool(candidate) and hmac.compare_digest(nonce, candidate)
+
+
+def create_session(forward_url: str, nonce: str = "") -> tuple[MyPlexPinLogin, str]:
+    """
+    Create a new MyPlexPinLogin OAuth session, store it under *nonce*, and
+    return it along with the OAuth URL. A PIN stored without a nonce can never
+    be redeemed.  oauthUrl() must be called here because it triggers the
     PIN fetch (_getCode) that populates _id — calling .pin before that raises.
     """
     pin_login = MyPlexPinLogin(
@@ -60,18 +105,18 @@ def create_session(forward_url: str) -> tuple[MyPlexPinLogin, str]:
     )
     oauth_url = pin_login.oauthUrl(forwardUrl=forward_url)
     pin_id = int(pin_login._id)
-    _sessions[pin_id] = (pin_login, datetime.now(tz=timezone.utc))
+    _sessions[pin_id] = (pin_login, datetime.now(tz=timezone.utc), nonce)
     log.info("Plex OAuth session created for pin_id=%s", pin_id)
     _evict_expired()
     return pin_login, oauth_url
 
 
-def get_session(pin_id: int) -> MyPlexPinLogin | None:
-    """Return the stored session for pin_id, or None if not found / expired."""
+def get_session(pin_id: int, nonce: str | None) -> MyPlexPinLogin | None:
+    """The session for *pin_id* if *nonce* owns it; None if not, or expired."""
     entry = _sessions.get(pin_id)
-    if entry is None:
+    if entry is None or not _owns(entry[2], nonce):
         return None
-    pin_login, created_at = entry
+    pin_login, created_at, _ = entry
     if datetime.now(tz=timezone.utc) - created_at > _SESSION_TTL:
         log.warning("Plex OAuth session %s has expired", pin_id)
         del _sessions[pin_id]
@@ -79,15 +124,16 @@ def get_session(pin_id: int) -> MyPlexPinLogin | None:
     return pin_login
 
 
-def iter_sessions() -> Iterator[tuple[int, MyPlexPinLogin]]:
-    """Yield (pin_id, pin_login) for all non-expired sessions.
+def sessions_for(nonce: str | None) -> Iterator[tuple[int, MyPlexPinLogin]]:
+    """Yield (pin_id, pin_login) for the non-expired sessions *nonce* owns.
 
     Evicts stale sessions before iterating.  Safe to mutate _sessions after
     consuming this iterator (it snapshots the keys via list()).
     """
     _evict_expired()
-    for pin_id, (pin_login, _) in list(_sessions.items()):
-        yield pin_id, pin_login
+    for pin_id, (pin_login, _, owner) in list(_sessions.items()):
+        if _owns(owner, nonce):
+            yield pin_id, pin_login
 
 
 def remove_session(pin_id: int) -> None:
@@ -99,7 +145,7 @@ def remove_session(pin_id: int) -> None:
 def _evict_expired() -> None:
     """Remove any sessions that have exceeded their TTL."""
     cutoff = datetime.now(tz=timezone.utc) - _SESSION_TTL
-    expired = [pid for pid, (_, created) in _sessions.items() if created < cutoff]
+    expired = [pid for pid, (_, created, _) in _sessions.items() if created < cutoff]
     for pid in expired:
         log.info("Evicting expired Plex OAuth session %s", pid)
         del _sessions[pid]

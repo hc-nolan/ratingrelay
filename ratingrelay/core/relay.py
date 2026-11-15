@@ -316,17 +316,24 @@ async def _reset_service(
     on_fetch_complete: Optional[Callable[[int], Awaitable[None]]],
     *,
     on_track: TrackCallback,
+    dry_run: bool = False,
 ) -> dict:
-    """Whole-service wipe: clear every rating, ours or not. Only on request."""
+    """Whole-service wipe: clear every rating, ours or not. Only on request.
+
+    A dry run fetches what would be cleared and reports it, and clears nothing:
+    the wipe is the most destructive thing the tool does, so its preview has to
+    be the real list, minus the writes.
+    """
     if target_svc == "plex":
-        ok, err = await reset_plex(db, on_fetch_complete, on_track)
+        ok, err = await reset_plex(db, on_fetch_complete, on_track, dry_run=dry_run)
     elif target_svc == "lastfm":
-        ok, err = await reset_lastfm(db, on_fetch_complete, on_track)
+        ok, err = await reset_lastfm(db, on_fetch_complete, on_track, dry_run=dry_run)
     else:
-        ok, err = await reset_listenbrainz(db, on_fetch_complete, on_track)
+        ok, err = await reset_listenbrainz(db, on_fetch_complete, on_track, dry_run=dry_run)
 
     # Nothing on the target is ours any more, so the record of our writes goes.
-    await SqlSyncStore(db).forget_target(target_svc)
+    if not dry_run:
+        await SqlSyncStore(db).forget_target(target_svc)
     return _reset_result(target_svc, ok, err)
 
 
@@ -337,6 +344,8 @@ async def reset_plex(
     db: AsyncSession,
     on_fetch_complete: Optional[Callable[[int], Awaitable[None]]] = None,
     on_track: TrackCallback = _noop_track,
+    *,
+    dry_run: bool = False,
 ) -> tuple[int, int]:
     library = PlexLibrary(await plex_credentials(db))
     rated = await library.rated(0.0001, "gte")
@@ -348,7 +357,8 @@ async def reset_plex(
     for plex_track in rated:
         track = {"artist": plex_track.grandparentTitle or "", "title": plex_track.title}
         try:
-            await library.rate(str(plex_track.ratingKey), None)
+            if not dry_run:
+                await library.rate(str(plex_track.ratingKey), None)
             await on_track(track, "plex", True, None, False)
             ok += 1
         except Exception as exc:  # noqa: BLE001 - reported per track
@@ -362,6 +372,8 @@ async def reset_lastfm(
     db: AsyncSession,
     on_fetch_complete: Optional[Callable[[int], Awaitable[None]]] = None,
     on_track: TrackCallback = _noop_track,
+    *,
+    dry_run: bool = False,
 ) -> tuple[int, int]:
     client = LastFmClient(await lastfm_credentials(db))
     tracks = await client.loved()
@@ -373,7 +385,8 @@ async def reset_lastfm(
     for track in tracks:
         data = adapters.track_to_dict(track)
         try:
-            await client.unlove(track.artist, track.title)
+            if not dry_run:
+                await client.unlove(track.artist, track.title)
             await on_track(data, "lastfm", True, None, False)
             ok += 1
         except Exception as exc:  # noqa: BLE001 - reported per track
@@ -387,6 +400,8 @@ async def reset_listenbrainz(
     db: AsyncSession,
     on_fetch_complete: Optional[Callable[[int], Awaitable[None]]] = None,
     on_track: TrackCallback = _noop_track,
+    *,
+    dry_run: bool = False,
 ) -> tuple[int, int]:
     client = ListenBrainzClient(await listenbrainz_credentials(db))
     feedback = [track for score in (1, -1) for track in await client.feedback(score)]
@@ -402,7 +417,8 @@ async def reset_listenbrainz(
             err += 1
             continue
         try:
-            await client.submit(0, track.recording_mbid)
+            if not dry_run:
+                await client.submit(0, track.recording_mbid)
             await on_track(data, "listenbrainz", True, None, False)
             ok += 1
         except Exception as exc:  # noqa: BLE001 - reported per track
@@ -492,7 +508,7 @@ async def _execute_reset(
 
     if source.all:
         return await _reset_service(
-            db, target_svc, on_fetch_complete, on_track=on_track
+            db, target_svc, on_fetch_complete, on_track=on_track, dry_run=dry_run
         )
     return await _reset_recorded(
         db, target_svc, on_fetch_complete, on_track=on_track, dry_run=dry_run

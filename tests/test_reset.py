@@ -196,3 +196,52 @@ async def test_reset_all_wipes_the_service_and_its_records(db):
 async def test_reset_all_is_not_the_default(db):
     """The destructive form has to be asked for."""
     assert ResetFromConfig().all is False
+
+
+class _FakeLastFm:
+    """A Last.fm account with two loves, recording what was unloved."""
+
+    def __init__(self, unloved: list[str]):
+        self._unloved = unloved
+
+    async def loved(self):
+        from ratingrelay.engine.types import Track
+
+        return [Track(artist="Artist A", title="Song"), Track(artist="Artist B", title="Song")]
+
+    async def unlove(self, artist, title):
+        self._unloved.append(f"{artist} - {title}")
+
+
+async def test_reset_all_dry_run_clears_nothing(db):
+    """A dry-run wipe lists what it would clear, and clears none of it."""
+    await _seed(db, "lastfm", "Artist A")
+    unloved: list[str] = []
+    events, on_track = _capture()
+
+    with patch("ratingrelay.core.relay.lastfm_credentials", AsyncMock(return_value=None)), patch(
+        "ratingrelay.core.relay.LastFmClient", lambda _creds: _FakeLastFm(unloved)
+    ):
+        result = await execute_relay(
+            db,
+            ResetFromConfig(target_service="lastfm", all=True),
+            [],
+            on_track=on_track,
+            dry_run=True,
+        )
+
+    assert unloved == []
+    assert result["results"] == [{"service": "lastfm", "ok": 2, "err": 0, "skipped": 0}]
+    assert [label for label, *_ in events] == ["Artist A - Song", "Artist B - Song"]
+    # Nothing was cleared, so the record of what we wrote stays.
+    assert len(await SqlSyncStore(db).records_for_target("lastfm")) == 1
+
+
+async def test_reset_all_real_run_does_clear(db):
+    unloved: list[str] = []
+    with patch("ratingrelay.core.relay.lastfm_credentials", AsyncMock(return_value=None)), patch(
+        "ratingrelay.core.relay.LastFmClient", lambda _creds: _FakeLastFm(unloved)
+    ):
+        await execute_relay(db, ResetFromConfig(target_service="lastfm", all=True), [])
+
+    assert unloved == ["Artist A - Song", "Artist B - Song"]

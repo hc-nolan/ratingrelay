@@ -84,7 +84,7 @@ LOVED = [
     ("Boards of Canada", "Roygbiv"),
     ("The Cure", "Pictures of You"),
     ("Björk", "Jóga"),
-    ("Arcade Fire", "Wake Up"),
+    ("Joy Division", "Atmosphere"),
 ]
 UNMATCHED = [
     ("Sufjan Stevens", "Chicago (Adult Contemporary Easy Listening Version)", "lastfm",
@@ -143,18 +143,37 @@ def seed() -> None:
         db.commit()
 
     targets = ["lastfm", "listenbrainz"]
+    # A real run reports every fetched track once per target, so each target's
+    # rows add up to the fetched count: an unmatched track was still written to
+    # the target that could place it.
+    fetched = len(LOVED) + len(UNMATCHED)
     written = [(a, t, tgt, "written", None, None) for a, t in LOVED for tgt in targets]
     unmatched = [(a, t, tgt, "unmatched", r, c) for a, t, tgt, r, c in UNMATCHED]
-    synced = [(a, t, tgt, "skipped", "already_synced", None) for a, t in LOVED for tgt in targets]
+    placed = [(a, t, other, "written", None, None)
+              for a, t, tgt, _, _ in UNMATCHED for other in targets if other != tgt]
+    synced = [(a, t, tgt, "skipped", "already_synced", None)
+              for a, t in LOVED for tgt in targets] + [
+              (a, t, tgt, "skipped", "already_synced", None) for a, t, tgt, *_ in placed]
+    # The partial run: Last.fm refused one love.
+    flaky = ("Joy Division", "Atmosphere", "lastfm")
+    partial = [(a, t, tgt, "failed", "write_failed", None) if (a, t, tgt) == flaky
+               else (a, t, tgt, o, r, c) for a, t, tgt, o, r, c in written]
 
+    def counts(events):
+        ok = sum(o == "written" for *_, o, _, _ in events)
+        err = sum(o == "failed" for *_, o, _, _ in events)
+        return {"ok": ok, "err": err, "skipped": len(events) - ok - err}
+
+    first = written + placed + unmatched
     _job(engine, ago=timedelta(days=6), status="completed", targets=targets, dry_run=True,
-         fetched=15, ok=24, skipped=3, events=written + unmatched)
+         fetched=fetched, events=first, **counts(first))
+    second = partial + placed + unmatched
     _job(engine, ago=timedelta(days=5, hours=23), status="partial", targets=targets,
-         fetched=15, ok=24, err=1, skipped=3,
-         events=written + unmatched + [("Joy Division", "Atmosphere", "lastfm", "failed", "write_failed", None)])
+         fetched=fetched, events=second, **counts(second))
+    later = synced + unmatched
     for day in range(4, 0, -1):
         _job(engine, ago=timedelta(days=day), status="completed", targets=targets, recurring=True,
-             fetched=15, ok=0, skipped=27, events=synced + unmatched)
+             fetched=fetched, events=later, **counts(later))
     _job(engine, ago=timedelta(hours=2), status="completed", targets=["plex"], source={"service": "lastfm"},
          fetched=6, ok=6, events=[(a, t, "plex", "written", None, None) for a, t in LOVED[:6]])
 

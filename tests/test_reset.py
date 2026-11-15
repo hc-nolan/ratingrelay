@@ -245,3 +245,85 @@ async def test_reset_all_real_run_does_clear(db):
         await execute_relay(db, ResetFromConfig(target_service="lastfm", all=True), [])
 
     assert unloved == ["Artist A - Song", "Artist B - Song"]
+
+
+class _FlakyLastFm(_FakeLastFm):
+    """Same two loves; Last.fm refuses to unlove one of them."""
+
+    def __init__(self, unloved: list[str], refuse: str):
+        super().__init__(unloved)
+        self._refuse = refuse
+
+    async def unlove(self, artist, title):
+        if artist == self._refuse:
+            raise OSError("Last.fm timed out")
+        await super().unlove(artist, title)
+
+
+async def _seed_written(db: AsyncSession, *artists: str) -> None:
+    """Records in the shape the Last.fm target writes them."""
+    import json
+
+    store = SqlSyncStore(db, "love")
+    for artist in artists:
+        await store.remember(
+            "plex",
+            "lastfm",
+            SyncedTrack(
+                key=track_key(artist, "Song"),
+                intent="love",
+                target_key=json.dumps([artist, "Song"]),
+            ),
+        )
+
+
+async def _remaining(db: AsyncSession) -> set[str]:
+    return {record.key for _, _, record in await SqlSyncStore(db).records_for_target("lastfm")}
+
+
+async def test_a_wipe_keeps_the_record_of_a_love_it_failed_to_clear(db):
+    """The love is still on Last.fm, so forgetting it would make it unundoable."""
+    await _seed_written(db, "Artist A", "Artist B")
+    unloved: list[str] = []
+
+    with patch("ratingrelay.core.relay.lastfm_credentials", AsyncMock(return_value=None)), patch(
+        "ratingrelay.core.relay.LastFmClient", lambda _creds: _FlakyLastFm(unloved, "Artist B")
+    ):
+        result = await execute_relay(db, ResetFromConfig(target_service="lastfm", all=True), [])
+
+    assert unloved == ["Artist A - Song"]
+    assert result["results"] == [{"service": "lastfm", "ok": 1, "err": 1, "skipped": 0}]
+    assert await _remaining(db) == {track_key("Artist B", "Song")}
+
+
+async def test_a_cancelled_wipe_forgets_only_what_it_cleared(db):
+    await _seed_written(db, "Artist A", "Artist B")
+    unloved: list[str] = []
+
+    class Stop(BaseException):
+        pass
+
+    async def on_track(*_args, **_kwargs):
+        raise Stop  # the worker's cancel, at the first track boundary
+
+    with patch("ratingrelay.core.relay.lastfm_credentials", AsyncMock(return_value=None)), patch(
+        "ratingrelay.core.relay.LastFmClient", lambda _creds: _FakeLastFm(unloved)
+    ), pytest.raises(Stop):
+        await execute_relay(
+            db, ResetFromConfig(target_service="lastfm", all=True), [], on_track=on_track
+        )
+
+    assert unloved == ["Artist A - Song"]
+    assert await _remaining(db) == {track_key("Artist B", "Song")}
+
+
+async def test_a_completed_wipe_forgets_every_record(db):
+    await _seed_written(db, "Artist A", "Artist B")
+    unloved: list[str] = []
+
+    with patch("ratingrelay.core.relay.lastfm_credentials", AsyncMock(return_value=None)), patch(
+        "ratingrelay.core.relay.LastFmClient", lambda _creds: _FakeLastFm(unloved)
+    ):
+        await execute_relay(db, ResetFromConfig(target_service="lastfm", all=True), [])
+
+    assert await _remaining(db) == set()

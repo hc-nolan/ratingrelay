@@ -10,6 +10,7 @@ outcomes do not yet express: the display strings behind ``on_track``'s ``error``
 argument and the list shape of ``execute_relay``'s result.
 """
 
+import json
 from typing import Awaitable, Callable, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +23,7 @@ from ratingrelay.core.credentials import (
 )
 from ratingrelay.db.store import SqlSyncStore
 from ratingrelay.engine import pipeline
+from ratingrelay.engine.normalize import track_key
 from ratingrelay.engine.retry import attempt
 from ratingrelay.engine.services.lastfm import LastFmClient
 from ratingrelay.engine.services.listenbrainz import ListenBrainzClient
@@ -327,17 +329,93 @@ async def _reset_service(
     the wipe is the most destructive thing the tool does, so its preview has to
     be the real list, minus the writes.
     """
+    ledger = await _WipeLedger.load(SqlSyncStore(db), target_svc)
+    on_cleared = None if dry_run else ledger.cleared
     if target_svc == "plex":
-        ok, err = await reset_plex(db, on_fetch_complete, on_track, dry_run=dry_run)
+        reset = reset_plex
     elif target_svc == "lastfm":
-        ok, err = await reset_lastfm(db, on_fetch_complete, on_track, dry_run=dry_run)
+        reset = reset_lastfm
     else:
-        ok, err = await reset_listenbrainz(db, on_fetch_complete, on_track, dry_run=dry_run)
+        reset = reset_listenbrainz
+    ok, err = await reset(
+        db, on_fetch_complete, on_track, dry_run=dry_run, on_cleared=on_cleared
+    )
 
-    # Nothing on the target is ours any more, so the record of our writes goes.
-    if not dry_run:
-        await SqlSyncStore(db).forget_target(target_svc)
+    # Only a wipe that cleared everything may drop the records it could not
+    # tie to a cleared rating; anything else keeps them for the next reconcile.
+    if not dry_run and err == 0:
+        await ledger.forget_unaddressed()
     return _reset_result(target_svc, ok, err)
+
+
+def _wipe_ids(target_svc: str, record) -> frozenset[str]:
+    """The target-side identifiers a wipe clears for *record*.
+
+    The formats are the ones each target writes into ``target_key``: a JSON list
+    of ratingKeys for Plex, ``[artist, title]`` for Last.fm, the MBID for
+    ListenBrainz. An empty set means the record cannot be tied to a wipe.
+    """
+    raw = record.target_key
+    try:
+        if target_svc == "plex":
+            return frozenset(str(key) for key in json.loads(raw)) if raw else frozenset()
+        if target_svc == "lastfm":
+            if raw:
+                artist, title = json.loads(raw)
+                return frozenset({track_key(artist, title)})
+            return frozenset({record.key}) if record.key else frozenset()
+    except (TypeError, ValueError):
+        return frozenset()
+    mbid = raw or record.recording_mbid
+    return frozenset({mbid}) if mbid else frozenset()
+
+
+class _WipeLedger:
+    """Forgets a sync record once every rating it stands for is cleared.
+
+    The wipe used to forget the whole target after the loop, so a track that
+    failed to clear, or a run cancelled halfway, lost the record of a write that
+    is still on the target — and with it the only way to undo it later.
+    """
+
+    def __init__(self, store: SqlSyncStore, target_svc: str, records) -> None:
+        self._store = store
+        self._target = target_svc
+        self._pending: dict[tuple[str, str, str], set[str]] = {}
+        self._unaddressed: list[tuple[str, str, str]] = []
+        self._by_id: dict[str, list[tuple[str, str, str]]] = {}
+        for source, relay, record in records:
+            address = (source, relay, record.key)
+            ids = _wipe_ids(target_svc, record)
+            if not ids:
+                self._unaddressed.append(address)
+                continue
+            self._pending[address] = set(ids)
+            for ident in ids:
+                self._by_id.setdefault(ident, []).append(address)
+
+    @classmethod
+    async def load(cls, store: SqlSyncStore, target_svc: str) -> "_WipeLedger":
+        return cls(store, target_svc, await store.records_for_target(target_svc))
+
+    async def cleared(self, ident: str) -> None:
+        for address in self._by_id.pop(ident, ()):
+            remaining = self._pending.get(address)
+            if remaining is None:
+                continue
+            remaining.discard(ident)
+            if not remaining:
+                del self._pending[address]
+                await self._forget(address)
+
+    async def forget_unaddressed(self) -> None:
+        for address in self._unaddressed:
+            await self._forget(address)
+        self._unaddressed = []
+
+    async def _forget(self, address: tuple[str, str, str]) -> None:
+        source, relay, key = address
+        await self._store.forget_record(source, relay, self._target, key)
 
 
 # The three functions below are the whole-service wipe behind ``_reset_service``.
@@ -349,6 +427,7 @@ async def reset_plex(
     on_track: TrackCallback = _noop_track,
     *,
     dry_run: bool = False,
+    on_cleared: Optional[Callable[[str], Awaitable[None]]] = None,
 ) -> tuple[int, int]:
     library = PlexLibrary(await plex_credentials(db))
     rated = await library.rated(0.0001, "gte")
@@ -362,6 +441,8 @@ async def reset_plex(
         try:
             if not dry_run:
                 await library.rate(str(plex_track.ratingKey), None)
+            if on_cleared is not None:
+                await on_cleared(str(plex_track.ratingKey))
             await on_track(track, "plex", True, None, False)
             ok += 1
         except Exception as exc:  # noqa: BLE001 - reported per track
@@ -377,6 +458,7 @@ async def reset_lastfm(
     on_track: TrackCallback = _noop_track,
     *,
     dry_run: bool = False,
+    on_cleared: Optional[Callable[[str], Awaitable[None]]] = None,
 ) -> tuple[int, int]:
     client = LastFmClient(await lastfm_credentials(db))
     tracks = await client.loved()
@@ -390,6 +472,8 @@ async def reset_lastfm(
         try:
             if not dry_run:
                 await client.unlove(track.artist, track.title)
+            if on_cleared is not None:
+                await on_cleared(track_key(track.artist, track.title))
             await on_track(data, "lastfm", True, None, False)
             ok += 1
         except Exception as exc:  # noqa: BLE001 - reported per track
@@ -405,6 +489,7 @@ async def reset_listenbrainz(
     on_track: TrackCallback = _noop_track,
     *,
     dry_run: bool = False,
+    on_cleared: Optional[Callable[[str], Awaitable[None]]] = None,
 ) -> tuple[int, int]:
     client = ListenBrainzClient(await listenbrainz_credentials(db))
     feedback = [track for score in (1, -1) for track in await client.feedback(score)]
@@ -422,6 +507,8 @@ async def reset_listenbrainz(
         try:
             if not dry_run:
                 await client.submit(0, track.recording_mbid)
+            if on_cleared is not None:
+                await on_cleared(track.recording_mbid)
             await on_track(data, "listenbrainz", True, None, False)
             ok += 1
         except Exception as exc:  # noqa: BLE001 - reported per track

@@ -10,6 +10,9 @@ Read it before proposing features; read this file before touching code.
 ## Dev environment
 
 Host-based, no containers. `uv` for Python, `pnpm` for the frontend, `just` to run things.
+Users deploy with Docker (`Dockerfile`, `compose.yaml`, `.env.example`), so the user-facing
+README assumes Docker; a new setting must work as an environment variable, and anything
+the app keeps must live under `/data` in the container.
 
 ```shell
 just install    # uv sync + pnpm install

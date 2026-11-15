@@ -30,21 +30,28 @@ own machine or home server, and your credentials stay there.
 
 ## Getting started
 
-You'll need [uv](https://docs.astral.sh/uv/), [pnpm](https://pnpm.io/) and
-[just](https://just.systems/) installed.
+RatingRelay runs in Docker. You need [Docker](https://docs.docker.com/get-docker/)
+with the Compose plugin.
 
 ```shell
 git clone https://github.com/hc-nolan/ratingrelay.git
 cd ratingrelay
-cp .config.example .config   # then set `secret` to something random
-just install                 # download dependencies
-just build                   # build the web app
-uv run app.py                # start RatingRelay
+cp .env.example .env
 ```
 
-Open `http://localhost:8100`, or `http://<your-server>:8100` from another device on
-your network. If you use a different port or address, change `port` and `base_url`
-in `.config` so they match.
+Open `.env` and set `RATINGRELAY_SECRET` to a long random string. Running
+`openssl rand -hex 32` will make one. You can also set your time zone there. Then:
+
+```shell
+docker compose up -d --build
+```
+
+Open `http://<your-server>:8100`, or `http://localhost:8100` if Docker runs on the
+same computer. To use a different port, change `RATINGRELAY_PORT` in `.env`.
+
+If you reach RatingRelay through a reverse proxy or your own domain, uncomment
+`BASE_URL` in `compose.yaml` and set it to the address you type in the browser.
+The Plex sign-in sends you back to that address.
 
 ### First-time setup
 
@@ -119,23 +126,51 @@ what it wrote, so if you reconnect later it picks up where it left off.
 Disconnecting **Plex** also signs you out, because your Plex account is how you log
 in to RatingRelay. You'll be asked to confirm first.
 
+## Your data
+
+Everything RatingRelay knows is kept in the `ratingrelay-data` Docker volume. That
+includes your connected accounts, run history, mappings and a record of every
+change it has made. That record is how it can undo its own changes without touching
+yours. Back up the volume if you care about it, and don't delete it when updating.
+
+## Updating
+
+```shell
+git pull
+docker compose up -d --build
+```
+
+The database is upgraded automatically when the new version starts.
+
 ## Running without the web app
 
-Everything the web app does can also run from the command line, for example from
-cron on a server you don't want to open a browser on. Both use the same relay code,
-so a command-line run and a run in the app always agree. The web server doesn't
-need to be running.
+Everything the web app does can also run from the command line. Both use the same
+relay code, so a command-line run and a run in the app always agree.
+
+You probably don't need this if you use Docker: the app's **Repeat** option
+already runs a relay on a schedule. The command line is for scripting, for cron,
+or for running RatingRelay with no web app at all.
+
+With Docker, run the commands inside the container:
+
+```shell
+docker compose exec ratingrelay ratingrelay relay --source plex --target lastfm --dry-run
+```
+
+To use a config file, uncomment the `relays.toml` line under `volumes:` in
+`compose.yaml` and pass `--config /data/relays.toml`. The examples below show the
+commands on their own; outside Docker, run them with `uv run` in front.
 
 ```shell
 # One relay, from flags. This is the shape to try first.
-uv run ratingrelay relay --source plex --target lastfm --dry-run
+ratingrelay relay --source plex --target lastfm --dry-run
 
 # Relay to several targets at once.
-uv run ratingrelay relay --source plex --target lastfm --target listenbrainz
+ratingrelay relay --source plex --target lastfm --target listenbrainz
 
 # Everything a config file defines, one after another.
-uv run ratingrelay run --config relays.toml
-uv run ratingrelay list --config relays.toml   # what would run
+ratingrelay run --config relays.toml
+ratingrelay list --config relays.toml   # what would run
 ```
 
 `--dry-run` runs the real pipeline (fetch, match, reconcile) and skips only the
@@ -155,8 +190,9 @@ writes, so its counts are what a real run would do.
 | `--json` | `relay`, `run` | one machine-readable document instead of the human summary |
 | `--verbose` | `relay`, `run` | a line per track, on stderr |
 
-Credentials come from `.config` (or environment variables), falling back to the
-ones you entered in the web app. On a fresh checkout, run `just migrate` first.
+Credentials come from environment variables (or `.config` outside Docker), falling
+back to the ones you entered in the web app. Outside Docker, run `just migrate`
+first on a fresh checkout. The container does this when it starts.
 
 ### Config file
 
@@ -181,6 +217,9 @@ Unknown keys are an error, so a typo can't make a cron job silently do nothing.
 ### cron
 
 ```cron
+# Docker
+0 4 * * * cd /srv/ratingrelay && docker compose exec -T ratingrelay ratingrelay run --config /data/relays.toml >> /var/log/ratingrelay.log 2>&1
+# From source
 0 4 * * * cd /srv/ratingrelay && /usr/local/bin/uv run ratingrelay run >> /var/log/ratingrelay.log 2>&1
 ```
 
@@ -197,13 +236,18 @@ on the web app's **Unmatched** page. A dry run can only exit 0 or 2.
 
 ## Development
 
+To run from source instead of Docker, you'll need [uv](https://docs.astral.sh/uv/),
+[pnpm](https://pnpm.io/) and [just](https://just.systems/).
+
 ```shell
+cp .config.example .config   # settings and, optionally, credentials
 just install     # uv sync + pnpm install
 just dev         # API on :8100 + Vite dev server on :5173, Ctrl-C stops both
 just demo        # the UI against made-up data on :5174; calls no real service
 just test        # pytest
 just lint        # pylint
 just check       # svelte-check + prettier + eslint
+just build && uv run app.py   # serve the built app from the API, as the image does
 ```
 
 The screenshots above come from `just demo`. Contributor notes, including the

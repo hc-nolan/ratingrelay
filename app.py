@@ -7,6 +7,6 @@ if __name__ == "__main__":
         "ratingrelay.main:app",
         host=settings.host,
         port=settings.port,
-        reload=True,
+        reload=settings.reload,
         log_config=LOG_CONFIG,
     )

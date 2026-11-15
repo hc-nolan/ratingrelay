@@ -1,0 +1,31 @@
+# RatingRelay. Copy .env.example to .env, set RATINGRELAY_SECRET, then:
+#
+#   docker compose up -d --build
+#
+# and open http://<this machine>:8100. Settings not listed here are documented in
+# .config.example; any of them can be added under `environment:` in upper case.
+
+services:
+  ratingrelay:
+    build: .
+    image: ratingrelay:latest
+    restart: unless-stopped
+    ports:
+      - "${RATINGRELAY_PORT:-8100}:8100"
+    environment:
+      # Signs the login cookie. Generate with: openssl rand -hex 32
+      SECRET: ${RATINGRELAY_SECRET:?set RATINGRELAY_SECRET in .env}
+      # Times in the UI are shown in this zone (IANA name, e.g. Europe/London).
+      TIMEZONE: ${RATINGRELAY_TIMEZONE:-UTC}
+      # Only needed behind a reverse proxy or on a custom domain: the address your
+      # browser uses, so the Plex sign-in comes back to it.
+      # BASE_URL: https://ratingrelay.example.com
+    volumes:
+      # The database lives here. Keep it: it records what the relay has written,
+      # which is what lets it undo its own changes and nobody else's.
+      - ratingrelay-data:/data
+      # Headless relays (optional): a relays.toml for `ratingrelay run`.
+      # - ./relays.toml:/data/relays.toml:ro
+
+volumes:
+  ratingrelay-data:

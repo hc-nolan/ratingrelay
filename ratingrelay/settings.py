@@ -26,6 +26,8 @@ class Settings(BaseSettings):
             only thing standing between a stranger and the library.
         auth: Require a Plex login for the API. Off only for a relay reachable
             from its own machine.
+        reload: Restart the API when its source changes. On for development,
+            off in the container image.
         test_limit: Request limit used when running tests
     """
 
@@ -41,6 +43,7 @@ class Settings(BaseSettings):
     timezone: str = "America/Toronto"
     secret: str = "AUTHSECRET"
     auth: bool = True
+    reload: bool = True
     test_limit: Optional[int] = 10
     # Below settings are all optional. If not found, you will be prompted
     # to enter them in the frontend.

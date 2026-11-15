@@ -126,3 +126,20 @@ async def test_unknown_comparison_is_rejected_before_a_query():
         await _library(section).rated(8.0, "around")
 
     assert section.calls == []
+
+
+async def test_plex_target_lists_the_library_once_per_run():
+    """Planning every source track against Plex must not re-download the library."""
+    from ratingrelay.engine.services.plex import PlexTarget
+    from ratingrelay.engine.store import MemoryMappingStore
+    from ratingrelay.engine.types import Track
+
+    section = FakeSection(
+        [FakePlexTrack(f"Song {n}", ratingKey=str(n)) for n in range(5)]
+    )
+    target = PlexTarget(_library(section), MemoryMappingStore())
+
+    for n in range(5):
+        await target.plan(Track(artist="Artist", title=f"Song {n}"))
+
+    assert section.calls == [{}]

@@ -76,12 +76,17 @@ class PlexLibrary:
 
     The connection and the library listing are both cached: a run matches every
     source track against the same library, and a reset walks it the same way.
+    One instance is built per run (``core/factory.py``), so the cache never
+    outlives the run that filled it. Matching a target track against an uncached
+    listing would download the whole library once per source track.
     """
 
     def __init__(self, credentials: PlexCredentials):
         self._credentials = credentials
         self._section = None
+        self._listing: Optional[list] = None
         self._tracks: Optional[dict[str, object]] = None
+        self._candidates: Optional[tuple[Candidate, ...]] = None
 
     async def section(self):
         """The Plex library, connected on first use."""
@@ -92,9 +97,11 @@ class PlexLibrary:
         return self._section
 
     async def tracks(self) -> list:
-        """Every track in the library."""
-        section = await self.section()
-        return await run_sync(lambda: list(section.searchTracks()))
+        """Every track in the library, fetched once per instance."""
+        if self._listing is None:
+            section = await self.section()
+            self._listing = await run_sync(lambda: list(section.searchTracks()))
+        return self._listing
 
     async def search(self, **filters) -> list:
         """Ask the server for the tracks matching *filters*.
@@ -131,7 +138,10 @@ class PlexLibrary:
         return [t for t in tracks if _passes_rating(t.userRating, threshold, comparison)]
 
     async def candidates(self) -> tuple[Candidate, ...]:
-        return tuple(_to_candidate(track) for track in await self.tracks())
+        """The library as match candidates, built once per instance."""
+        if self._candidates is None:
+            self._candidates = tuple(_to_candidate(track) for track in await self.tracks())
+        return self._candidates
 
     async def rate(self, external_id: str, rating: Optional[float]) -> None:
         """Set a track's rating by its Plex rating key."""

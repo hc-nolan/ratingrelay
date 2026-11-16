@@ -115,6 +115,10 @@ class Reason(str, Enum):
     # so it is neither written nor recorded (and so never undone).
     ALREADY_ON_TARGET = "already_on_target"
     MASS_UNDO_REFUSED = "mass_undo_refused"
+    # The target had dropped a write the record says we made, and this run put
+    # it back. Only a relay that asked for it (``reapply_target_drift``) can
+    # report this; every other run leaves the target's own edits alone.
+    TARGET_DRIFT = "target_drift"
 
 
 @dataclass(frozen=True, slots=True)

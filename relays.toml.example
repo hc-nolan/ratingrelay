@@ -13,3 +13,15 @@ targets = ["lastfm", "listenbrainz"]
 # shared by every relay: a Plex source reads them and a Plex target writes them.
 feedback_type = "love"      # love or hate
 # dry_run = true            # fetch, match and reconcile, but write nothing
+# reapply_target_drift = true
+#   Write again what this relay's targets have since dropped (an un-loved
+#   track on Last.fm, a cleared rating on Plex). Off by default: a target's own
+#   edits are left alone. A write the target still holds, or one it replaced
+#   with a different value, is never overwritten.
+
+# The pair runs this way round too: Last.fm becomes the source of truth, and
+# Plex the target that follows it.
+[[relay]]
+name = "back-to-plex"
+source = "lastfm"
+targets = ["plex"]

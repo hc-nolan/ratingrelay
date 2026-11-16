@@ -101,6 +101,11 @@ These are the point of the tool. v1 got them right; keep them that way.
 2. **Reconcile every run, don't append.** Each run compares the source's current
    loves/hates to what we previously wrote to each target, and converges the target.
    A rating that changed re-propagates; a love that was withdrawn gets un-loved.
+   A target's *own* edits are not policed: an unchanged intent is `already_synced`,
+   so a track someone un-loved on the target stays that way. A relay that names
+   `reapply_target_drift` opts out of that, and only for a write the target has
+   *dropped* — a replacement the user chose is never overwritten (same rule as
+   undo, below).
 3. **Only undo our own writes.** Never clear a target rating this tool did not create.
    Reset is an explicit, narrow action — never a whole-service wipe by default.
    Sync records are keyed by source, target **and relay** (the direction the source

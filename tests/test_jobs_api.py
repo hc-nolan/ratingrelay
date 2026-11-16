@@ -132,6 +132,39 @@ async def test_the_override_may_run_beside_its_recurring_relay(client):
     assert override.status_code == 201
 
 
+# ---------------------------------------------------------------------------
+# The drift policy: stored, returned, and refused beside a relay that differs
+# ---------------------------------------------------------------------------
+
+
+async def test_reapply_target_drift_is_stored_and_returned(client):
+    resp = await client.post(
+        "/api/relay/jobs", json={**PAYLOAD, "reapply_target_drift": True}
+    )
+    assert resp.status_code == 201
+    assert resp.json()["reapply_target_drift"] is True
+
+    plain = await client.post(
+        "/api/relay/jobs", json={**PAYLOAD, "targets": [{"service": "listenbrainz"}]}
+    )
+    assert plain.json()["reapply_target_drift"] is False
+
+
+async def test_a_recurring_relay_may_keep_the_drift_policy(client):
+    """Unlike the mass-undo override, this is a policy and repeats."""
+    resp = await client.post(
+        "/api/relay/jobs",
+        json={
+            **PAYLOAD,
+            "recurring": True,
+            "interval_minutes": 60,
+            "reapply_target_drift": True,
+        },
+    )
+    assert resp.status_code == 201
+    assert resp.json()["reapply_target_drift"] is True
+
+
 async def test_a_relay_that_would_fight_an_active_one_is_refused(client):
     """Same source, target and direction in a different job: each undoes the other."""
     first = await client.post("/api/relay/jobs", json=PAYLOAD)

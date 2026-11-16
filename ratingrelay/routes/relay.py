@@ -101,7 +101,11 @@ async def run_relay(
 
     try:
         result = await execute_relay(
-            db, source, list(body.targets), dry_run=body.dry_run
+            db,
+            source,
+            list(body.targets),
+            dry_run=body.dry_run,
+            reapply_drift=body.reapply_target_drift,
         )
     except ValueError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc

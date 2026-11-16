@@ -55,6 +55,9 @@ class JobCreateRequest(BaseModel):
     dry_run: bool = False
     # A one-off override of the mass-undo guard, for the run after a refusal.
     allow_mass_undo: bool = False
+    # This relay's target is not authoritative: a write the target has since
+    # dropped is written again. Survives into a recurring relay's next run.
+    reapply_target_drift: bool = False
 
 
 def _job_to_dict(job: Job) -> dict:
@@ -82,6 +85,7 @@ def _job_to_dict(job: Job) -> dict:
         "tracks_skipped": job.tracks_skipped,
         "dry_run": job.dry_run,
         "allow_mass_undo": job.allow_mass_undo,
+        "reapply_target_drift": job.reapply_target_drift,
         "cancel_requested": job.cancel_requested,
     }
 
@@ -174,6 +178,7 @@ async def create_job(
         interval_minutes=body.interval_minutes,
         dry_run=body.dry_run,
         allow_mass_undo=body.allow_mass_undo,
+        reapply_target_drift=body.reapply_target_drift,
     )
     db.add(job)
     await db.commit()

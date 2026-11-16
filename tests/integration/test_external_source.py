@@ -108,6 +108,37 @@ async def test_unloving_on_lastfm_clears_the_plex_rating(world):
     assert await synced(world.session) == []
 
 
+async def test_a_rating_cleared_on_plex_is_written_again_when_the_relay_asks(world):
+    """Drift in the other direction: the *target* dropped what the source still has."""
+    world.lastfm.love("New Order", "Blue Monday")
+    track = world.plex.add("Blue Monday", "New Order")
+    source = LastFMFromConfig(service="lastfm")
+    targets = [PlexToConfig(service="plex")]
+    await world.relay(source, targets)
+    assert track.userRating == 8.0
+
+    track.userRating = None  # cleared by hand on Plex
+    run = await world.relay(source, targets, reapply_target_drift=True)
+
+    assert track.userRating == 8.0
+    assert run.decisions() == [(OutcomeStatus.WRITTEN, Reason.TARGET_DRIFT)]
+
+
+async def test_a_rerated_plex_copy_is_left_alone_even_when_the_relay_asks(world):
+    """A rating a person chose is theirs: the drift option never overwrites it."""
+    world.lastfm.love("New Order", "Blue Monday")
+    track = world.plex.add("Blue Monday", "New Order")
+    source = LastFMFromConfig(service="lastfm")
+    targets = [PlexToConfig(service="plex")]
+    await world.relay(source, targets)
+
+    track.userRating = 6.0  # re-rated by hand, below the love threshold
+    run = await world.relay(source, targets, reapply_target_drift=True)
+
+    assert track.userRating == 6.0
+    assert run.decisions() == [(OutcomeStatus.SKIPPED, Reason.ALREADY_SYNCED)]
+
+
 async def test_a_rating_the_user_chose_is_kept_and_restored(world):
     """A lower rating is the user's own: we write over it, and undo puts it back."""
     track = blue_monday(world, rating=4.0)

@@ -422,7 +422,7 @@ async def reset_listenbrainz(
 # ---------------------------------------------------------------------------
 
 
-async def execute_relay(
+async def execute_relay(  # pylint: disable=too-many-arguments
     db: AsyncSession,
     source: object,
     targets: list,
@@ -431,6 +431,7 @@ async def execute_relay(
     dry_run: bool = False,
     *,
     allow_mass_undo: bool = False,
+    reapply_drift: bool = False,
 ) -> dict:
     """
     Fetch tracks from source and relay to all targets.
@@ -459,6 +460,7 @@ async def execute_relay(
         progress=progress,
         dry_run=dry_run,
         allow_mass_undo=allow_mass_undo,
+        reapply_drift=reapply_drift,
     )
 
     return {

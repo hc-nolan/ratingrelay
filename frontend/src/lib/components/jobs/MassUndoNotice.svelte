@@ -36,7 +36,10 @@
 			targets: job.targets_config,
 			recurring: false,
 			dry_run: job.dry_run,
-			allow_mass_undo: true
+			allow_mass_undo: true,
+			// The relay's drift policy is part of what it was told to do, so the
+			// retry keeps it; only the undo refusal is answered.
+			reapply_target_drift: job.reapply_target_drift
 		};
 		try {
 			const res = await fetch('/api/relay/jobs', {

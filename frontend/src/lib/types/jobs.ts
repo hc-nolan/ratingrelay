@@ -38,6 +38,8 @@ export interface JobData {
 	tracks_skipped: number;
 	dry_run: boolean;
 	allow_mass_undo?: boolean;
+	/** This relay's targets are not authoritative: writes they dropped are re-applied. */
+	reapply_target_drift?: boolean;
 	cancel_requested?: boolean;
 	events?: TrackEvent[];
 	/** One tally per destination; `tracks_ok` is the sum across them. */
@@ -53,6 +55,9 @@ export interface JobCreateRequest {
 	dry_run?: boolean;
 	/** One run's override of the mass-undo guard; refused together with `recurring`. */
 	allow_mass_undo?: boolean;
+	/** Write again what this relay's targets have since dropped. A policy, so a
+	 * scheduled relay keeps it. */
+	reapply_target_drift?: boolean;
 }
 
 /** A destination whose reconcile was refused because it would undo most of it. */

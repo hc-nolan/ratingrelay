@@ -73,6 +73,11 @@ def _passes_rating(rating: Optional[float], threshold: float, comparison: str) -
     return value >= threshold if comparison == "gte" else value <= threshold
 
 
+def _rated(rating: Optional[float]) -> bool:
+    """Whether a copy carries a rating at all: to us, Plex's 0 is unrated."""
+    return rating is not None and rating > 0
+
+
 class PlexLibrary:
     """An async facade over one Plex library.
 
@@ -245,6 +250,9 @@ class PlexTarget(MappedTarget):
         target_key = json.dumps(external_ids)
         prior = {match.external_id: match.rating for match in outcome.matches}
         to_write = [key for key in external_ids if not self.holds(prior[key])]
+        # A copy rated *something* is a copy a person chose for: only a track
+        # with no rated copy at all is one whose write was simply removed.
+        occupied = any(_rated(prior[key]) for key in external_ids)
 
         async def commit() -> None:
             for external_id in to_write:
@@ -257,7 +265,9 @@ class PlexTarget(MappedTarget):
             intent=Intent(IntentKind.RATING, rating),
             target_key=target_key,
             mapped=await self.has_mapping(track),
-            existing=Existing(holds=not to_write, prior=json.dumps(prior)),
+            existing=Existing(
+                holds=not to_write, prior=json.dumps(prior), occupied=occupied
+            ),
             commit=commit,
         )
 

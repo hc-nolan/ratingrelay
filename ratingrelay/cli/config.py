@@ -24,7 +24,14 @@ SOURCE_SERVICES = ("plex", "lastfm", "listenbrainz")
 TARGET_SERVICES = ("plex", "lastfm", "listenbrainz")
 FEEDBACK_TYPES = ("love", "hate")
 
-_KNOWN_KEYS = {"name", "source", "targets", "dry_run", "feedback_type"}
+_KNOWN_KEYS = {
+    "name",
+    "source",
+    "targets",
+    "dry_run",
+    "feedback_type",
+    "reapply_target_drift",
+}
 
 # Keys earlier v3 builds accepted. The Plex ratings are settings now, shared by
 # every relay, so a file still naming them is told where they went instead of
@@ -55,6 +62,10 @@ class RelaySpec:
     # feedback a ListenBrainz target writes. The Plex ratings that mean love and
     # hate are the shared thresholds (web app, or pinned in settings).
     feedback_type: str = "love"
+    # Write again what the target has since dropped, for this relay only. A
+    # policy rather than a one-run override, so unlike ``allow_mass_undo`` it
+    # may be set in the file (see ``engine.pipeline._drifted`` for what counts).
+    reapply_target_drift: bool = False
     # Only ever set from the command line, never from relays.toml: a file key
     # would switch the guard off for every unattended run after this one.
     allow_mass_undo: bool = False
@@ -139,7 +150,16 @@ def _relay_from_table(table: dict[str, Any], position: int) -> RelaySpec:
         targets=tuple(targets),
         dry_run=bool(table.get("dry_run", False)),
         feedback_type=table.get("feedback_type", "love"),
+        reapply_target_drift=_a_bool(label, table, "reapply_target_drift"),
     )
+
+
+def _a_bool(label: str, table: dict[str, Any], key: str) -> bool:
+    """A flag that must be written as a TOML boolean, not a truthy string."""
+    value = table.get(key, False)
+    if not isinstance(value, bool):
+        raise ConfigError(f"{label}: {key} must be true or false")
+    return value
 
 
 def load_relays(path: str | Path = DEFAULT_CONFIG) -> tuple[RelaySpec, ...]:

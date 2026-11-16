@@ -84,6 +84,9 @@ class RelayRequest(BaseModel):
     # reports what it would write; only the write calls are suppressed. It is
     # the same flag the job worker already carries.
     dry_run: bool = False
+    # Write again what the target has since dropped. Off by default: a target's
+    # own edits are left alone unless the relay asks for this.
+    reapply_target_drift: bool = False
 
 
 class TargetResult(BaseModel):

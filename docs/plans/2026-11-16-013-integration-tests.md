@@ -100,8 +100,14 @@ is read to decide *whether a new write is needed*, never to police a write alrea
 Both readings are defensible and they cost differently — re-applying drift means every
 run rewrites what a user changed on three services by hand. The suite pins the current
 behaviour in a test that names the ticket's expectation, so the day either side changes
-it fails loudly. Whether to change the engine is recorded as RR-12's open question, not
-decided here.
+it fails loudly.
+
+**Resolved in [014](2026-11-16-014-reapply-target-drift.md).** The default is unchanged,
+so both tests here still hold and are what they always were: the behaviour of a relay
+that did not ask. A relay may now name `reapply_target_drift`, which re-writes only a
+write the target has *dropped* — never a value the user replaced it with. The cost 013
+feared turned out not to exist: planning already reads the target's state for every
+track in the fetch set, so the check is a flag on data the run already had.
 
 ## Not covered (deferred, with the reason that outlives the deferral)
 

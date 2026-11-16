@@ -149,6 +149,33 @@ def test_a_config_file_cannot_switch_the_mass_undo_guard_off(tmp_path):
         load_relays(path)
 
 
+def test_the_drift_option_comes_from_the_file_or_the_flag(tmp_path):
+    on = load_relays(_write(tmp_path, '[[relay]]\nreapply_target_drift = true\n'))
+    assert [spec.reapply_target_drift for spec in on] == [True]
+
+    flag = cli.build_parser().parse_args(["relay", "--reapply-target-drift"])
+    assert cli.spec_from_args(flag).reapply_target_drift is True
+    assert cli.spec_from_args(cli.build_parser().parse_args(["relay"])).reapply_target_drift is False
+
+
+def test_the_flag_turns_the_option_on_for_every_relay_in_a_run(tmp_path):
+    path = _write(
+        tmp_path,
+        '[[relay]]\nname = "one"\n\n[[relay]]\nname = "two"\nsource = "lastfm"\ntargets = ["plex"]\n',
+    )
+    specs = load_relays(path)
+
+    assert [s.reapply_target_drift for s in cli._select(specs, [], False)] == [False, False]  # pylint: disable=protected-access
+    assert [s.reapply_target_drift for s in cli._select(specs, [], False, reapply_target_drift=True)] == [True, True]  # pylint: disable=protected-access
+
+
+def test_a_non_boolean_drift_option_is_an_error(tmp_path):
+    path = _write(tmp_path, '[[relay]]\nreapply_target_drift = "yes"\n')
+
+    with pytest.raises(ConfigError, match="must be true or false"):
+        load_relays(path)
+
+
 def test_the_direction_reaches_the_spec():
     args = cli.build_parser().parse_args(
         ["relay", "--feedback-type", "hate", "--target", "listenbrainz"]

@@ -133,13 +133,15 @@ class LastFmTarget(MappedTarget):
         async def commit() -> None:
             await self._client.love(artist, title)
 
+        loved = track_key(artist, title) in await self.loved_keys()
         return WritePlan(
             track,
             self.service,
             intent=Intent(IntentKind.LOVE),
             target_key=json.dumps([artist, title]),
             mapped=await self.has_mapping(track),
-            existing=Existing(holds=track_key(artist, title) in await self.loved_keys()),
+            # A love has no value to replace: loved or not is the whole state.
+            existing=Existing(holds=loved, occupied=loved),
             commit=commit,
         )
 

@@ -182,6 +182,7 @@ class ListenBrainzTarget(MappedTarget):
             existing=Existing(
                 holds=held == score,
                 prior=str(held) if held is not None else None,
+                occupied=held is not None,
             ),
             commit=commit,
         )

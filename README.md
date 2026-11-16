@@ -266,6 +266,41 @@ If you really did, run once with `--allow-mass-undo`, or use **Run once and allo
 the undo** on that run's page in the web app. There is no config key for it, so a
 scheduled run never switches the guard off.
 
+### When you edit a target by hand
+
+By default a target is left alone: if you un-love a track on Last.fm after
+RatingRelay loved it there, the next run says it is already synced and your edit
+stands. Normal runs compare what the source wants to what RatingRelay last wrote,
+not to what the target holds now.
+
+`reapply_target_drift = true` turns that around for one relay — its targets stop
+being authoritative, so a write they have since dropped is written again:
+
+```toml
+[[relay]]
+name = "nightly"
+source = "plex"
+targets = ["lastfm", "listenbrainz"]
+reapply_target_drift = true
+```
+
+The web app has the same switch next to **Dry run** when you queue a run, and a
+scheduled relay keeps it. On the command line, `ratingrelay relay
+--reapply-target-drift` asks for it for that one run, and `ratingrelay run
+--reapply-target-drift` for every relay in the file. What it re-applies is
+deliberately narrow:
+
+| the target now | the run |
+| -------------- | ------- |
+| still holds what RatingRelay wrote | does nothing |
+| holds nothing (you un-loved it, or cleared the rating) | writes it again |
+| holds something else (you replaced a love with a hate, or re-rated the Plex copy) | does nothing: that is your choice |
+
+The last row is the same rule as an undo, which never clears a rating you changed
+after RatingRelay wrote it. Re-applying a value over one you chose would fight
+you every run; re-writing a love you removed only puts back what the relay was
+already told to keep.
+
 ### cron
 
 ```cron

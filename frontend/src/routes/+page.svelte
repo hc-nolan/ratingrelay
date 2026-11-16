@@ -377,6 +377,8 @@
 	/** Minutes between runs; 0 means a one-off. */
 	let repeat = $state(0);
 	let dryRun = $state(false);
+	/** Write again what the targets have since dropped, for this relay. */
+	let reapplyDrift = $state(false);
 
 	$effect(() => {
 		if (repeat > 0) dryRun = false;
@@ -395,7 +397,8 @@
 				...buildRelayPayload(),
 				recurring: repeat > 0,
 				interval_minutes: repeat > 0 ? repeat : undefined,
-				dry_run: dryRun
+				dry_run: dryRun,
+				reapply_target_drift: reapplyDrift
 			};
 			const res = await fetch('/api/relay/jobs', {
 				method: 'POST',
@@ -549,6 +552,7 @@
 					<RunDock
 						bind:repeat
 						bind:dryRun
+						bind:reapplyDrift
 						mode={selectedSource === 'reset' ? 'reset' : 'run'}
 						busy={relaying}
 						canRun={canQueue}

@@ -67,11 +67,13 @@ def _job_to_dict(job: Job) -> dict:
         # Through the adapter, not raw JSON, so a job stored in an older shape
         # (a Plex ``comparison``) reads back the way the worker will run it.
         "source_config": _source_adapter.dump_python(
-            _source_adapter.validate_json(job.source_config), mode="json"
+            _source_adapter.validate_json(job.source_config), mode="json", exclude_none=True
         ),
         # Same for targets: an older ListenBrainz target's own direction is gone.
         "targets_config": _targets_adapter.dump_python(
-            _targets_adapter.validate_json(job.targets_config), mode="json"
+            _targets_adapter.validate_json(job.targets_config),
+            mode="json",
+            exclude_none=True,
         ),
         "recurring": job.recurring,
         "interval_minutes": job.interval_minutes,
@@ -132,12 +134,17 @@ async def create_job(
     if not isinstance(body.source, ResetFromConfig):
         relay = adapters.relay_for(body.source)
         for target in body.targets:
-            refusal = pairing_refusal(body.source.service, target.service, relay=relay)
+            refusal = pairing_refusal(
+                adapters.ref_for(body.source), adapters.ref_for(target), relay=relay
+            )
             if refusal:
                 raise HTTPException(status_code=422, detail=refusal)
 
-    source_json = _source_adapter.dump_json(body.source).decode()
-    targets_json = _targets_adapter.dump_json(body.targets).decode()
+    # ``exclude_none`` keeps a config that names no account byte-identical to
+    # what older builds stored, so a queued job is still recognised as the same
+    # relay and an old row still validates.
+    source_json = _source_adapter.dump_json(body.source, exclude_none=True).decode()
+    targets_json = _targets_adapter.dump_json(body.targets, exclude_none=True).decode()
     new_key = _canonical_key(source_json, targets_json)
 
     # Duplicate check — skip entirely if either side is a dry-run job

@@ -95,7 +95,9 @@ async def run_relay(
         raise HTTPException(status_code=400, detail="Unknown source service")
     relay = adapters.relay_for(source)
     for target in body.targets:
-        refusal = pairing_refusal(source.service, target.service, relay=relay)
+        refusal = pairing_refusal(
+            adapters.ref_for(source), adapters.ref_for(target), relay=relay
+        )
         if refusal:
             raise HTTPException(status_code=422, detail=refusal)
 

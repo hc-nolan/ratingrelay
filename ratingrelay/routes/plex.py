@@ -1,5 +1,5 @@
 import asyncio
-from typing import Callable, TypeVar
+from typing import Callable, Optional, TypeVar
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
@@ -26,6 +26,7 @@ from ratingrelay.core.session import (
 from ratingrelay.core.thread import run_sync
 from ratingrelay.db import get_async_session
 from ratingrelay.db.credentials import delete_credential, get_credential, upsert_credential
+from ratingrelay.engine.refs import account_ref, is_primary
 from ratingrelay.schemas.plex import (
     PlexAuthInitResponse,
     PlexSelectServerRequest,
@@ -110,24 +111,30 @@ async def _get_token(db: AsyncSession) -> str | None:
 
 @router.get("/auth/status", response_model=PlexStatusResponse)
 async def plex_auth_status(
+    account: Optional[str] = None,
     db: AsyncSession = Depends(get_async_session),
 ) -> PlexStatusResponse:
     """
-    Return the current Plex auth status.
+    Return the current Plex auth status for one account.
 
-    Settings token takes precedence over DB (dev override).
+    ``account`` names a second server of the same Plex account; leaving it out
+    asks about the primary one. The settings token is a dev override for the
+    primary only — an environment variable cannot name a second server.
     """
-    cred = await get_credential(db, "plex")
-    token = settings.plex_token or (cred.token if cred else None)
+    ref = account_ref("plex", account)
+    cred = await get_credential(db, ref)
+    token = (settings.plex_token if is_primary(ref) else None) or (
+        cred.token if cred else None
+    )
 
     if not token:
         return PlexStatusResponse(status="needs-auth")
 
     try:
-        account = await run_sync(lambda: MyPlexAccount(token=token))
+        plex_account = await run_sync(lambda: MyPlexAccount(token=token))
         return PlexStatusResponse(
             status="connected",
-            username=account.username,
+            username=plex_account.username,
             server_name=cred.plex_server_name if cred else None,
             server_url=cred.plex_server_url if cred else None,
         )
@@ -139,18 +146,22 @@ async def plex_auth_status(
 @router.delete("/auth", response_model=PlexStatusResponse)
 async def plex_disconnect(
     response: Response,
+    account: Optional[str] = None,
     db: AsyncSession = Depends(get_async_session),
 ) -> PlexStatusResponse:
-    """Forget the Plex account, and the login that was built on it.
+    """Forget one Plex account, and — for the primary — the login built on it.
 
     The session cookie is signed with the owner's Plex token, so without that
     token there is nothing to verify it against: the app returns to the open
-    state a fresh install starts in. The UI warns before calling this.
+    state a fresh install starts in. Removing a *second* server is not that: the
+    primary server and the login stay exactly where they were.
     """
-    if await delete_credential(db, "plex"):
-        logger.info("Plex credentials removed")
-    response.delete_cookie(SESSION_COOKIE)
-    return await plex_auth_status(db)
+    ref = account_ref("plex", account)
+    if await delete_credential(db, ref):
+        logger.info("Plex credentials removed (%s)", ref)
+    if is_primary(ref):
+        response.delete_cookie(SESSION_COOKIE)
+    return await plex_auth_status(account=account, db=db)
 
 
 @router.post("/auth/init", response_model=PlexAuthInitResponse)
@@ -296,17 +307,23 @@ async def plex_select_server(
     body: PlexSelectServerRequest,
     db: AsyncSession = Depends(get_async_session),
 ) -> PlexStatusResponse:
-    """Connect to the named Plex server and store its URL."""
-    cred = await get_credential(db, "plex")
-    token = settings.plex_token or (cred.token if cred else None)
+    """Connect to the named Plex server and store its URL.
+
+    A second server is a second *account of Plex* as far as this app is
+    concerned: same login, same token, its own library. It is what makes
+    ``plex`` → ``plex:attic`` a relay.
+    """
+    ref = account_ref("plex", body.account)
+    owner = await get_credential(db, "plex")
+    token = await _get_token(db)
 
     if not token:
         raise HTTPException(status_code=401, detail="Plex not authenticated")
 
     try:
-        account = await run_sync(lambda: MyPlexAccount(token=token))
+        plex_account = await run_sync(lambda: MyPlexAccount(token=token))
         server: PlexServer = await run_sync(
-            lambda: account.resource(body.name).connect()
+            lambda: plex_account.resource(body.name).connect()
         )
     except Exception as exc:
         logger.error("Failed to connect to Plex server '%s': %s", body.name, exc)
@@ -315,14 +332,20 @@ async def plex_select_server(
             detail=f"Could not connect to server '{body.name}': {exc}",
         ) from exc
 
-    cred = await upsert_credential(
-        db,
-        "plex",
-        token=token,
-        username=cred.username if cred else None,
-        plex_server_url=server._baseurl,
-        plex_server_name=body.name,
+    existing = await get_credential(db, ref)
+    fields: dict = {
+        "token": token,
+        "plex_server_url": server._baseurl,
+        "plex_server_name": body.name,
+    }
+    username = (existing.username if existing else None) or (
+        owner.username if owner else None
     )
+    if username:
+        fields["username"] = username
+    if body.label:
+        fields["label"] = body.label
+    cred = await upsert_credential(db, ref, **fields)
 
     return PlexStatusResponse(
         status="connected",

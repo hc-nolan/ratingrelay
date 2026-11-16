@@ -25,6 +25,7 @@ from ratingrelay.engine.services.listenbrainz import ListenBrainzTarget
 from ratingrelay.engine.services.musicbrainz import Resolution
 from ratingrelay.engine.services.plex import PlexTarget
 from ratingrelay.engine.store import NullProgress
+from ratingrelay.engine.types import RunReport, TargetReport
 
 
 class FakePlexLibrary:
@@ -43,6 +44,13 @@ class FakePlexLibrary:
             raise RuntimeError(self._fail_with)
         self.writes.append((external_id, rating))
 
+    async def current_rating(self, external_id: str) -> Optional[float]:
+        rating = next((c.rating for c in self._candidates if c.external_id == external_id), None)
+        for key, written in self.writes:
+            if key == external_id:
+                rating = written
+        return rating
+
 
 class FakeLastFmClient:
     def __init__(self):
@@ -51,6 +59,9 @@ class FakeLastFmClient:
     async def love(self, artist: str, title: str) -> None:
         self.loves.append((artist, title))
 
+    async def loved(self) -> list:
+        return []
+
 
 class FakeListenBrainzClient:
     def __init__(self):
@@ -58,6 +69,9 @@ class FakeListenBrainzClient:
 
     async def submit(self, score: int, mbid: str) -> None:
         self.submissions.append((score, mbid))
+
+    async def feedback(self, score: int) -> list:
+        return []
 
 
 class CollectingProgress:
@@ -417,3 +431,20 @@ async def test_plex_target_and_engine_agree_on_the_tier():
     assert direct.matched
     assert report.outcomes[0].status is OutcomeStatus.WRITTEN
     assert library.writes == [("1", 10.0)]
+
+
+def test_one_failure_among_many_converged_tracks_is_partial():
+    """Skipped means already converged: that run did its job for 503 of 504."""
+    report = RunReport(
+        source="plex",
+        tracks_fetched=504,
+        targets=(TargetReport(target="lastfm", written=0, skipped=500, unmatched=0, failed=1, reverted=3),),
+    )
+    assert report.status == "partial"
+
+    nothing = RunReport(
+        source="plex",
+        tracks_fetched=1,
+        targets=(TargetReport(target="lastfm", written=0, skipped=0, unmatched=0, failed=1, reverted=0),),
+    )
+    assert nothing.status == "failed"

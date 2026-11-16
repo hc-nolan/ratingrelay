@@ -9,7 +9,7 @@ and later against a CLI's own storage.
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ratingrelay.engine.store import SyncedTrack, TrackMapping
@@ -18,49 +18,113 @@ from ratingrelay.models.mbids import TrackMbid
 from ratingrelay.models.sync import SyncRecord
 
 
-class SqlSyncStore:
-    """What this tool has written, in the ``syncrecord`` table."""
+# A row written before relays were told apart. See ``SyncRecord.relay``.
+UNCLAIMED = ""
 
-    def __init__(self, db: AsyncSession):
+
+def _synced(row: SyncRecord) -> SyncedTrack:
+    return SyncedTrack(
+        key=row.normalized_key,
+        recording_mbid=row.recording_mbid,
+        intent=row.intent,
+        rating=row.rating,
+        target_key=row.target_key,
+        prior=row.prior,
+    )
+
+
+class SqlSyncStore:
+    """What this tool has written, in the ``syncrecord`` table.
+
+    A store is scoped to one *relay* (the direction its source reads): two
+    relays on the same source → target pair keep separate records, so neither
+    reconciles against — and undoes — the other's writes. The unscoped store
+    (``relay=None``) is for the readers that span relays: reset and the queue.
+    """
+
+    def __init__(
+        self, db: AsyncSession, relay: Optional[str] = None, *, read_only: bool = False
+    ):
         self._db = db
+        self._relay = relay
+        # A dry run's store: it sees what a real run would see, and changes nothing.
+        self._read_only = read_only
+
+    @property
+    def relay(self) -> str:
+        if self._relay is None:
+            raise ValueError("This sync store is not scoped to a relay, so it cannot write")
+        return self._relay
 
     async def load(self, source_service: str, target_service: str) -> dict[str, SyncedTrack]:
+        """This relay's records for the pair, claiming any unclaimed ones first.
+
+        Unclaimed rows predate the relay column; nothing says which relay wrote
+        them, so the first relay to run on the pair adopts them. For the usual
+        case — one relay per pair — that is exactly right. Where there were two,
+        the mass-undo guard stands between the adoption and a large revert.
+
+        Adopting is a write, so a read-only (dry-run) store only *shows* the
+        adoption: unclaimed rows are returned as if claimed, and left unclaimed
+        for the real run to decide. Where a key has both, the claimed row wins,
+        as it would after the real run's UPDATE.
+        """
+        relay = self.relay
+        if self._read_only:
+            result = await self._db.execute(
+                select(SyncRecord)
+                .where(SyncRecord.source_service == source_service)
+                .where(SyncRecord.target_service == target_service)
+                .where(or_(SyncRecord.relay == relay, SyncRecord.relay == UNCLAIMED))
+                .order_by(SyncRecord.relay == relay)
+            )
+            return {row.normalized_key: _synced(row) for row in result.scalars().all()}
+        await self._db.execute(
+            update(SyncRecord)
+            .where(SyncRecord.source_service == source_service)
+            .where(SyncRecord.target_service == target_service)
+            .where(SyncRecord.relay == UNCLAIMED)
+            .values(relay=relay)
+        )
+        await self._db.commit()
         result = await self._db.execute(
             select(SyncRecord)
             .where(SyncRecord.source_service == source_service)
             .where(SyncRecord.target_service == target_service)
+            .where(SyncRecord.relay == relay)
         )
-        return {
-            row.normalized_key: SyncedTrack(
-                key=row.normalized_key,
-                recording_mbid=row.recording_mbid,
-                intent=row.intent,
-                rating=row.rating,
-                target_key=row.target_key,
-            )
-            for row in result.scalars().all()
-        }
+        return {row.normalized_key: _synced(row) for row in result.scalars().all()}
 
     async def remember(
         self, source_service: str, target_service: str, synced: SyncedTrack
     ) -> None:
         """Upsert: the latest write for a key replaces what the row said before."""
-        await self._delete_key(source_service, target_service, synced.key)
+        relay = self.relay
+        await self._delete_key(source_service, target_service, synced.key, relay)
         self._db.add(
             SyncRecord(
                 source_service=source_service,
                 target_service=target_service,
+                relay=relay,
                 normalized_key=synced.key,
                 recording_mbid=synced.recording_mbid,
                 intent=synced.intent,
                 rating=synced.rating,
                 target_key=synced.target_key,
+                prior=synced.prior,
             )
         )
         await self._db.commit()
 
     async def forget(self, source_service: str, target_service: str, key: str) -> None:
-        await self._delete_key(source_service, target_service, key)
+        await self._delete_key(source_service, target_service, key, self.relay)
+        await self._db.commit()
+
+    async def forget_record(
+        self, source_service: str, relay: str, target_service: str, key: str
+    ) -> None:
+        """Forget one row by its full address, whichever relay wrote it (reset)."""
+        await self._delete_key(source_service, target_service, key, relay)
         await self._db.commit()
 
     async def forget_target(self, target_service: str) -> None:
@@ -72,27 +136,17 @@ class SqlSyncStore:
 
     async def records_for_target(
         self, target_service: str
-    ) -> list[tuple[str, SyncedTrack]]:
-        """Every record for a target, paired with the source that produced it.
+    ) -> list[tuple[str, str, SyncedTrack]]:
+        """Every record for a target, with the source and relay that produced it.
 
         Reset needs this shape: it undoes per record (whatever the source was)
-        and then forgets it under the pair the row was written with.
+        and then forgets it under the address the row was written with.
         """
         result = await self._db.execute(
             select(SyncRecord).where(SyncRecord.target_service == target_service)
         )
         return [
-            (
-                row.source_service,
-                SyncedTrack(
-                    key=row.normalized_key,
-                    recording_mbid=row.recording_mbid,
-                    intent=row.intent,
-                    rating=row.rating,
-                    target_key=row.target_key,
-                ),
-            )
-            for row in result.scalars().all()
+            (row.source_service, row.relay, _synced(row)) for row in result.scalars().all()
         ]
 
     async def all_records(self) -> list[tuple[str, SyncedTrack]]:
@@ -103,27 +157,16 @@ class SqlSyncStore:
         spelled as SQL here.
         """
         result = await self._db.execute(select(SyncRecord))
-        return [
-            (
-                row.target_service,
-                SyncedTrack(
-                    key=row.normalized_key,
-                    recording_mbid=row.recording_mbid,
-                    intent=row.intent,
-                    rating=row.rating,
-                    target_key=row.target_key,
-                ),
-            )
-            for row in result.scalars().all()
-        ]
+        return [(row.target_service, _synced(row)) for row in result.scalars().all()]
 
     async def _delete_key(
-        self, source_service: str, target_service: str, key: str
+        self, source_service: str, target_service: str, key: str, relay: str
     ) -> None:
         await self._db.execute(
             delete(SyncRecord)
             .where(SyncRecord.source_service == source_service)
             .where(SyncRecord.target_service == target_service)
+            .where(SyncRecord.relay == relay)
             .where(SyncRecord.normalized_key == key)
         )
 

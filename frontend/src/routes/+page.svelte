@@ -11,14 +11,15 @@
 	import type { JobData } from '$lib/types/jobs';
 	import type {
 		ListenBrainzSourceConfig,
-		ListenBrainzTargetConfig,
 		PlexSourceConfig,
-		PlexTargetConfig,
+		PlexThresholds,
 		SourceId,
 		SourceOption,
 		TargetOption
 	} from '$lib/types/relay';
 	import SourceNode from '$lib/components/flow/SourceNode.svelte';
+	import FlowNode from '$lib/components/flow/FlowNode.svelte';
+	import RatingNode from '$lib/components/flow/RatingNode.svelte';
 	import TargetNode from '$lib/components/flow/TargetNode.svelte';
 	import FlowLink from '$lib/components/flow/FlowLink.svelte';
 	import RunDock from '$lib/components/flow/RunDock.svelte';
@@ -224,14 +225,12 @@
 	let selectedSource = $state<SourceId>('plex');
 	let resetTargetService = $state<SourceId>('plex');
 
-	let plexSourceConfig = $state<PlexSourceConfig>({ ratingThreshold: 8, comparison: 'gte' });
+	let plexSourceConfig = $state<PlexSourceConfig>({ feedbackType: 'love' });
 	let lbzSourceConfig = $state<ListenBrainzSourceConfig>({ feedbackType: 'love' });
 
 	let plexTargetEnabled = $state(false);
-	let plexTargetConfig = $state<PlexTargetConfig>({ rating: 10 });
 	let lastfmTargetEnabled = $state(false);
 	let lbzTargetEnabled = $state(false);
-	let lbzTargetConfig = $state<ListenBrainzTargetConfig>({ feedbackType: 'love' });
 
 	/** Whether the ghost list under the last node is showing. */
 
@@ -253,7 +252,7 @@
 	const targetCatalog: TargetOption[] = [
 		{ id: 'plex', name: 'Plex', hint: 'rate the library' },
 		{ id: 'lastfm', name: 'Last.fm', hint: 'love the track' },
-		{ id: 'listenbrainz', name: 'ListenBrainz', hint: 'love or hate' }
+		{ id: 'listenbrainz', name: 'ListenBrainz', hint: 'love or hate, per the rating' }
 	];
 
 	function isAllocated(id: string): boolean {
@@ -268,10 +267,24 @@
 		else lbzTargetEnabled = on;
 	}
 
-	/** Targets the flow may offer: connected, and never the source itself. */
+	/** Loves or hates: what the source reads, so what a Plex target writes. Mirrors relay_identity. */
+	let relayDirection = $derived<'love' | 'hate'>(
+		selectedSource === 'plex'
+			? plexSourceConfig.feedbackType
+			: selectedSource === 'listenbrainz'
+				? lbzSourceConfig.feedbackType
+				: 'love'
+	);
+
+	/**
+	 * Targets the flow may offer: connected, never the source itself, and never
+	 * Last.fm for a hate relay (it has no hate, so it would love them). Mirrors
+	 * unsupported_target.
+	 */
 	const availableTargets = $derived(
 		targetCatalog.filter((t) => {
 			if (t.id === selectedSource) return false;
+			if (t.id === 'lastfm' && relayDirection === 'hate') return false;
 			if (t.id === 'plex') return plex.status === 'connected' && !!plex.server_name;
 			if (t.id === 'lastfm') return lastfm.status === 'connected';
 			return listenbrainz.status === 'connected';
@@ -298,9 +311,31 @@
 			resetTargetService = resetOptions[0].id;
 		}
 		for (const id of ['plex', 'lastfm', 'listenbrainz']) {
-			if (id === selectedSource && isAllocated(id)) setAllocated(id, false);
+			if (isAllocated(id) && !availableTargets.some((t) => t.id === id)) {
+				setAllocated(id, false);
+			}
 		}
 	});
+
+	/** Shared by every relay; the Rating box saves changes back into it. */
+	let thresholds = $state<PlexThresholds | null>(untrack(() => data.thresholds));
+
+	let plexWrite = $derived({
+		rating: thresholds
+			? relayDirection === 'love'
+				? thresholds.love_threshold
+				: thresholds.hate_threshold
+			: null
+	});
+
+	/** The direction toggle belongs to the source; Last.fm has only loves. */
+	let directionConfig = $derived(
+		selectedSource === 'plex'
+			? plexSourceConfig
+			: selectedSource === 'listenbrainz'
+				? lbzSourceConfig
+				: null
+	);
 
 	let canRelay = $derived(
 		!relaying &&
@@ -310,11 +345,7 @@
 	function buildRelayPayload() {
 		let source: object;
 		if (selectedSource === 'plex') {
-			source = {
-				service: 'plex',
-				rating_threshold: plexSourceConfig.ratingThreshold,
-				comparison: plexSourceConfig.comparison
-			};
+			source = { service: 'plex', feedback_type: plexSourceConfig.feedbackType };
 		} else if (selectedSource === 'lastfm') {
 			source = { service: 'lastfm' };
 		} else if (selectedSource === 'listenbrainz') {
@@ -329,13 +360,13 @@
 
 		const targets: object[] = [];
 		if (plexTargetEnabled && plex.status === 'connected' && plex.server_name) {
-			targets.push({ service: 'plex', rating: plexTargetConfig.rating });
+			targets.push({ service: 'plex' });
 		}
 		if (lastfmTargetEnabled && lastfm.status === 'connected') {
 			targets.push({ service: 'lastfm' });
 		}
 		if (lbzTargetEnabled && listenbrainz.status === 'connected') {
-			targets.push({ service: 'listenbrainz', feedback_type: lbzTargetConfig.feedbackType });
+			targets.push({ service: 'listenbrainz' });
 		}
 
 		return { source, targets };
@@ -346,6 +377,8 @@
 	/** Minutes between runs; 0 means a one-off. */
 	let repeat = $state(0);
 	let dryRun = $state(false);
+	/** Write again what the targets have since dropped, for this relay. */
+	let reapplyDrift = $state(false);
 
 	$effect(() => {
 		if (repeat > 0) dryRun = false;
@@ -364,7 +397,8 @@
 				...buildRelayPayload(),
 				recurring: repeat > 0,
 				interval_minutes: repeat > 0 ? repeat : undefined,
-				dry_run: dryRun
+				dry_run: dryRun,
+				reapply_target_drift: reapplyDrift
 			};
 			const res = await fetch('/api/relay/jobs', {
 				method: 'POST',
@@ -471,8 +505,6 @@
 					<SourceNode
 						options={sourceOptions}
 						bind:selected={selectedSource}
-						plexConfig={plexSourceConfig}
-						lbzConfig={lbzSourceConfig}
 						bind:resetService={resetTargetService}
 						{resetOptions}
 					/>
@@ -480,31 +512,39 @@
 					{#if selectedSource !== 'reset'}
 						<FlowLink />
 
-						<p class="eyebrow mx-auto mb-3 w-fit bg-background px-2 text-center">To</p>
+						<RatingNode
+							config={directionConfig}
+							bind:thresholds
+							plexInvolved={selectedSource === 'plex' || isAllocated('plex')}
+						/>
 
-						<!-- Every target keeps its card and its place. Picking one switches
+						<FlowLink />
+
+						<FlowNode label="Destination" tone="target">
+							<!-- Every target keeps its card and its place. Picking one switches
 						     that card on; it does not move the row around underneath you.
 						     A lone configured target sits centred, at the width it would have
 						     beside a second one, so the row never reads as half-empty. -->
-						<div
-							class={cn(
-								'grid gap-2',
-								availableTargets.length > 1
-									? 'sm:grid-cols-2'
-									: 'sm:mx-auto sm:w-[calc(50%-0.25rem)]'
-							)}
-						>
-							{#each availableTargets as target (target.id)}
-								<TargetNode
-									option={target}
-									allocated={isAllocated(target.id)}
-									onadd={() => setAllocated(target.id, true)}
-									onremove={() => setAllocated(target.id, false)}
-									plexConfig={target.id === 'plex' ? plexTargetConfig : undefined}
-									lbzConfig={target.id === 'listenbrainz' ? lbzTargetConfig : undefined}
-								/>
-							{/each}
-						</div>
+							<div
+								class={cn(
+									'grid gap-2',
+									availableTargets.length > 1
+										? 'sm:grid-cols-2'
+										: 'sm:mx-auto sm:w-[calc(50%-0.25rem)]'
+								)}
+							>
+								{#each availableTargets as target (target.id)}
+									<TargetNode
+										option={target}
+										allocated={isAllocated(target.id)}
+										onadd={() => setAllocated(target.id, true)}
+										onremove={() => setAllocated(target.id, false)}
+										plexWrite={target.id === 'plex' ? plexWrite : undefined}
+										direction={relayDirection}
+									/>
+								{/each}
+							</div>
+						</FlowNode>
 					{/if}
 
 					<FlowLink />
@@ -512,6 +552,7 @@
 					<RunDock
 						bind:repeat
 						bind:dryRun
+						bind:reapplyDrift
 						mode={selectedSource === 'reset' ? 'reset' : 'run'}
 						busy={relaying}
 						canRun={canQueue}

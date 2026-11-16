@@ -15,7 +15,7 @@ from sqlmodel import SQLModel
 from ratingrelay.core import worker
 from ratingrelay.models.jobs import Job, TrackEvent
 
-SOURCE = json.dumps({"service": "plex", "rating_threshold": 8, "comparison": "gte"})
+SOURCE = json.dumps({"service": "plex", "feedback_type": "love"})
 TARGETS = json.dumps([{"service": "lastfm"}])
 
 
@@ -53,7 +53,7 @@ async def test_a_cancel_request_stops_the_run_at_a_track_boundary(monkeypatch, f
     job_id = await _queue_job(factory)
     seen: list[int] = []
 
-    async def fake_execute(db, source, targets, on_fetch_complete, on_track, dry_run):
+    async def fake_execute(db, source, targets, on_fetch_complete, on_track, dry_run, **_):
         await on_fetch_complete(5)
         for n in range(1, 6):
             seen.append(n)
@@ -104,7 +104,7 @@ async def test_a_cancel_requested_before_the_fetch_stops_without_writing(monkeyp
 
     written: list[int] = []
 
-    async def fake_execute(db, source, targets, on_fetch_complete, on_track, dry_run):
+    async def fake_execute(db, source, targets, on_fetch_complete, on_track, dry_run, **_):
         await on_fetch_complete(3)
         written.append(1)  # unreachable
         return {"results": []}
@@ -147,3 +147,26 @@ async def test_a_stale_running_job_with_a_cancel_request_does_not_resume(monkeyp
     job = await _get_job(factory, job_id)
     assert job.status == "cancelled"
     assert job.completed_at is not None
+
+
+async def test_a_cancelled_job_is_not_claimed_by_the_worker(monkeypatch, factory):
+    """A cancel landing just before the claim used to be overwritten by 'running'."""
+    job_id = await _queue_job(factory)
+    async with factory() as db:
+        row = await db.get(Job, job_id)
+        row.status = "cancelled"
+        db.add(row)
+        await db.commit()
+
+    async def must_not_run(*_args, **_kwargs):
+        raise AssertionError("a cancelled job ran")
+
+    monkeypatch.setattr(worker, "session_maker", factory)
+    monkeypatch.setattr(worker, "execute_relay", must_not_run)
+
+    await worker.run_job(job_id)
+
+    job = await _get_job(factory, job_id)
+    assert job.status == "cancelled"
+    assert job.started_at is None
+

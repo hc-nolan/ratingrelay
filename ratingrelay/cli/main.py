@@ -95,28 +95,11 @@ def _add_relay_flags(parser: argparse.ArgumentParser) -> None:
         help="where they go; repeat for more than one (default: lastfm)",
     )
     parser.add_argument(
-        "--rating-threshold",
-        type=float,
-        default=8.0,
-        help="Plex source: the rating a track needs (default: 8)",
-    )
-    parser.add_argument(
-        "--comparison",
-        choices=("gte", "lte"),
-        default="gte",
-        help="Plex source: at least (gte) or at most (lte) the threshold",
-    )
-    parser.add_argument(
         "--feedback-type",
         choices=("love", "hate"),
         default="love",
-        help="Last.fm/ListenBrainz: which feedback to relay (default: love)",
-    )
-    parser.add_argument(
-        "--plex-rating",
-        type=float,
-        default=10.0,
-        help="Plex target: the rating to write (default: 10)",
+        help="relay loves or hates (default: love). Plex reads and writes the "
+        "love/hate thresholds set in the web app or LOVE_THRESHOLD / HATE_THRESHOLD",
     )
     _add_run_flags(parser)
 
@@ -126,6 +109,18 @@ def _add_run_flags(parser: argparse.ArgumentParser) -> None:
         "--dry-run",
         action="store_true",
         help="fetch, match and reconcile for real; write nothing",
+    )
+    parser.add_argument(
+        "--allow-mass-undo",
+        action="store_true",
+        help="undo even when most of a target's recorded writes were withdrawn "
+        "(refused by default: that is usually a source that answered short)",
+    )
+    parser.add_argument(
+        "--reapply-target-drift",
+        action="store_true",
+        help="write again what the target has since dropped, for every relay in "
+        "this run (a target's own edits are otherwise left alone)",
     )
     parser.add_argument(
         "--json", action="store_true", help="print a machine-readable report"
@@ -143,10 +138,9 @@ def spec_from_args(args: argparse.Namespace) -> RelaySpec:
         source=args.source,
         targets=tuple(args.targets) or ("lastfm",),
         dry_run=getattr(args, "dry_run", False),
-        rating_threshold=args.rating_threshold,
-        comparison=args.comparison,
+        reapply_target_drift=getattr(args, "reapply_target_drift", False),
+        allow_mass_undo=args.allow_mass_undo,
         feedback_type=args.feedback_type,
-        plex_rating=args.plex_rating,
     )
 
 
@@ -173,22 +167,13 @@ async def run_relay(
 
     async with session_factory() as db:
         source = await source_for_service(
-            db,
-            spec.source,
-            rating_threshold=spec.rating_threshold,
-            comparison=spec.comparison,
-            feedback_type=spec.feedback_type,
+            db, spec.source, feedback_type=spec.feedback_type
         )
         targets = [
-            await target_for_service(
-                db,
-                name,
-                plex_rating=spec.plex_rating,
-                feedback_type=spec.feedback_type,
-            )
+            await target_for_service(db, name, relay=spec.relay)
             for name in spec.targets
         ]
-        sync_store, _ = stores(db)
+        sync_store, _ = stores(db, spec.relay, dry_run=spec.dry_run)
         logger.info("Starting relay %s: %s", spec.name, spec.summary)
         report = await pipeline.run(
             source,
@@ -196,6 +181,8 @@ async def run_relay(
             sync_store=sync_store,
             progress=progress if progress is not None else pipeline.NO_PROGRESS,
             dry_run=spec.dry_run,
+            allow_mass_undo=spec.allow_mass_undo,
+            reapply_drift=spec.reapply_target_drift,
         )
         logger.info("Relay %s finished: %s", spec.name, report.status)
         return report
@@ -313,7 +300,13 @@ def main(
         if args.command == "relay":
             specs = (spec_from_args(args),)
         else:
-            specs = _select(load_relays(args.config), args.only, args.dry_run)
+            specs = _select(
+                load_relays(args.config),
+                args.only,
+                args.dry_run,
+                args.allow_mass_undo,
+                args.reapply_target_drift,
+            )
     except ConfigError as exc:
         print(f"{PROGRAM}: {exc}", file=err)
         return EXIT_FAILED
@@ -335,9 +328,13 @@ def main(
 
 
 def _select(
-    specs: Sequence[RelaySpec], only: Sequence[str], dry_run: bool
+    specs: Sequence[RelaySpec],
+    only: Sequence[str],
+    dry_run: bool,
+    allow_mass_undo: bool = False,
+    reapply_target_drift: bool = False,
 ) -> tuple[RelaySpec, ...]:
-    """The relays to run, with ``--only`` and ``--dry-run`` applied."""
+    """The relays to run, with ``--only`` and the run-wide flags applied."""
     chosen = tuple(specs)
     if only:
         known = {spec.name for spec in specs}
@@ -350,6 +347,10 @@ def _select(
         chosen = tuple(spec for spec in specs if spec.name in only)
     if dry_run:
         chosen = tuple(replace(spec, dry_run=True) for spec in chosen)
+    if allow_mass_undo:
+        chosen = tuple(replace(spec, allow_mass_undo=True) for spec in chosen)
+    if reapply_target_drift:
+        chosen = tuple(replace(spec, reapply_target_drift=True) for spec in chosen)
     return chosen
 
 

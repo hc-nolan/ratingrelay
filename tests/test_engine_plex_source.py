@@ -5,12 +5,15 @@ large library it is the slowest part of a run. These tests pin the request that
 replaces it, and the guard that keeps a surprising server from widening it.
 """
 
+import json
 from dataclasses import dataclass, field
 
 import pytest
+from plexapi.exceptions import BadRequest
 
+from ratingrelay.engine import MemoryMappingStore, MemorySyncStore, OutcomeStatus, SyncedTrack, pipeline
 from ratingrelay.engine.credentials import PlexCredentials
-from ratingrelay.engine.services.plex import PlexLibrary, PlexSource
+from ratingrelay.engine.services.plex import PlexLibrary, PlexSource, PlexTarget
 
 CREDS = PlexCredentials(server_url="http://plex.invalid:32400", token="tok", library="Music")
 
@@ -35,7 +38,7 @@ class FakeSection:
     def searchTracks(self, **filters):
         self.calls.append(filters)
         if filters and self._reject:
-            raise ValueError("bad filter")
+            raise BadRequest("bad filter")
         if not filters:
             return list(self._tracks)
         (field_name, value), = filters.items()
@@ -126,3 +129,61 @@ async def test_unknown_comparison_is_rejected_before_a_query():
         await _library(section).rated(8.0, "around")
 
     assert section.calls == []
+
+
+async def test_plex_target_lists_the_library_once_per_run():
+    """Planning every source track against Plex must not re-download the library."""
+    from ratingrelay.engine.services.plex import PlexTarget
+    from ratingrelay.engine.store import MemoryMappingStore
+    from ratingrelay.engine.types import Track
+
+    section = FakeSection(
+        [FakePlexTrack(f"Song {n}", ratingKey=str(n)) for n in range(5)]
+    )
+    target = PlexTarget(_library(section), MemoryMappingStore())
+
+    for n in range(5):
+        await target.plan(Track(artist="Artist", title=f"Song {n}"))
+
+    assert section.calls == [{}]
+
+
+async def test_un_rating_a_track_that_left_the_library_is_a_no_op():
+    """Its rating went with it; failing would keep the record, and every run
+    partial, forever."""
+    library = PlexLibrary(CREDS)
+    library._tracks = {}  # pylint: disable=protected-access
+
+    await library.rate("123", None)
+
+    with pytest.raises(KeyError):
+        await library.rate("123", 10.0)
+
+
+async def test_a_withdrawn_rating_on_a_vanished_track_is_forgotten():
+    library = PlexLibrary(CREDS)
+    library._tracks = {}  # pylint: disable=protected-access
+    record = SyncedTrack(key="a||b", intent="rating:10.0", target_key=json.dumps(["123"]))
+    store = MemorySyncStore({("lastfm", "plex"): {"a||b": record}})
+
+    report = await pipeline.run_tracks(
+        [], [PlexTarget(library, MemoryMappingStore())], source_service="lastfm", sync_store=store
+    )
+
+    assert report.outcomes[0].status is OutcomeStatus.REVERTED
+    assert not store.records[("lastfm", "plex")]
+
+
+async def test_a_dropped_connection_is_not_mistaken_for_a_rejected_filter():
+    """Falling back would quietly fetch the whole library; a blip must surface."""
+
+    class DroppingSection(FakeSection):
+        def searchTracks(self, **filters):
+            self.calls.append(filters)
+            raise ConnectionResetError("reset by peer")
+
+    section = DroppingSection([FakePlexTrack("High", 9.5)])
+
+    with pytest.raises(ConnectionResetError):
+        await _library(section).rated(8.0, "gte")
+    assert section.calls == [{"userRating>>=": 8.0}]

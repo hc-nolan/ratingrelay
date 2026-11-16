@@ -22,20 +22,24 @@ DEFAULT_CONFIG = "relays.toml"
 
 SOURCE_SERVICES = ("plex", "lastfm", "listenbrainz")
 TARGET_SERVICES = ("plex", "lastfm", "listenbrainz")
-COMPARISONS = ("gte", "lte")
 FEEDBACK_TYPES = ("love", "hate")
-
-_OPINIONATED_KEYS = ("rating_threshold", "comparison", "feedback_type", "plex_rating")
 
 _KNOWN_KEYS = {
     "name",
     "source",
     "targets",
     "dry_run",
-    "rating_threshold",
-    "comparison",
     "feedback_type",
-    "plex_rating",
+    "reapply_target_drift",
+}
+
+# Keys earlier v3 builds accepted. The Plex ratings are settings now, shared by
+# every relay, so a file still naming them is told where they went instead of
+# getting a bare "unknown key".
+_MOVED_KEYS = {
+    "rating_threshold": "set the love/hate thresholds in the web app or settings",
+    "plex_rating": "a Plex target writes the shared love/hate thresholds",
+    "comparison": 'use feedback_type = "love" or "hate"',
 }
 
 
@@ -44,7 +48,7 @@ class ConfigError(ValueError):
 
 
 @dataclass(frozen=True)
-class RelaySpec:  # pylint: disable=too-many-instance-attributes
+class RelaySpec:
     """One relay: fetch from ``source``, write the same state to every target.
 
     One field per key a ``relays.toml`` table may hold, deliberately flat: the
@@ -54,13 +58,17 @@ class RelaySpec:  # pylint: disable=too-many-instance-attributes
     source: str = "plex"
     targets: tuple[str, ...] = ("lastfm",)
     dry_run: bool = False
-    # Plex as a source.
-    rating_threshold: float = 8.0
-    comparison: str = "gte"
-    # Last.fm / ListenBrainz feedback, as a source or a target.
+    # The direction: which Plex/ListenBrainz ratings a source reads, and which
+    # feedback a ListenBrainz target writes. The Plex ratings that mean love and
+    # hate are the shared thresholds (web app, or pinned in settings).
     feedback_type: str = "love"
-    # Plex as a target.
-    plex_rating: float = 10.0
+    # Write again what the target has since dropped, for this relay only. A
+    # policy rather than a one-run override, so unlike ``allow_mass_undo`` it
+    # may be set in the file (see ``engine.pipeline._drifted`` for what counts).
+    reapply_target_drift: bool = False
+    # Only ever set from the command line, never from relays.toml: a file key
+    # would switch the guard off for every unattended run after this one.
+    allow_mass_undo: bool = False
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -82,18 +90,30 @@ class RelaySpec:  # pylint: disable=too-many-instance-attributes
                 raise ConfigError(
                     f"{self.name}: {target!r} is both the source and a target"
                 )
-        if self.comparison not in COMPARISONS:
-            raise ConfigError(
-                f"{self.name}: comparison must be one of {', '.join(COMPARISONS)}"
-            )
         if self.feedback_type not in FEEDBACK_TYPES:
             raise ConfigError(
                 f"{self.name}: feedback_type must be one of {', '.join(FEEDBACK_TYPES)}"
             )
-        if not 1.0 <= self.rating_threshold <= 10.0:
-            raise ConfigError(f"{self.name}: rating_threshold must be between 1 and 10")
-        if not 1.0 <= self.plex_rating <= 10.0:
-            raise ConfigError(f"{self.name}: plex_rating must be between 1 and 10")
+        # Lazy, like ``relay`` below: parsing a config must not need settings.
+        from ratingrelay.core.factory import (  # pylint: disable=import-outside-toplevel
+            unsupported_target,
+        )
+
+        for target in self.targets:
+            refusal = unsupported_target(self.relay, target)
+            if refusal:
+                raise ConfigError(f"{self.name}: {refusal}")
+
+    @property
+    def relay(self) -> str:
+        """Which relay's sync records this spec reconciles against."""
+        # Lazy, like the CLI's other factory imports: reading a config file
+        # should not need settings or a database.
+        from ratingrelay.core.factory import (  # pylint: disable=import-outside-toplevel
+            relay_identity,
+        )
+
+        return relay_identity(self.source, feedback_type=self.feedback_type)
 
     @property
     def summary(self) -> str:
@@ -103,6 +123,11 @@ class RelaySpec:  # pylint: disable=too-many-instance-attributes
 
 def _relay_from_table(table: dict[str, Any], position: int) -> RelaySpec:
     label = f"relay[{position}]"
+    moved = sorted(set(table) & set(_MOVED_KEYS))
+    if moved:
+        raise ConfigError(
+            f"{label}: {'; '.join(f'{key} is gone ({_MOVED_KEYS[key]})' for key in moved)}"
+        )
     unknown = sorted(set(table) - _KNOWN_KEYS)
     if unknown:
         raise ConfigError(f"{label}: unknown key(s): {', '.join(unknown)}")
@@ -119,18 +144,22 @@ def _relay_from_table(table: dict[str, Any], position: int) -> RelaySpec:
     if not isinstance(targets, list) or not all(isinstance(t, str) for t in targets):
         raise ConfigError(f"{label}: targets must be a list of service names")
 
-    # Tuning that does not apply to the services this relay names is simply
-    # unused; it still has to be the right type and in range, so a relay that
-    # switches source later fails now rather than at 3am.
-    options = {key: table[key] for key in _OPINIONATED_KEYS if key in table}
-
     return RelaySpec(
         name=label,
         source=source,
         targets=tuple(targets),
         dry_run=bool(table.get("dry_run", False)),
-        **options,
+        feedback_type=table.get("feedback_type", "love"),
+        reapply_target_drift=_a_bool(label, table, "reapply_target_drift"),
     )
+
+
+def _a_bool(label: str, table: dict[str, Any], key: str) -> bool:
+    """A flag that must be written as a TOML boolean, not a truthy string."""
+    value = table.get(key, False)
+    if not isinstance(value, bool):
+        raise ConfigError(f"{label}: {key} must be true or false")
+    return value
 
 
 def load_relays(path: str | Path = DEFAULT_CONFIG) -> tuple[RelaySpec, ...]:
@@ -163,4 +192,28 @@ def load_relays(path: str | Path = DEFAULT_CONFIG) -> tuple[RelaySpec, ...]:
         if spec.name in seen:
             raise ConfigError(f"{config_path}: duplicate relay name {spec.name!r}")
         seen.add(spec.name)
+    _refuse_shared_records(config_path, specs)
     return specs
+
+
+def _refuse_shared_records(config_path: Path, specs: tuple[RelaySpec, ...]) -> None:
+    """Two writing relays that would reconcile against the same records.
+
+    Sync records are kept per source, target and direction. Two relays that
+    agree on all three but differ in anything else would each undo the tracks
+    only the other one relays, every run. A dry run writes nothing,
+    so it may share records with the relay it previews.
+    """
+    owners: dict[tuple[str, str, str], str] = {}
+    for spec in specs:
+        if spec.dry_run:
+            continue
+        for target in spec.targets:
+            address = (spec.source, target, spec.relay)
+            if address in owners:
+                raise ConfigError(
+                    f"{config_path}: relays {owners[address]!r} and {spec.name!r} both "
+                    f"write {spec.relay}s from {spec.source} to {target}; each would "
+                    "undo what only the other one relays. Merge them into one relay."
+                )
+            owners[address] = spec.name

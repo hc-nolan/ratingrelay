@@ -3,6 +3,8 @@
 	import { resolve } from '$app/paths';
 	import type { PageData } from './$types';
 	import AppHeader from '$lib/components/AppHeader.svelte';
+	import MassUndoNotice from '$lib/components/jobs/MassUndoNotice.svelte';
+	import RunStats from '$lib/components/jobs/RunStats.svelte';
 	import {
 		durationLabel,
 		statusLabel,
@@ -11,7 +13,8 @@
 		TONE_DOT,
 		whenLabel
 	} from '$lib/format';
-	import { frequencyOptions, summarizeSource, summarizeTargets, serviceLabels } from '$lib/relay';
+	import { bucketOf, type LogBucket } from '$lib/jobs';
+	import { frequencyOptions, summarizeSource, summarizeTargets } from '$lib/relay';
 	import type { JobData, TrackEvent } from '$lib/types/jobs';
 	import { cn } from '$lib/utils';
 
@@ -78,7 +81,7 @@
 	}
 
 	// ── Log filtering ─────────────────────────────────────────────────────────
-	type Bucket = 'all' | 'written' | 'skipped' | 'failed' | 'unmatched';
+	type Bucket = 'all' | LogBucket;
 
 	let bucket = $state<Bucket>('all');
 	let search = $state('');
@@ -86,6 +89,7 @@
 
 	const REASON_LABEL: Record<string, string> = {
 		already_synced: 'already in sync',
+		already_on_target: 'already on target, left as is',
 		withdrawn: 'rating withdrawn',
 		no_match: 'no match found',
 		ambiguous_match: 'ambiguous match',
@@ -93,7 +97,9 @@
 		missing_metadata: 'missing artist or title',
 		not_configured: 'service not configured',
 		write_failed: 'write failed',
-		unrecorded_target: 'no recorded write'
+		unrecorded_target: 'no recorded write',
+		mass_undo_refused: 'mass undo refused',
+		target_drift: 'written again — the target had dropped it'
 	};
 
 	function describe(evt: TrackEvent): string {
@@ -102,13 +108,6 @@
 		if (evt.outcome === 'written') return 'written';
 		if (evt.outcome === 'reverted') return 'reverted';
 		return evt.reason ?? evt.outcome ?? '';
-	}
-
-	function bucketOf(evt: TrackEvent): Exclude<Bucket, 'all'> {
-		if (evt.success) return 'written';
-		if (evt.outcome === 'failed' || evt.error) return 'failed';
-		if (evt.outcome === 'unmatched') return 'unmatched';
-		return 'skipped';
 	}
 
 	const buckets = $derived.by(() => {
@@ -136,58 +135,6 @@
 
 	const tone = $derived(statusTone(job?.status ?? ''));
 	const total = $derived((job?.tracks_ok ?? 0) + (job?.tracks_err ?? 0));
-
-	/**
-	 * One tile per destination, because "720 written" is two numbers added
-	 * together and neither of them is checkable. Falls back to the aggregate
-	 * when the job carries no per-target tally (older runs, no events).
-	 */
-	const writeTiles = $derived.by(() => {
-		// Live events first: a running job's tallies move as tracks land, and
-		// the stream does not re-send the server's snapshot.
-		if (events.length > 0) {
-			const counts: Record<string, number> = {};
-			for (const evt of events) {
-				if (bucketOf(evt) === 'written') counts[evt.target] = (counts[evt.target] ?? 0) + 1;
-			}
-			return Object.entries(counts)
-				.sort(([a], [b]) => a.localeCompare(b))
-				.map(([service, value]) => ({
-					label: serviceLabels[service] ?? service,
-					value,
-					tone: value > 0 ? 'text-ok' : 'text-foreground'
-				}));
-		}
-
-		const tally = job?.by_target ?? [];
-		if (tally.length > 0) {
-			return tally.map((t) => ({
-				label: serviceLabels[t.service] ?? t.service,
-				value: t.written,
-				tone: t.written > 0 ? 'text-ok' : 'text-foreground'
-			}));
-		}
-
-		return [
-			{
-				label: job?.dry_run ? 'Would sync' : 'Written',
-				value: job?.tracks_ok ?? 0,
-				tone: (job?.tracks_ok ?? 0) > 0 ? 'text-ok' : 'text-foreground'
-			}
-		];
-	});
-
-	const stats = $derived([
-		{ label: 'Fetched', value: job?.tracks_fetched ?? 0, tone: 'text-foreground' },
-		...writeTiles,
-		{
-			label: 'Failed',
-			value: job?.tracks_err ?? 0,
-			// A zero is not an error: only a real failure is painted red.
-			tone: (job?.tracks_err ?? 0) > 0 ? 'text-destructive' : 'text-muted-foreground'
-		},
-		{ label: 'Skipped', value: job?.tracks_skipped ?? 0, tone: 'text-muted-foreground' }
-	]);
 </script>
 
 <svelte:head>
@@ -235,6 +182,14 @@
 										class="rounded border border-border px-1.5 py-px text-xs font-medium tracking-wide text-muted-foreground uppercase"
 									>
 										Dry run
+									</span>
+								{/if}
+								{#if job.reapply_target_drift}
+									<span
+										class="rounded border border-border px-1.5 py-px text-xs font-medium tracking-wide text-muted-foreground uppercase"
+										title="A write a target has since dropped is written again"
+									>
+										Re-applies drift
 									</span>
 								{/if}
 								{#if job.recurring && job.interval_minutes}
@@ -288,16 +243,7 @@
 						{/if}
 					</div>
 
-					<div class="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
-						{#each stats as stat (stat.label)}
-							<div class="rounded-md border border-border bg-background/40 px-3 py-2">
-								<div class={cn('font-mono text-xl leading-none tabular-nums', stat.tone)}>
-									{stat.value}
-								</div>
-								<div class="mt-1 text-xs text-muted-foreground">{stat.label}</div>
-							</div>
-						{/each}
-					</div>
+					<RunStats {job} {events} />
 
 					{#if job.status === 'running'}
 						<div class="mt-3">
@@ -318,6 +264,10 @@
 						<p class="mt-2 text-sm text-destructive">{cancelError}</p>
 					{/if}
 				</section>
+
+				{#if TERMINAL.has(job.status)}
+					<MassUndoNotice {job} {events} />
+				{/if}
 
 				<!-- ── What it did ──────────────────────────────────────────────── -->
 				<section class="panel overflow-hidden">

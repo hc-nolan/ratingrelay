@@ -8,15 +8,20 @@ from plexapi.server import PlexServer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ratingrelay.core.plex_auth import (
+    PIN_COOKIE,
+    clear_pin_cookie,
     create_session,
-    iter_sessions,
+    new_nonce,
     public_url,
     remove_session,
+    sessions_for,
+    set_pin_cookie,
 )
 from ratingrelay.core.session import (
     SESSION_COOKIE,
     SESSION_MAX_AGE,
     issue_session,
+    owner_identity,
 )
 from ratingrelay.core.thread import run_sync
 from ratingrelay.db import get_async_session
@@ -80,6 +85,18 @@ _POPUP_PENDING_HTML = """<!DOCTYPE html>
 </body>
 </html>"""
 
+# Served when a different Plex account confirmed the PIN than the one the relay
+# already belongs to. Changing the owner is Disconnect, then connect: never a
+# side effect of a popup.
+_POPUP_NOT_OWNER_HTML = """<!DOCTYPE html>
+<html>
+<head><title>Not connected</title></head>
+<body>
+<p>That Plex account is not the one this relay belongs to. To switch accounts,
+disconnect Plex in RatingRelay first.</p>
+</body>
+</html>"""
+
 
 async def _get_token(db: AsyncSession) -> str | None:
     """Return the active Plex token: settings override first, then DB."""
@@ -138,19 +155,22 @@ async def plex_disconnect(
 
 
 @router.post("/auth/init", response_model=PlexAuthInitResponse)
-async def plex_auth_init(request: Request) -> PlexAuthInitResponse:
+async def plex_auth_init(request: Request, response: Response) -> PlexAuthInitResponse:
     """
     Start a Plex OAuth PIN login flow.
 
-    Creates a MyPlexPinLogin session, stores it in memory, and returns:
+    Creates a MyPlexPinLogin session, stores it in memory under a nonce this
+    browser gets as a cookie, and returns:
     - pin_id: integer used to correlate the callback
     - oauth_url: the plex.tv URL to open in a popup window
     """
     callback_url = _callback_url(request)
+    nonce = new_nonce()
     try:
-        pin_login, oauth_url = await run_sync(lambda: create_session(callback_url))
+        pin_login, oauth_url = await run_sync(lambda: create_session(callback_url, nonce))
         pin_id = int(pin_login._id)
         logger.info("Plex OAuth init: pin_id=%s, callback=%s", pin_id, callback_url)
+        set_pin_cookie(response, request, nonce)
         return PlexAuthInitResponse(pin_id=pin_id, oauth_url=oauth_url)
     except Exception as exc:
         logger.error("Failed to create Plex OAuth session: %s", exc)
@@ -167,7 +187,11 @@ async def plex_auth_callback(
     """
     OAuth callback — Plex redirects the popup here after the user logs in.
 
-    Iterates over all active PIN sessions to find the one Plex has confirmed.
+    Only PINs this browser opened are considered (the nonce cookie set by
+    ``init``): a PIN someone else opened and confirmed with their own account
+    must not become this relay's identity because the owner followed a link.
+    Once the relay has an owner, only that account can be stored again.
+
     Plex confirms a moment after the redirect, so the check is retried briefly
     rather than racing it. Stores the token + username to the database, then
     serves a tiny HTML page that tells the opener and closes the popup.
@@ -175,8 +199,9 @@ async def plex_auth_callback(
     confirmed_token: str | None = None
     confirmed_pin_id: int | None = None
 
+    nonce = request.cookies.get(PIN_COOKIE)
     for attempt in range(_CALLBACK_ATTEMPTS):
-        for pin_id, pin_login in iter_sessions():
+        for pin_id, pin_login in sessions_for(nonce):
             try:
                 ok = await run_sync(pin_login.checkLogin)
                 if ok and pin_login.token:
@@ -200,8 +225,17 @@ async def plex_auth_callback(
     remove_session(confirmed_pin_id)
 
     response = HTMLResponse(_POPUP_CLOSE_HTML)
+    clear_pin_cookie(response)
     try:
         account = await run_sync(lambda: MyPlexAccount(token=confirmed_token))
+        owner = await owner_identity(db)
+        if owner is not None and owner[0] != str(account.id):
+            logger.warning(
+                "Plex connect refused: account %s is not the relay's owner", account.id
+            )
+            refused = HTMLResponse(_POPUP_NOT_OWNER_HTML, status_code=403)
+            clear_pin_cookie(refused)
+            return refused
         await upsert_credential(
             db,
             ServiceName.plex,

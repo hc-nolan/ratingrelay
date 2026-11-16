@@ -10,7 +10,7 @@
 		actions,
 		children
 	}: {
-		/** The port name on the card: FROM, TO, TRIGGER. */
+		/** The port name on the card: SOURCE, RATING, TRIGGER. */
 		label: string;
 		tone?: 'source' | 'target' | 'danger' | 'neutral';
 		/** An unallocated node: dashed, no fill, and it invites a click. */

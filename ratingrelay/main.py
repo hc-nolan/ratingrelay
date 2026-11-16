@@ -54,13 +54,20 @@ app.include_router(jobs_router)
 app.include_router(unmatched_router)
 
 
+def spa_file(frontend_dir: str, full_path: str) -> Path:
+    """The file to serve for *full_path*: itself if it is in the bundle, else index.html.
+
+    The path is resolved before it is checked, so ``..`` (raw or percent-encoded)
+    cannot climb out of the bundle. This route is outside ``/api`` and so outside
+    the session guard, and the database and environment are one directory away.
+    """
+    root = Path(frontend_dir).resolve()
+    candidate = (root / full_path).resolve()
+    if candidate.is_relative_to(root) and candidate.is_file():
+        return candidate
+    return root / "index.html"
+
+
 @app.get("/{full_path:path}")
 async def serve_spa(full_path: str):
-    file_path = Path(settings.frontend_dir) / full_path
-
-    # If the exact file exists, serve it
-    if file_path.is_file():
-        return FileResponse(file_path)
-
-    # Otherwise, serve index.html (SPA fallback)
-    return FileResponse(Path(settings.frontend_dir) / "index.html")
+    return FileResponse(spa_file(settings.frontend_dir, full_path))

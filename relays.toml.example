@@ -8,9 +8,20 @@
 name = "nightly"
 source = "plex"
 targets = ["lastfm", "listenbrainz"]
-# Plex as a source: which rated tracks count.
-rating_threshold = 8.0
-comparison = "gte"          # gte: at least the threshold · lte: at most
-# Last.fm / ListenBrainz: which feedback to relay.
+# Loves or hates. The Plex ratings that count as each are the love/hate
+# thresholds set in the web app (or pinned by LOVE_THRESHOLD / HATE_THRESHOLD),
+# shared by every relay: a Plex source reads them and a Plex target writes them.
 feedback_type = "love"      # love or hate
 # dry_run = true            # fetch, match and reconcile, but write nothing
+# reapply_target_drift = true
+#   Write again what this relay's targets have since dropped (an un-loved
+#   track on Last.fm, a cleared rating on Plex). Off by default: a target's own
+#   edits are left alone. A write the target still holds, or one it replaced
+#   with a different value, is never overwritten.
+
+# The pair runs this way round too: Last.fm becomes the source of truth, and
+# Plex the target that follows it.
+[[relay]]
+name = "back-to-plex"
+source = "lastfm"
+targets = ["plex"]

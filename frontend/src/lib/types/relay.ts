@@ -24,18 +24,22 @@ export interface TargetOption {
 }
 
 export interface PlexSourceConfig {
-	ratingThreshold: number;
-	comparison: 'gte' | 'lte';
+	feedbackType: 'love' | 'hate';
 }
 
 export interface ListenBrainzSourceConfig {
 	feedbackType: 'love' | 'hate';
 }
 
-export interface PlexTargetConfig {
-	rating: number;
+/**
+ * The Plex ratings (0–10) that count as a love and a hate, shared by every relay.
+ * A locked one is pinned in the server settings and can't be changed here.
+ */
+export interface PlexThresholds {
+	love_threshold: number;
+	hate_threshold: number;
+	love_locked: boolean;
+	hate_locked: boolean;
 }
 
-export interface ListenBrainzTargetConfig {
-	feedbackType: 'love' | 'hate';
-}
+export type Direction = 'love' | 'hate';

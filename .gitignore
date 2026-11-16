@@ -16,6 +16,9 @@ relays.toml
 
 # Databases
 *.db
+# A copy taken before a risky change is still the same database, with the same
+# credential rows in it: `ratingrelay.db.bak-…` is not matched by `*.db`.
+*.db.bak*
 *.db-journal
 *.db-wal
 *.db-shm

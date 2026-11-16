@@ -96,16 +96,32 @@ def test_a_track_mbid_shortcuts_the_search(search):
     assert calls == [{"query": "tid:track-mbid", "limit": 1}]
 
 
-def test_a_search_failure_is_a_miss(monkeypatch):
-    """A network error must not propagate as a write failure."""
+def test_a_refused_query_is_a_miss(monkeypatch):
+    """MusicBrainz saying no (400/404) is an answer: the track is unmatched."""
 
-    def boom(**kwargs):
-        raise RuntimeError("503 Service Unavailable")
+    def refuse(**kwargs):
+        raise musicbrainz.mbz.ResponseError("400 Bad Request")
 
-    monkeypatch.setattr(musicbrainz.mbz, "search_recordings", boom)
+    monkeypatch.setattr(musicbrainz.mbz, "search_recordings", refuse)
 
     assert musicbrainz._lookup(None, "Artist A", "Song A").mbid is None
     assert musicbrainz._lookup("track-mbid", "Artist A", "Song A").mbid is None
+
+
+def test_an_outage_is_a_transport_failure_not_a_miss(monkeypatch):
+    """A MusicBrainz outage must not file every track as "no MBID".
+
+    It surfaces as an ``OSError`` so the engine retries it and, failing that,
+    fails the track — the next run tries again instead of the queue filling up.
+    """
+
+    def down(**kwargs):
+        raise musicbrainz.mbz.NetworkError("retried 8 times")
+
+    monkeypatch.setattr(musicbrainz.mbz, "search_recordings", down)
+
+    with pytest.raises(ConnectionError):
+        musicbrainz._lookup(None, "Artist A", "Song A")
 
 
 def test_a_miss_keeps_the_recordings_it_nearly_matched(search):

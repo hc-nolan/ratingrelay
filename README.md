@@ -14,10 +14,11 @@ own machine or home server, and your credentials stay there.
 
 ## What it does
 
-- **Rated in Plex → loved elsewhere.** Pick a cutoff, for example "at least 4 stars",
-  and every track that meets it is loved on Last.fm and/or ListenBrainz.
+- **Rated in Plex → loved elsewhere.** Every track rated at or above your love cutoff
+  (4 stars unless you change it) is loved on Last.fm and/or ListenBrainz.
 - **Loved elsewhere → rated in Plex.** It works the other way too: your Last.fm or
-  ListenBrainz loves can become star ratings in Plex.
+  ListenBrainz loves become that same rating in Plex. See
+  [Rating thresholds](#rating-thresholds).
 - **Keeps up with you.** Each run compares your ratings with what it wrote last time.
   Lower a rating below the cutoff and the love is taken back.
 - **Leaves your other ratings alone.** RatingRelay only undoes changes it made
@@ -76,10 +77,11 @@ Press **Start relaying** when you're done.
 
 The main page reads from top to bottom:
 
-- **From**: where your ratings come from. For Plex, choose the cutoff ("at least 4
-  stars"). For ListenBrainz, choose loves or hates.
-- **To**: switch on one or more destinations. ListenBrainz can receive a love or a
-  hate. Plex receives a star rating.
+- **From**: where your ratings come from. For Plex and ListenBrainz, choose loves or
+  hates.
+- **To**: switch on one or more destinations. Each one writes what *From* reads:
+  loves become loves, hates become hates. Plex receives the love (or hate) rating.
+  Last.fm only has loves, so it isn't offered for a hate relay.
 - **Trigger**: run it **once**, or repeat it every hour, every few hours, daily or
   weekly. Tick **Dry run** to preview the run without changing anything.
 
@@ -88,6 +90,28 @@ tracks are processed.
 
 **Reset** in the *From* row undoes what RatingRelay has written to a service. Only
 its own changes are removed, never ratings you made yourself.
+
+### Rating thresholds
+
+Two thresholds decide which Plex ratings count as a love and a hate. They apply to
+every relay, scheduled ones included, so a two-way setup writes back exactly what
+it reads:
+
+| threshold | default | Plex as a source | Plex as a target |
+| --------- | ------- | ---------------- | ---------------- |
+| love | 4 stars | loves are tracks rated at least this | a love is written as this rating |
+| hate | 1 star | hates are tracks rated at most this | a hate is written as this rating |
+
+Change them in the web app's **Rating** box; the hate threshold must be below the
+love one. To pin one instead, set it in `.env` (`RATINGRELAY_LOVE_THRESHOLD`,
+`RATINGRELAY_HATE_THRESHOLD`, out of 10, so each star is 2) and run
+`docker compose up -d` again; the web app then shows it read-only. The headless
+CLI uses the same values.
+
+A track already rated on the right side of the threshold is left alone: a love
+relay doesn't touch a track you rated 4 or 5 stars, and a hate relay doesn't touch
+one you rated 1 star. Raising the love threshold means some tracks no longer count,
+so the next run takes those loves back.
 
 ### History
 
@@ -125,6 +149,20 @@ what it wrote, so if you reconnect later it picks up where it left off.
 
 Disconnecting **Plex** also signs you out, because your Plex account is how you log
 in to RatingRelay. You'll be asked to confirm first.
+
+## Keeping it private
+
+RatingRelay is built for one person on a home network. Keep it off the open
+internet. If you need it away from home, use a VPN, not a port forward. Your Plex
+account is the only login it has, so:
+
+- **Finish setup as soon as it starts.** Until a Plex account is connected, anyone
+  who can reach the app can use it. The first account to connect becomes the owner.
+- **Disconnecting Plex opens it up again** until you reconnect. Do it from a network
+  you trust.
+- **Only approve Plex sign-ins you started.** RatingRelay can't tell who opened a
+  Plex sign-in prompt. If you approve a link someone else sent you, they get signed
+  in to your RatingRelay.
 
 ## Your data
 
@@ -180,13 +218,11 @@ writes, so its counts are what a real run would do.
 | ---- | ------- | ------------ |
 | `--source SERVICE` | `relay` | where ratings come from: `plex`, `lastfm`, `listenbrainz` (default `plex`) |
 | `--target SERVICE` | `relay` | where they go; repeat for more than one (default `lastfm`) |
-| `--rating-threshold N` | `relay` | Plex source: the rating a track needs, out of 10 (default `8`) |
-| `--comparison gte\|lte` | `relay` | Plex source: at least or at most the threshold |
-| `--feedback-type love\|hate` | `relay` | Last.fm/ListenBrainz: which feedback to relay |
-| `--plex-rating N` | `relay` | Plex target: the rating to write, out of 10 (default `10`) |
+| `--feedback-type love\|hate` | `relay` | relay loves or hates (default `love`); for Plex, see [Rating thresholds](#rating-thresholds) |
 | `--config PATH` | `run`, `list` | relay definitions to read (default `relays.toml`) |
 | `--only NAME` | `run` | run just the named relay; repeatable |
 | `--dry-run` | `relay`, `run` | fetch, match and reconcile for real; write nothing |
+| `--allow-mass-undo` | `relay`, `run` | this run only: undo even when most of a target's changes were withdrawn (see below) |
 | `--json` | `relay`, `run` | one machine-readable document instead of the human summary |
 | `--verbose` | `relay`, `run` | a line per track, on stderr |
 
@@ -203,16 +239,67 @@ first on a fresh checkout. The container does this when it starts.
 name = "nightly"
 source = "plex"
 targets = ["lastfm", "listenbrainz"]
-rating_threshold = 8.0
+feedback_type = "love"
 
 [[relay]]
 name = "back-to-plex"
 source = "lastfm"
 targets = ["plex"]
-plex_rating = 10.0
 ```
 
 Unknown keys are an error, so a typo can't make a cron job silently do nothing.
+
+Two relays may share a source and a target if they read opposite directions (Plex
+loves and Plex hates, both to ListenBrainz). Two that read the same direction, such
+as two Plex love relays into one target, are refused: each run would undo what only
+the other one passes. Merge them into one relay.
+
+### When a run refuses to undo
+
+If a run would take back more than half of what RatingRelay has written to a
+target, and at least 10 changes, it takes back none of them. The tracks are counted
+as failed, the run exits 1, and the summary names the target. That almost always
+means the source answered with an empty or short list, not that you un-loved most
+of your library overnight.
+
+If you really did, run once with `--allow-mass-undo`, or use **Run once and allow
+the undo** on that run's page in the web app. There is no config key for it, so a
+scheduled run never switches the guard off.
+
+### When you edit a target by hand
+
+By default a target is left alone: if you un-love a track on Last.fm after
+RatingRelay loved it there, the next run says it is already synced and your edit
+stands. Normal runs compare what the source wants to what RatingRelay last wrote,
+not to what the target holds now.
+
+`reapply_target_drift = true` turns that around for one relay — its targets stop
+being authoritative, so a write they have since dropped is written again:
+
+```toml
+[[relay]]
+name = "nightly"
+source = "plex"
+targets = ["lastfm", "listenbrainz"]
+reapply_target_drift = true
+```
+
+The web app has the same switch next to **Dry run** when you queue a run, and a
+scheduled relay keeps it. On the command line, `ratingrelay relay
+--reapply-target-drift` asks for it for that one run, and `ratingrelay run
+--reapply-target-drift` for every relay in the file. What it re-applies is
+deliberately narrow:
+
+| the target now | the run |
+| -------------- | ------- |
+| still holds what RatingRelay wrote | does nothing |
+| holds nothing (you un-loved it, or cleared the rating) | writes it again |
+| holds something else (you replaced a love with a hate, or re-rated the Plex copy) | does nothing: that is your choice |
+
+The last row is the same rule as an undo, which never clears a rating you changed
+after RatingRelay wrote it. Re-applying a value over one you chose would fight
+you every run; re-writing a love you removed only puts back what the relay was
+already told to keep.
 
 ### cron
 
@@ -232,7 +319,8 @@ A clean run prints a short summary; failures are loud. Exit codes:
 | 2 | could not complete (bad config, missing database, fetch error) |
 
 Unmatched tracks don't count as failures. They're counted in the output and listed
-on the web app's **Unmatched** page. A dry run can only exit 0 or 2.
+on the web app's **Unmatched** page. A dry run exits 1 only where the real run would
+refuse a mass undo, and 0 or 2 otherwise.
 
 ## Development
 
@@ -244,11 +332,14 @@ cp .config.example .config   # settings and, optionally, credentials
 just install     # uv sync + pnpm install
 just dev         # API on :8100 + Vite dev server on :5173, Ctrl-C stops both
 just demo        # the UI against made-up data on :5174; calls no real service
+just screenshots # re-take docs/screenshots from that demo data
 just test        # pytest
 just lint        # pylint
 just check       # svelte-check + prettier + eslint
 just build && uv run app.py   # serve the built app from the API, as the image does
 ```
 
-The screenshots above come from `just demo`. Contributor notes, including the
-layering rules and the behaviour the relay must not regress, are in `AGENTS.md`.
+The screenshots above come from `just demo`; `just screenshots` re-takes them from
+that same seeded data, so they can't drift from the UI. Contributor notes,
+including the layering rules and the behaviour the relay must not regress, are in
+`AGENTS.md`.

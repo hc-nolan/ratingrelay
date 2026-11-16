@@ -26,6 +26,25 @@ Commit = Callable[[], Awaitable[None]]
 
 
 @dataclass(frozen=True, slots=True)
+class Existing:
+    """What the target held for this track before the plan was made."""
+
+    # The target already holds this intent (or better). Without a record of our
+    # own it is the user's state: the pipeline skips it and records nothing.
+    holds: bool = False
+    # What a write would replace, opaque per target like ``target_key``; undo
+    # restores it rather than clearing.
+    prior: Optional[str] = None
+    # Whether the target holds *anything* here: a rating, a score, a love.
+    # ``not holds and not occupied`` is a target that holds nothing at all, which
+    # is how a run tells a write that was removed from one somebody replaced. A
+    # relay with ``reapply_target_drift`` re-writes only the former. ``None`` is
+    # "the target did not say", and is read as occupied: a plan that forgets to
+    # fill this in must never cause a write on every run.
+    occupied: Optional[bool] = None
+
+
+@dataclass(frozen=True, slots=True)
 class WritePlan:
     """One target's decision about one track."""
 
@@ -38,6 +57,11 @@ class WritePlan:
     recording_mbid: Optional[str] = None
     intent: Optional[Intent] = None
     target_key: Optional[str] = None
+    # Whether a user's mapping decided where this goes. Only then may the
+    # pipeline move an existing write to a new target_key: a human correction
+    # re-points, a matcher's change of mind never does.
+    mapped: bool = False
+    existing: Existing = Existing()
     commit: Optional[Commit] = field(default=None, repr=False, compare=False)
 
     @property

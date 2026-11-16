@@ -39,9 +39,9 @@ just build      # frontend bundle that FastAPI serves
 - `.config` is gitignored and holds credentials. `.config.example` documents every
   key. Environment variables override `.config`; both override database-stored
   credentials (that hierarchy is the dev-override pattern — keep it).
-- `just check` runs svelte-check + prettier + eslint. Typecheck is clean; eslint still has
-  known failures listed in `docs/plans/2026-11-12-v3-baseline-and-workstreams.md`, cleared
-  by the UI rewrite — don't silence the rules to get green. `just lint` has a `fail-under`
+- `just check` runs svelte-check + prettier + eslint. All three are clean and CI
+  (`.github/workflows/ci.yml`) runs them with `just test` and `just lint` — keep them
+  green by fixing code, never by silencing a rule. `just lint` has a `fail-under`
   in `pyproject.toml`; ratchet it up, never down.
 
 ## Layout (current)
@@ -101,8 +101,19 @@ These are the point of the tool. v1 got them right; keep them that way.
 2. **Reconcile every run, don't append.** Each run compares the source's current
    loves/hates to what we previously wrote to each target, and converges the target.
    A rating that changed re-propagates; a love that was withdrawn gets un-loved.
+   A target's *own* edits are not policed: an unchanged intent is `already_synced`,
+   so a track someone un-loved on the target stays that way. A relay that names
+   `reapply_target_drift` opts out of that, and only for a write the target has
+   *dropped* — a replacement the user chose is never overwritten (same rule as
+   undo, below).
 3. **Only undo our own writes.** Never clear a target rating this tool did not create.
    Reset is an explicit, narrow action — never a whole-service wipe by default.
+   Sync records are keyed by source, target **and relay** (the direction the source
+   reads, `relay_identity` in `core/factory.py`), so a love relay and a hate relay
+   on one pair never reconcile against each other. A reconcile that would undo most
+   of a target (`pipeline.is_mass_undo`) is refused unless that one run allows it
+   (`--allow-mass-undo`, `allow_mass_undo` on a non-recurring job); never make the
+   override persistent.
 4. **Dry run must be the real pipeline.** Fetch, match and reconcile run as usual;
    only the write calls are suppressed. Dry-run output is the authority on what a
    real run would do, so divergence between them is a bug, not a caveat.
@@ -138,6 +149,9 @@ These are the point of the tool. v1 got them right; keep them that way.
   verifies against nothing and the login 401s forever. `/api/auth/*` is always open;
   a fresh install is open so setup can run; `auth = false` in `.config` turns
   enforcement off deliberately. Never add a second identity — one user, one library.
+  A Plex PIN is redeemable only by the browser that opened it (the `relay_pin`
+  cookie, `core/plex_auth.py`), and the setup callback refuses a Plex account other
+  than the stored owner — keep both, or a guessed PIN id hands over the relay.
 - **Jobs are data, not events**: progress lives in the `job` and `track_event` rows.
   The worker commits per track so the SSE stream can tail the database; there is no
   in-process registry to keep in sync. A run is stopped by `job.cancel_requested` at
@@ -155,6 +169,11 @@ These are the point of the tool. v1 got them right; keep them that way.
   Retrying is safe because every call the engine makes is idempotent. A failed
   fetch or a target that cannot be planned fails the run or the track; it never
   silently becomes a skip.
+- **Every network call has a deadline.** plexapi and pylast set their own;
+  liblistenbrainz and musicbrainzngs set none and would wait on a silent server
+  forever (RR-11), so `engine/http_timeouts.install()` gives them one. A new
+  client needs a timeout before it is used, and a test against a silent socket
+  (`tests/test_http_timeouts.py`).
 - **Schemas**: request/response models live in `ratingrelay/schemas/`, one file per
   service. Never reuse SQLModel table classes as API schemas.
 - **Migrations**: Alembic, always autogenerate then review. Existing databases must

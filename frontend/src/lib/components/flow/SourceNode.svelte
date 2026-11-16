@@ -1,50 +1,23 @@
 <script lang="ts">
 	import FlowNode from './FlowNode.svelte';
 	import ServiceMark from './ServiceMark.svelte';
-	import { plexStarOptions } from '$lib/relay';
-	import { Select } from '$lib/components/ui/select';
 	import { cn } from '$lib/utils';
-	import type {
-		ListenBrainzSourceConfig,
-		PlexSourceConfig,
-		SourceId,
-		SourceOption
-	} from '$lib/types/relay';
+	import type { SourceId, SourceOption } from '$lib/types/relay';
 
 	let {
 		options,
 		selected = $bindable(),
-		plexConfig,
-		lbzConfig,
 		resetService = $bindable(),
 		resetOptions
 	}: {
 		options: SourceOption[];
 		selected: SourceId;
-		plexConfig: PlexSourceConfig;
-		lbzConfig: ListenBrainzSourceConfig;
 		resetService: SourceId;
 		resetOptions: SourceOption[];
 	} = $props();
 </script>
 
-{#snippet feedbackToggle(value: 'love' | 'hate', text: string)}
-	<button
-		type="button"
-		class={cn(
-			'rounded px-2.5 py-0.5 text-sm transition-colors',
-			lbzConfig.feedbackType === value
-				? 'bg-primary text-primary-foreground'
-				: 'text-muted-foreground hover:text-foreground'
-		)}
-		onclick={() => (lbzConfig.feedbackType = value)}
-		aria-pressed={lbzConfig.feedbackType === value}
-	>
-		{text}
-	</button>
-{/snippet}
-
-<FlowNode label="From" tone={selected === 'reset' ? 'danger' : 'source'}>
+<FlowNode label="Source" tone={selected === 'reset' ? 'danger' : 'source'}>
 	<div class="flex flex-wrap items-stretch gap-1.5">
 		{#each options as option (option.id)}
 			{@const active = selected === option.id}
@@ -71,35 +44,10 @@
 		{/each}
 	</div>
 
-	<div class="mt-3 flex flex-wrap items-center gap-x-2 gap-y-2 border-t border-border/60 pt-3">
-		{#if selected === 'plex'}
-			<span class="text-sm text-muted-foreground">Rated</span>
-			<Select
-				bind:value={plexConfig.comparison}
-				label="Rating comparison"
-				options={[
-					{ value: 'gte', label: 'at least' },
-					{ value: 'lte', label: 'at most' }
-				]}
-			/>
-			<Select
-				bind:value={plexConfig.ratingThreshold}
-				label="Rating threshold"
-				class="min-w-40"
-				options={plexStarOptions}
-			/>
-		{:else if selected === 'lastfm'}
-			<p class="text-sm text-muted-foreground">Every loved track on Last.fm.</p>
-		{:else if selected === 'listenbrainz'}
-			<span class="text-sm text-muted-foreground">Fetch</span>
-			<div
-				class="inline-flex items-center gap-0.5 rounded-md border border-border bg-background p-0.5"
-			>
-				{@render feedbackToggle('love', 'loved')}
-				{@render feedbackToggle('hate', 'hated')}
-			</div>
-			<span class="text-sm text-muted-foreground">recordings</span>
-		{:else}
+	<!-- Only a reset has more to choose here; the direction and thresholds of a
+	     relay live in the Rating box below. -->
+	{#if selected === 'reset'}
+		<div class="mt-3 flex flex-wrap items-center gap-x-2 gap-y-2 border-t border-border/60 pt-3">
 			<span class="text-sm text-muted-foreground">Clear</span>
 			<div class="flex flex-wrap items-center gap-1">
 				{#each resetOptions as option (option.id)}
@@ -123,6 +71,6 @@
 				Undoes the writes this tool recorded on that service. Ratings it did not write are left
 				alone.
 			</p>
-		{/if}
-	</div>
+		</div>
+	{/if}
 </FlowNode>

@@ -4,6 +4,7 @@ A blip in one service should cost a retry, not a track; a decision the engine ma
 (a refusal, a missing recording) must not be retried at all.
 """
 
+import pylast
 import pytest
 
 from ratingrelay.engine import (
@@ -15,6 +16,7 @@ from ratingrelay.engine import (
     WritePlan,
 )
 from ratingrelay.engine import pipeline, retry
+from ratingrelay.engine.services import lastfm
 
 
 @pytest.fixture(autouse=True)
@@ -170,3 +172,49 @@ async def test_a_plan_that_cannot_be_made_fails_the_track_not_the_run():
         OutcomeStatus.FAILED,
     ]
     assert report.outcomes[0].reason is Reason.WRITE_FAILED
+
+
+# ---------------------------------------------------------------------------
+# Last.fm: pylast's errors are not OSErrors, so the client translates them
+# ---------------------------------------------------------------------------
+
+
+def _raises(exc):
+    def call():
+        raise exc
+
+    return call
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        pylast.NetworkError(None, ConnectionResetError("reset")),
+        pylast.WSError(None, "29", "Rate limit exceeded"),
+        pylast.WSError(None, "16", "Temporarily unavailable"),
+        pylast.WSError(None, 503, "Service Unavailable"),
+    ],
+)
+async def test_a_lastfm_outage_is_a_transport_failure(exc):
+    with pytest.raises(ConnectionError):
+        await lastfm._call(_raises(exc))  # pylint: disable=protected-access
+
+
+async def test_a_lastfm_refusal_is_not_retried():
+    refusal = pylast.WSError(None, "6", "Track not found")
+    with pytest.raises(pylast.WSError):
+        await lastfm._call(_raises(refusal))  # pylint: disable=protected-access
+
+
+async def test_a_lastfm_blip_costs_a_retry_not_a_track():
+    calls = 0
+
+    def flaky():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise pylast.NetworkError(None, ConnectionResetError("reset"))
+        return "ok"
+
+    assert await retry.attempt(lambda: lastfm._call(flaky), "lastfm") == "ok"  # pylint: disable=protected-access
+    assert calls == 2

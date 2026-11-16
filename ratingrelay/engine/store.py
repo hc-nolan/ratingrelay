@@ -22,6 +22,8 @@ class SyncedTrack:
     ``target_key`` is the identity we wrote to, in whatever form that target
     uses (a rating key, an artist/title pair, a recording MBID) — the engine
     treats it as opaque and hands it back to the same target to undo.
+    ``prior`` is what the target held before our first write, in the same
+    target-owned form; undo puts it back instead of clearing.
     """
 
     key: str
@@ -29,6 +31,7 @@ class SyncedTrack:
     intent: Optional[str] = None
     rating: Optional[float] = None
     target_key: Optional[str] = None
+    prior: Optional[str] = None
 
     @property
     def track(self) -> Track:

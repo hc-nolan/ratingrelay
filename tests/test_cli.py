@@ -132,26 +132,65 @@ def test_dry_run_flag_reaches_the_spec():
     assert spec.dry_run is True
 
 
-def test_plex_options_reach_the_spec():
+def test_allow_mass_undo_is_off_unless_asked_for(tmp_path):
+    relay = cli.build_parser().parse_args(["relay", "--allow-mass-undo"])
+    assert cli.spec_from_args(relay).allow_mass_undo is True
+    assert cli.spec_from_args(cli.build_parser().parse_args(["relay"])).allow_mass_undo is False
+
+    specs = load_relays(_write(tmp_path, '[[relay]]\nname = "one"\n'))
+    assert [s.allow_mass_undo for s in cli._select(specs, [], False)] == [False]  # pylint: disable=protected-access
+    assert [s.allow_mass_undo for s in cli._select(specs, [], False, True)] == [True]  # pylint: disable=protected-access
+
+
+def test_a_config_file_cannot_switch_the_mass_undo_guard_off(tmp_path):
+    path = _write(tmp_path, '[[relay]]\nallow_mass_undo = true\n')
+
+    with pytest.raises(ConfigError, match="unknown key"):
+        load_relays(path)
+
+
+def test_the_drift_option_comes_from_the_file_or_the_flag(tmp_path):
+    on = load_relays(_write(tmp_path, '[[relay]]\nreapply_target_drift = true\n'))
+    assert [spec.reapply_target_drift for spec in on] == [True]
+
+    flag = cli.build_parser().parse_args(["relay", "--reapply-target-drift"])
+    assert cli.spec_from_args(flag).reapply_target_drift is True
+    assert cli.spec_from_args(cli.build_parser().parse_args(["relay"])).reapply_target_drift is False
+
+
+def test_the_flag_turns_the_option_on_for_every_relay_in_a_run(tmp_path):
+    path = _write(
+        tmp_path,
+        '[[relay]]\nname = "one"\n\n[[relay]]\nname = "two"\nsource = "lastfm"\ntargets = ["plex"]\n',
+    )
+    specs = load_relays(path)
+
+    assert [s.reapply_target_drift for s in cli._select(specs, [], False)] == [False, False]  # pylint: disable=protected-access
+    assert [s.reapply_target_drift for s in cli._select(specs, [], False, reapply_target_drift=True)] == [True, True]  # pylint: disable=protected-access
+
+
+def test_a_non_boolean_drift_option_is_an_error(tmp_path):
+    path = _write(tmp_path, '[[relay]]\nreapply_target_drift = "yes"\n')
+
+    with pytest.raises(ConfigError, match="must be true or false"):
+        load_relays(path)
+
+
+def test_the_direction_reaches_the_spec():
     args = cli.build_parser().parse_args(
-        [
-            "relay",
-            "--rating-threshold",
-            "9",
-            "--comparison",
-            "lte",
-            "--plex-rating",
-            "6",
-            "--feedback-type",
-            "hate",
-        ]
+        ["relay", "--feedback-type", "hate", "--target", "listenbrainz"]
     )
     spec = cli.spec_from_args(args)
 
-    assert spec.rating_threshold == 9.0
-    assert spec.comparison == "lte"
-    assert spec.plex_rating == 6.0
     assert spec.feedback_type == "hate"
+    assert spec.relay == "hate"
+
+
+@pytest.mark.parametrize("flag", ["--rating-threshold", "--comparison", "--plex-rating"])
+def test_the_per_relay_plex_ratings_are_gone(flag):
+    """The Plex ratings are the shared love/hate thresholds now."""
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(["relay", flag, "8"])
 
 
 def test_an_unknown_service_is_a_parser_error():
@@ -169,9 +208,9 @@ def test_a_relay_needs_a_target():
         RelaySpec(source="plex", targets=())
 
 
-def test_the_threshold_stays_in_range():
-    with pytest.raises(ConfigError, match="rating_threshold"):
-        RelaySpec(rating_threshold=11.0)
+def test_the_direction_is_love_or_hate():
+    with pytest.raises(ConfigError, match="feedback_type"):
+        RelaySpec(feedback_type="meh")
 
 
 # ---------------------------------------------------------------------------
@@ -192,8 +231,8 @@ def test_a_config_file_can_hold_several_relays(tmp_path):
 [[relay]]
 name = "nightly"
 source = "plex"
-targets = ["lastfm", "listenbrainz"]
-rating_threshold = 9.0
+targets = ["listenbrainz"]
+feedback_type = "hate"
 
 [[relay]]
 name = "reverse"
@@ -206,8 +245,8 @@ dry_run = true
     specs = load_relays(path)
 
     assert [spec.name for spec in specs] == ["nightly", "reverse"]
-    assert specs[0].targets == ("lastfm", "listenbrainz")
-    assert specs[0].rating_threshold == 9.0
+    assert specs[0].targets == ("listenbrainz",)
+    assert specs[0].feedback_type == "hate"
     assert specs[1].dry_run is True
 
 
@@ -223,6 +262,21 @@ def test_targets_may_be_a_string(tmp_path):
     assert load_relays(path)[0].targets == ("lastfm",)
 
 
+@pytest.mark.parametrize(
+    "line, hint",
+    [
+        ("rating_threshold = 9.0", "love/hate thresholds"),
+        ("plex_rating = 8.0", "love/hate thresholds"),
+        ('comparison = "lte"', "feedback_type"),
+    ],
+)
+def test_a_removed_plex_key_says_where_it_went(tmp_path, line, hint):
+    path = _write(tmp_path, f'[[relay]]\nsource = "plex"\n{line}\n')
+
+    with pytest.raises(ConfigError, match=f"is gone.*{hint}"):
+        load_relays(path)
+
+
 def test_an_unknown_key_is_an_error(tmp_path):
     path = _write(
         tmp_path, '[[relay]]\nsource = "plex"\ntargets = ["lastfm"]\ntargts = []\n'
@@ -230,6 +284,45 @@ def test_an_unknown_key_is_an_error(tmp_path):
 
     with pytest.raises(ConfigError, match="unknown key"):
         load_relays(path)
+
+
+def test_two_relays_writing_the_same_records_are_an_error(tmp_path):
+    """Same source, target and direction: each would undo what only the other passes."""
+    path = _write(
+        tmp_path,
+        """
+[[relay]]
+name = "strict"
+targets = ["lastfm"]
+[[relay]]
+name = "loose"
+targets = ["listenbrainz", "lastfm"]
+""",
+    )
+
+    with pytest.raises(ConfigError, match="'strict' and 'loose' both write loves"):
+        load_relays(path)
+
+
+def test_relays_may_share_a_pair_in_opposite_directions_or_as_a_dry_run(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+[[relay]]
+name = "loves"
+targets = ["listenbrainz"]
+[[relay]]
+name = "hates"
+feedback_type = "hate"
+targets = ["listenbrainz"]
+[[relay]]
+name = "preview"
+targets = ["listenbrainz"]
+dry_run = true
+""",
+    )
+
+    assert [spec.relay for spec in load_relays(path)] == ["love", "hate", "love"]
 
 
 def test_duplicate_names_are_an_error(tmp_path):
@@ -401,7 +494,7 @@ targets = ["lastfm"]
 [[relay]]
 name = "two"
 source = "plex"
-targets = ["lastfm"]
+targets = ["listenbrainz"]
 """,
     )
 
@@ -447,3 +540,50 @@ def test_the_cli_imports_no_web_framework_or_request_schemas():
                 ):
                     offenders.append(f"{path}: {name}")
     assert offenders == []
+
+
+def test_the_report_says_why_a_mass_undo_failed_and_how_to_allow_it():
+    from ratingrelay.cli import report as cli_report  # pylint: disable=import-outside-toplevel
+    from ratingrelay.engine.types import (  # pylint: disable=import-outside-toplevel
+        OutcomeStatus,
+        Reason,
+        RunReport,
+        TargetReport,
+        TrackOutcome,
+    )
+
+    outcomes = tuple(
+        TrackOutcome(
+            Track("A", f"S{n}"),
+            "lastfm",
+            OutcomeStatus.FAILED,
+            Reason.MASS_UNDO_REFUSED,
+            "would undo 12 of 12 recorded writes",
+        )
+        for n in range(12)
+    )
+    run = RunReport(
+        source="plex",
+        tracks_fetched=0,
+        targets=(TargetReport.from_outcomes("lastfm", outcomes),),
+        outcomes=outcomes,
+    )
+
+    text = cli_report.human(RelaySpec(name="nightly"), run, 1.0)
+
+    assert text.count("refused on lastfm") == 1
+    assert "would undo 12 of 12 recorded writes (pass --allow-mass-undo)" in text
+
+
+@pytest.mark.parametrize("source", ["plex", "listenbrainz"])
+def test_a_hate_relay_to_lastfm_is_refused(source):
+    with pytest.raises(ConfigError, match="hate relay"):
+        RelaySpec(source=source, targets=("lastfm",), feedback_type="hate")
+
+
+def test_a_hate_relay_to_lastfm_is_refused_from_flags():
+    args = cli.build_parser().parse_args(
+        ["relay", "--feedback-type", "hate", "--target", "lastfm"]
+    )
+    with pytest.raises(ConfigError, match="hate relay"):
+        cli.spec_from_args(args)

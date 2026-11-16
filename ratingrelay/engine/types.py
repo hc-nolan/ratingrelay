@@ -5,11 +5,20 @@ frozen dataclasses and enums so that ``engine`` can stay headless and the
 adapters above it can translate them into their own representations.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
 from ratingrelay.engine.normalize import track_key
+
+# The Plex ratings, out of 10, that count as a love (at least) and a hate (at
+# most). The relay reads them from settings (``LOVE_THRESHOLD``/``HATE_THRESHOLD``,
+# whose defaults match these). One number serves both directions of a pair: a Plex
+# source reads loves at the threshold and a Plex target writes the threshold, so
+# a two-way setup writes back exactly what it reads and never bumps a track the
+# user rated at the threshold up to 5 stars.
+DEFAULT_LOVE_RATING = 8.0
+DEFAULT_HATE_RATING = 2.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +31,10 @@ class Track:
     track_mbid: Optional[str] = None
     rating: Optional[float] = None
     external_id: Optional[str] = None
+    # The recording a previous run resolved this track to. A hint, not a fact:
+    # it ranks below what the source says and below a user's mapping, and it is
+    # not part of the track's identity.
+    known_recording_mbid: Optional[str] = field(default=None, compare=False, repr=False)
 
     @property
     def key(self) -> str:
@@ -98,6 +111,14 @@ class Reason(str, Enum):
     WRITE_FAILED = "write_failed"
     WITHDRAWN = "withdrawn"
     UNRECORDED_TARGET = "unrecorded_target"
+    # The target already held this before we wrote anything; it is the user's,
+    # so it is neither written nor recorded (and so never undone).
+    ALREADY_ON_TARGET = "already_on_target"
+    MASS_UNDO_REFUSED = "mass_undo_refused"
+    # The target had dropped a write the record says we made, and this run put
+    # it back. Only a relay that asked for it (``reapply_target_drift``) can
+    # report this; every other run leaves the target's own edits alone.
+    TARGET_DRIFT = "target_drift"
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,7 +196,13 @@ class RunReport:
         """``completed``, ``partial`` or ``failed``, matching the job statuses."""
         if not self.targets:
             return "failed"
-        written = sum(report.written for report in self.targets)
-        if written == 0 and self.had_errors:
+        # Only a run that converged nothing failed outright. One that wrote,
+        # reverted or found tracks already in sync got through, and its errors
+        # make it partial: exit 2 means "could not complete", not "one write
+        # failed on a night with nothing new".
+        converged = sum(
+            report.written + report.reverted + report.skipped for report in self.targets
+        )
+        if converged == 0 and self.had_errors:
             return "failed"
         return "partial" if self.had_errors else "completed"

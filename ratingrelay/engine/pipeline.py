@@ -6,6 +6,8 @@ The pipeline owns four decisions so that nothing above it has to repeat them:
   store records the intent, not just the key),
 * whether a plan gets committed (``dry_run`` is the only difference),
 * whether a recorded write has been withdrawn at the source and must be undone,
+* whether a target has dropped a write it once held, which only a relay that
+  asked for it (``reapply_target_drift``) puts back,
 * what an outcome is worth reporting (typed, never a string to be re-parsed).
 
 Everything service-specific lives behind the :class:`Source` and :class:`Target`
@@ -16,6 +18,7 @@ Every network call the pipeline makes — fetch, plan, commit, undo — goes thr
 bounded number of times (see that module for why only ``OSError`` is retried).
 """
 
+from dataclasses import replace
 from typing import Optional, Sequence
 
 from ratingrelay.engine.plan import WritePlan
@@ -51,17 +54,33 @@ def _intent_key(plan: WritePlan) -> Optional[str]:
 
 
 def _with_known_mbid(track: Track, record: Optional[SyncedTrack]) -> Track:
-    """Reuse the MBID we already resolved, so a rerun makes no lookup."""
+    """Offer the MBID we already resolved, so a rerun makes no lookup.
+
+    It goes in as a hint (``known_recording_mbid``), not as the track's own
+    MBID: a target ranks what the source said and what a user mapped above it,
+    so a mapping made after the first write still takes effect.
+    """
     if record is None or track.recording_mbid or not record.recording_mbid:
         return track
-    return Track(
-        artist=track.artist,
-        title=track.title,
-        recording_mbid=record.recording_mbid,
-        track_mbid=track.track_mbid,
-        rating=track.rating,
-        external_id=track.external_id,
-    )
+    return replace(track, known_recording_mbid=record.recording_mbid)
+
+
+def _repoints(plan: WritePlan, record: Optional[SyncedTrack], target: Target) -> bool:
+    """Whether *plan* moves a recorded write to somewhere else on the target.
+
+    Only a mapping may do that (see ``WritePlan.mapped``), and only when the old
+    write is one we can undo — otherwise the old one would stay behind as a
+    rating nobody owns.
+    """
+    if record is None or not plan.mapped or not record.target_key or not plan.target_key:
+        return False
+    if record.target_key == plan.target_key:
+        return False
+    try:
+        target.undoable(record)
+    except ValueError:
+        return False
+    return True
 
 
 async def _apply(
@@ -72,6 +91,7 @@ async def _apply(
     sync_store: SyncStore,
     source_service: str,
     dry_run: bool,
+    reapply_drift: bool,
 ) -> TrackOutcome:
     """Decide and (unless dry run) perform the write for one track on one target."""
     record = synced.get(track.key)
@@ -89,28 +109,32 @@ async def _apply(
 
     # The same intent this target already holds is what "already synced" means
     # now: a changed rating or a withdrawn love is a different intent, and gets
-    # written again.
-    if record is not None and plan.intent is not None and record.intent == plan.intent.key:
-        return plan.to_outcome(OutcomeStatus.SKIPPED, Reason.ALREADY_SYNCED, None)
+    # written again. So does one a user's mapping has moved to another target key.
+    repoint = _repoints(plan, record, target)
+    drift = _drifted(plan, record, repoint)
+    settled = _settled(plan, record, repoint, target, reapply_drift=reapply_drift, drift=drift)
+    if settled is not None:
+        return settled
 
-    if plan.status is not OutcomeStatus.WRITTEN:
-        return plan.to_outcome()
-    if not plan.actionable:
-        return plan.to_outcome(
-            OutcomeStatus.FAILED,
-            Reason.WRITE_FAILED,
-            f"{target.service} produced no write for this track",
-        )
-
-    outcome = plan.to_outcome()
+    outcome = plan.to_outcome(reason=Reason.TARGET_DRIFT if drift else None)
     if dry_run:
         return outcome
 
     try:
+        if repoint and record is not None:
+            # Undo first: the old and new keys can overlap (two Plex copies), and
+            # undoing after would clear what was just written. If the write then
+            # fails, the record still names the old key and the next run retries
+            # both — every undo and write is idempotent.
+            await attempt(
+                lambda: target.undo(record),
+                f"{target.service} undo of the old write for '{track.title}'",
+            )
         await attempt(
             plan.commit, f"{target.service} write for '{track.title}'"
         )
-    except Exception as exc:  # noqa: BLE001 - one failed write must not stop the run
+    # One failed write must not stop the run.
+    except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         logger.error("Write to %s failed for '%s': %s", target.service, track.title, exc)
         return plan.to_outcome(OutcomeStatus.FAILED, Reason.WRITE_FAILED, str(exc))
 
@@ -123,9 +147,75 @@ async def _apply(
             intent=_intent_key(plan),
             rating=plan.intent.rating if plan.intent else None,
             target_key=plan.target_key,
+            # The first write's prior is what the user had; a later re-write of
+            # our own state must not replace it with what we wrote. A re-point
+            # moves to another target key, whose prior is the plan's.
+            prior=plan.existing.prior if record is None or repoint else record.prior,
         ),
     )
     return outcome
+
+
+def _drifted(plan: WritePlan, record: Optional[SyncedTrack], repoint: bool) -> bool:
+    """Whether the target has dropped a write this record says we made.
+
+    A dropped write is the only thing a relay with ``reapply_target_drift`` puts
+    back. A target that still holds *something* for the track was changed by a
+    person, and is left alone — the counterpart of :meth:`Target.undo` refusing
+    to clear a rating somebody re-set after us. The record's intent has to match
+    the plan's: a changed or withdrawn source intent is a rewrite or an undo, not
+    drift.
+
+    The target keys are deliberately not compared. Where the target's own copies
+    moved (a Plex match that now covers a different subset), re-writing is still
+    the right answer and the record follows the write, exactly as it does on any
+    other rewrite; the check that stops a *mapping* from moving a write is
+    ``_repoints``, which needs ``plan.mapped``.
+    """
+    if repoint or record is None or plan.intent is None:
+        return False
+    if record.intent != plan.intent.key or plan.status is not OutcomeStatus.WRITTEN:
+        return False
+    # ``occupied is False``, not ``not occupied``: a target that did not report
+    # its state is not evidence that it holds nothing.
+    return plan.existing.occupied is False and not plan.existing.holds
+
+
+def _settled(  # pylint: disable=too-many-arguments
+    plan: WritePlan,
+    record: Optional[SyncedTrack],
+    repoint: bool,
+    target: Target,
+    *,
+    reapply_drift: bool,
+    drift: bool,
+) -> Optional[TrackOutcome]:
+    """The outcome of a plan that needs no write, or ``None`` if it does."""
+    if (
+        not repoint
+        and record is not None
+        and plan.intent is not None
+        and record.intent == plan.intent.key
+        and not (reapply_drift and drift)
+    ):
+        return plan.to_outcome(OutcomeStatus.SKIPPED, Reason.ALREADY_SYNCED, None)
+    if plan.status is not OutcomeStatus.WRITTEN:
+        return plan.to_outcome()
+    if record is None and plan.existing.holds:
+        # The user's own state, not ours: recording it would let a withdrawal
+        # undo it (contract §3). Same answer in a dry run.
+        return plan.to_outcome(
+            OutcomeStatus.SKIPPED,
+            Reason.ALREADY_ON_TARGET,
+            f"{target.service} already holds this",
+        )
+    if not plan.actionable:
+        return plan.to_outcome(
+            OutcomeStatus.FAILED,
+            Reason.WRITE_FAILED,
+            f"{target.service} produced no write for this track",
+        )
+    return None
 
 
 async def _undo(
@@ -173,7 +263,8 @@ async def _undo(
         return TrackOutcome(
             track, target.service, OutcomeStatus.SKIPPED, Reason.UNRECORDED_TARGET, str(exc)
         )
-    except Exception as exc:  # noqa: BLE001 - one failed undo must not stop the run
+    # One failed undo must not stop the run.
+    except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         logger.error("Undo on %s failed for '%s': %s", target.service, record.key, exc)
         return TrackOutcome(
             track, target.service, OutcomeStatus.FAILED, Reason.WRITE_FAILED, str(exc)
@@ -183,7 +274,20 @@ async def _undo(
     return TrackOutcome(track, target.service, OutcomeStatus.REVERTED, Reason.WITHDRAWN)
 
 
-async def _reconcile(
+# A reconcile that would undo more than this share of a target's records, and
+# at least this many of them, is refused unless the run allows it. Losing most
+# of your loves in one night is far likelier to be a source that answered with
+# an empty or truncated list than to be what the user did.
+MASS_UNDO_RATIO = 0.5
+MASS_UNDO_MIN = 10
+
+
+def is_mass_undo(withdrawn: int, recorded: int) -> bool:
+    """Whether undoing *withdrawn* of *recorded* records needs an explicit yes."""
+    return withdrawn >= MASS_UNDO_MIN and withdrawn > recorded * MASS_UNDO_RATIO
+
+
+async def _reconcile(  # pylint: disable=too-many-arguments
     target: Target,
     *,
     synced: dict[str, SyncedTrack],
@@ -191,16 +295,36 @@ async def _reconcile(
     sync_store: SyncStore,
     source_service: str,
     dry_run: bool,
+    allow_mass_undo: bool,
 ) -> list[TrackOutcome]:
     """Undo the writes whose track the source has stopped rating.
 
     Only rows we recorded are considered, and inside them only rows that say
     what was written — that is the whole of "only undo our own writes".
+
+    A mass undo (see :func:`is_mass_undo`) is refused as a whole: every record
+    it would have undone fails with ``MASS_UNDO_REFUSED`` and stays recorded,
+    so the run is partial and the next run asks again. Dry run refuses the same
+    way, because it promises what a real run would do.
     """
+    withdrawn = [record for key, record in synced.items() if key not in seen]
+    if not allow_mass_undo and is_mass_undo(len(withdrawn), len(synced)):
+        # Each entry point says how to allow it; the engine says only what.
+        detail = f"would undo {len(withdrawn)} of {len(synced)} recorded writes"
+        logger.warning("Refusing mass undo on %s: %s", target.service, detail)
+        return [
+            TrackOutcome(
+                record.track,
+                target.service,
+                OutcomeStatus.FAILED,
+                Reason.MASS_UNDO_REFUSED,
+                detail,
+            )
+            for record in withdrawn
+        ]
+
     outcomes = []
-    for key, record in synced.items():
-        if key in seen:
-            continue
+    for record in withdrawn:
         outcomes.append(
             await _undo(
                 record,
@@ -213,7 +337,7 @@ async def _reconcile(
     return outcomes
 
 
-async def run_tracks(
+async def run_tracks(  # pylint: disable=too-many-arguments
     tracks: Sequence[Track],
     targets: Sequence[Target],
     *,
@@ -221,12 +345,18 @@ async def run_tracks(
     sync_store: SyncStore,
     progress: ProgressSink = NO_PROGRESS,
     dry_run: bool = False,
+    allow_mass_undo: bool = False,
+    reapply_drift: bool = False,
 ) -> RunReport:
     """Relay an already-fetched track list to every target, then reconcile.
 
     *source_service* is required and keyword-only: it is half of the key the
     sync store is written under, so a run that guessed it ("unknown") would
     write records it could never reconcile against.
+
+    *reapply_drift* makes this relay's target non-authoritative: a write the
+    record says we made, which the target has since dropped, is written again.
+    Off by default — see ``_drifted`` for what is not drift.
     """
     outcomes: list[TrackOutcome] = []
     seen = {track.key for track in tracks}
@@ -241,6 +371,7 @@ async def run_tracks(
                 sync_store=sync_store,
                 source_service=source_service,
                 dry_run=dry_run,
+                reapply_drift=reapply_drift,
             )
             outcomes.append(outcome)
             await progress.outcome(outcome)
@@ -252,6 +383,7 @@ async def run_tracks(
             sync_store=sync_store,
             source_service=source_service,
             dry_run=dry_run,
+            allow_mass_undo=allow_mass_undo,
         ):
             outcomes.append(outcome)
             await progress.outcome(outcome)
@@ -275,6 +407,8 @@ async def run(
     sync_store: SyncStore,
     progress: ProgressSink = NO_PROGRESS,
     dry_run: bool = False,
+    allow_mass_undo: bool = False,
+    reapply_drift: bool = False,
 ) -> RunReport:
     """Fetch from *source*, then relay to every target."""
     tracks = await attempt(
@@ -289,4 +423,6 @@ async def run(
         source_service=source.service,
         progress=progress,
         dry_run=dry_run,
+        allow_mass_undo=allow_mass_undo,
+        reapply_drift=reapply_drift,
     )

@@ -9,6 +9,7 @@
 	let {
 		repeat = $bindable(),
 		dryRun = $bindable(),
+		reapplyDrift = $bindable(),
 		mode,
 		busy,
 		canRun,
@@ -17,6 +18,8 @@
 		/** Minutes between runs; 0 means "once". */
 		repeat: number;
 		dryRun: boolean;
+		/** Write again what the targets dropped, instead of leaving their edits. */
+		reapplyDrift: boolean;
 		mode: 'run' | 'reset';
 		busy: boolean;
 		canRun: boolean;
@@ -43,6 +46,13 @@
 			<label class="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
 				<Checkbox bind:checked={dryRun} />
 				<span>Dry run — write nothing</span>
+			</label>
+		{/if}
+
+		{#if mode === 'run'}
+			<label class="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+				<Checkbox bind:checked={reapplyDrift} />
+				<span>Re-apply what a target dropped</span>
 			</label>
 		{/if}
 

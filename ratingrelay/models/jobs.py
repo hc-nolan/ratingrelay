@@ -29,6 +29,13 @@ class Job(SQLModel, table=True):
     # the worker observes at a track boundary. It stays true after the run
     # ends, so the UI can tell "stopped early" from "finished".
     cancel_requested: bool = Field(default=False)
+    # Lets this one run undo more than the mass-undo guard allows. Never
+    # carried to a recurring run's successor: it answers one refusal.
+    allow_mass_undo: bool = Field(default=False)
+    # This relay's target is not authoritative: a write it has since dropped is
+    # written again (see ``engine.pipeline._drifted``). A policy rather than a
+    # one-run override, so a recurring relay's successor keeps it.
+    reapply_target_drift: bool = Field(default=False)
 
 
 class TrackEvent(SQLModel, table=True):

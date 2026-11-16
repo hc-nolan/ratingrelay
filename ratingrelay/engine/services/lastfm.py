@@ -14,7 +14,8 @@ from typing import Optional
 import pylast
 
 from ratingrelay.engine.credentials import LastFmCredentials
-from ratingrelay.engine.plan import WritePlan
+from ratingrelay.engine.normalize import track_key
+from ratingrelay.engine.plan import Existing, WritePlan
 from ratingrelay.engine.services import MappedTarget
 from ratingrelay.engine.store import MappingStore, SyncedTrack
 from ratingrelay.engine.thread import run_sync
@@ -28,6 +29,31 @@ from ratingrelay.engine.types import (
 
 WRITE_DELAY_SECONDS = 0.3
 
+# Last.fm error codes that mean "try again", not "you asked for the wrong thing":
+# operation failed, service offline, temporarily unavailable, rate limited — plus
+# the HTTP 5xx statuses pylast raises before it parses a body.
+_TRANSIENT_STATUSES = {"8", "11", "16", "29", "500", "502", "503", "504"}
+
+
+def _transient(exc: Exception) -> bool:
+    if isinstance(exc, pylast.NetworkError):
+        return True
+    return isinstance(exc, pylast.WSError) and str(exc.status) in _TRANSIENT_STATUSES
+
+
+async def _call(fn):
+    """Run a blocking pylast call, surfacing transport trouble as ``OSError``.
+
+    pylast wraps every connection failure in its own ``NetworkError``, which is
+    not an ``OSError``, so without this the engine's retry would never see one.
+    """
+    try:
+        return await run_sync(fn)
+    except pylast.PyLastError as exc:
+        if _transient(exc):
+            raise ConnectionError(f"Last.fm: {exc}") from exc
+        raise
+
 
 class LastFmClient:
     """An async facade over the signed pylast session."""
@@ -39,7 +65,7 @@ class LastFmClient:
     async def network(self) -> "pylast.LastFMNetwork":
         if self._network is None:
             creds = self._credentials
-            self._network = await run_sync(
+            self._network = await _call(
                 lambda: pylast.LastFMNetwork(
                     api_key=creds.api_key,
                     api_secret=creds.api_secret,
@@ -51,18 +77,18 @@ class LastFmClient:
 
     async def loved(self) -> list[Track]:
         network = await self.network()
-        user = await run_sync(network.get_authenticated_user)
-        loved = await run_sync(lambda: user.get_loved_tracks(limit=None))
+        user = await _call(network.get_authenticated_user)
+        loved = await _call(lambda: user.get_loved_tracks(limit=None))
         return [Track(artist=str(item.track.artist), title=str(item.track.title)) for item in loved]
 
     async def love(self, artist: str, title: str) -> None:
         track = pylast.Track(artist, title, await self.network())
-        await run_sync(track.love)
+        await _call(track.love)
         await asyncio.sleep(WRITE_DELAY_SECONDS)
 
     async def unlove(self, artist: str, title: str) -> None:
         track = pylast.Track(artist, title, await self.network())
-        await run_sync(track.unlove)
+        await _call(track.unlove)
         await asyncio.sleep(WRITE_DELAY_SECONDS)
 
 
@@ -85,6 +111,13 @@ class LastFmTarget(MappedTarget):
     def __init__(self, client: LastFmClient, mappings: MappingStore):
         super().__init__(mappings)
         self._client = client
+        self._loved: Optional[set[str]] = None
+
+    async def loved_keys(self) -> set[str]:
+        """The account's loves as normalized keys, fetched once per run."""
+        if self._loved is None:
+            self._loved = {loved.key for loved in await self._client.loved()}
+        return self._loved
 
     async def plan(self, track: Track) -> WritePlan:
         artist, title, _ = await self.mapped(track)
@@ -100,11 +133,15 @@ class LastFmTarget(MappedTarget):
         async def commit() -> None:
             await self._client.love(artist, title)
 
+        loved = track_key(artist, title) in await self.loved_keys()
         return WritePlan(
             track,
             self.service,
             intent=Intent(IntentKind.LOVE),
             target_key=json.dumps([artist, title]),
+            mapped=await self.has_mapping(track),
+            # A love has no value to replace: loved or not is the whole state.
+            existing=Existing(holds=loved, occupied=loved),
             commit=commit,
         )
 

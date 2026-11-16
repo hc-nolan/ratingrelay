@@ -1,8 +1,7 @@
 <script lang="ts">
-	import { plexStarOptions } from '$lib/relay';
-	import type { ListenBrainzTargetConfig, PlexTargetConfig, TargetOption } from '$lib/types/relay';
+	import { starLabel } from '$lib/relay';
+	import type { TargetOption } from '$lib/types/relay';
 	import { cn } from '$lib/utils';
-	import { Select } from '$lib/components/ui/select';
 	import ServiceMark from './ServiceMark.svelte';
 
 	let {
@@ -10,22 +9,19 @@
 		allocated,
 		onadd,
 		onremove,
-		plexConfig,
-		lbzConfig
+		plexWrite,
+		direction
 	}: {
 		option: TargetOption;
 		/** Allocated cards are the same card, switched on: filled, accent-edged, configured. */
 		allocated: boolean;
 		onadd: () => void;
 		onremove: () => void;
-		plexConfig?: PlexTargetConfig;
-		lbzConfig?: ListenBrainzTargetConfig;
+		/** What a Plex destination writes: the threshold for the relay's direction (null: unknown). */
+		plexWrite?: { rating: number | null };
+		/** The relay's direction, which a ListenBrainz target writes. */
+		direction?: 'love' | 'hate';
 	} = $props();
-
-	const choices = [
-		{ value: 'love', label: 'Love' },
-		{ value: 'hate', label: 'Hate' }
-	] as const;
 </script>
 
 <!-- One card per target, in a grid that does not reflow when you pick one:
@@ -89,31 +85,19 @@
 
 	<div class="flex min-h-6 items-center pl-[34px]">
 		{#if allocated}
-			{#if option.id === 'plex' && plexConfig}
-				<span class="mr-1.5 text-sm text-muted-foreground">Rate as</span>
-				<Select bind:value={plexConfig.rating} label="Rating to write" options={plexStarOptions} />
+			{#if option.id === 'plex' && plexWrite}
+				<span class="text-sm text-muted-foreground">
+					{plexWrite.rating === null
+						? 'Rate at the threshold'
+						: `Rate ${starLabel(plexWrite.rating)}`}
+				</span>
 			{:else if option.id === 'lastfm'}
 				<span class="text-sm text-muted-foreground">Love every track</span>
-			{:else if lbzConfig}
-				<div
-					class="inline-flex items-center gap-0.5 rounded-md border border-border bg-background p-0.5"
-				>
-					{#each choices as choice (choice.value)}
-						<button
-							type="button"
-							class={cn(
-								'rounded px-2.5 py-0.5 text-sm transition-colors',
-								lbzConfig.feedbackType === choice.value
-									? 'bg-primary text-primary-foreground'
-									: 'text-muted-foreground hover:text-foreground'
-							)}
-							onclick={() => (lbzConfig.feedbackType = choice.value)}
-							aria-pressed={lbzConfig.feedbackType === choice.value}
-						>
-							{choice.label}
-						</button>
-					{/each}
-				</div>
+			{:else if option.id === 'listenbrainz' && direction}
+				<!-- No toggle: a target writes what the source reads. -->
+				<span class="text-sm text-muted-foreground">
+					{direction === 'love' ? 'Love' : 'Hate'} every track
+				</span>
 			{/if}
 		{:else}
 			<span class="truncate text-sm text-muted-foreground/70">{option.hint}</span>
@@ -126,7 +110,7 @@
 		<button
 			type="button"
 			onclick={onadd}
-			aria-label="Add {option.name} as a target"
+			aria-label="Add {option.name} as a destination"
 			class="absolute inset-0 rounded-lg focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
 		></button>
 	{/if}

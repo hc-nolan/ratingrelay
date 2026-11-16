@@ -5,8 +5,10 @@
 
 set shell := ["bash", "-uc"]
 
-# API port read from .config / environment.
-api_port := `uv run python -c "from ratingrelay.settings import get_settings; print(get_settings().port)"`
+# API port read from .config / environment. Read inside the recipes that need it,
+# not as a top-level backtick: just evaluates those on every invocation, so
+# `just check` would need uv (and CI's frontend job has none).
+port_cmd := 'uv run python -c "from ratingrelay.settings import get_settings; print(get_settings().port)"'
 
 # Install backend and frontend dependencies.
 install:
@@ -19,15 +21,17 @@ api:
 
 # Run the SvelteKit dev server on :5173, proxying /api to the API.
 web:
-    cd frontend && BACKEND_URL="http://localhost:{{api_port}}" pnpm dev
+    port="$({{port_cmd}})" && cd frontend && BACKEND_URL="http://localhost:$port" pnpm dev
 
 # Run the API and the dev server together. Ctrl-C stops both.
 dev:
     #!/usr/bin/env bash
     set -euo pipefail
     trap 'kill 0' EXIT INT TERM
+    # Before the cd: settings read .config from the working directory.
+    port="$({{port_cmd}})"
     uv run app.py &
-    (cd frontend && BACKEND_URL="http://localhost:{{api_port}}" pnpm dev) &
+    (cd frontend && BACKEND_URL="http://localhost:$port" pnpm dev) &
     wait
 
 # Backend tests.
@@ -50,10 +54,12 @@ relays:
 relay-check *args:
     uv run ratingrelay relay --target lastfm --target listenbrainz --dry-run {{args}}
 
-# Frontend typecheck and lint. eslint is still red: see docs/plans on the v3 baseline.
+# Frontend typecheck and lint.
 check:
     cd frontend && pnpm check
     cd frontend && pnpm lint
+    cd frontend && pnpm exec prettier --check ../scripts/screenshots.mjs
+    node --check scripts/screenshots.mjs
 
 # Build the frontend bundle that FastAPI serves.
 build:
@@ -65,10 +71,11 @@ migrate:
 
 # Demo: API on :8199 with a seeded throwaway database, Vite on :5174. No real services are called.
 demo:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    trap 'kill 0' EXIT INT TERM
-    uv run python scripts/demo.py &
-    (cd frontend && BACKEND_URL="http://localhost:8199" pnpm exec vite dev --port 5174 --strictPort) &
-    wait
+    bash scripts/demo-stack.sh
+
+# Re-shoot docs/screenshots from a seeded demo stack this recipe starts and stops.
+screenshots:
+    # Any Chrome or Chromium works: CHROMIUM=/path/to/chrome just screenshots.
+    bash scripts/demo-stack.sh --wait-ready node scripts/screenshots.mjs
+    git status --short docs/screenshots
 

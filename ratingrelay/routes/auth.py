@@ -12,10 +12,14 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ratingrelay.core.plex_auth import (
+    PIN_COOKIE,
+    clear_pin_cookie,
     create_session,
     get_session,
+    new_nonce,
     public_url,
     remove_session,
+    set_pin_cookie,
 )
 from ratingrelay.core.session import (
     SESSION_COOKIE,
@@ -105,16 +109,21 @@ def _status(body: AuthStatusResponse) -> Response:
 
 
 @router.post("/plex/init", response_model=LoginInitResponse)
-async def login_init(request: Request) -> LoginInitResponse:
-    """Open a Plex PIN the browser can confirm in a popup."""
+async def login_init(request: Request, response: Response) -> LoginInitResponse:
+    """Open a Plex PIN the browser can confirm in a popup.
+
+    The PIN is redeemable only by this browser: see :data:`PIN_COOKIE`.
+    """
     forward_url = public_url(
         settings.base_url, str(request.base_url), "/api/auth/plex/done"
     )
+    nonce = new_nonce()
     try:
-        pin_login, auth_url = await run_sync(lambda: create_session(forward_url))
+        pin_login, auth_url = await run_sync(lambda: create_session(forward_url, nonce))
     except Exception as exc:  # noqa: BLE001 - reported as a 500 to the UI
         logger.error("Failed to create Plex login session: %s", exc)
         raise HTTPException(status_code=502, detail="Plex did not answer") from exc
+    set_pin_cookie(response, request, nonce)
     return LoginInitResponse(pin_id=int(pin_login._id), auth_url=auth_url)
 
 
@@ -127,9 +136,10 @@ async def login_poll(
     """Wait for the PIN to be confirmed, then check *who* confirmed it.
 
     Only the owner's Plex account may hold a session. Anyone else who can reach
-    this relay can start a login, but it ends at a 403.
+    this relay can start a login, but it ends at a 403. And only the browser
+    that opened the PIN may redeem it, so knowing a PIN id is not enough.
     """
-    pin_login = get_session(pin_id)
+    pin_login = get_session(pin_id, request.cookies.get(PIN_COOKIE))
     if pin_login is None:
         raise HTTPException(status_code=404, detail="Login expired")
 
@@ -171,6 +181,7 @@ async def login_poll(
     if not key_token:
         raise HTTPException(status_code=409, detail="Relay has no Plex token")
     _set_session_cookie(payload, request, user_id, key_token)
+    clear_pin_cookie(payload)
     logger.info("Signed in as %s", owner_name)
     return payload
 

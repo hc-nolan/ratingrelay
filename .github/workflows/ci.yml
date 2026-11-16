@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main, v3]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+      - uses: extractions/setup-just@v3
+      - run: uv sync --frozen
+      - name: Test
+        run: just test
+      - name: Lint
+        run: just lint
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - uses: extractions/setup-just@v3
+      - run: pnpm install --frozen-lockfile
+        working-directory: frontend
+      - name: Typecheck and lint
+        run: just check
+      - name: Build
+        run: pnpm build
+        working-directory: frontend

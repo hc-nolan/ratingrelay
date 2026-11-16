@@ -2,18 +2,15 @@
 
 This is the seam AGENTS.md asks for — ``api``/``core`` marshal, the engine
 decides. Everything here is translation: a pydantic config becomes a source or
-target, a dict becomes a :class:`~ratingrelay.engine.types.Track`, and the
-database becomes the engine's two stores.
+target, and an engine :class:`~ratingrelay.engine.types.Track` becomes the
+dict shape the worker and the SPA read.
 """
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ratingrelay.core.factory import (  # re-exported for callers of adapters.stores
-    SOURCE_SERVICES,
-    TARGET_SERVICES,
-    mbid_cache,
+from ratingrelay.core.factory import (
+    relay_identity,
     source_for_service,
-    stores,
     target_for_service,
 )
 from ratingrelay.engine.services import Source, Target
@@ -26,17 +23,6 @@ from ratingrelay.schemas.relay import (
     PlexFromConfig,
     PlexToConfig,
 )
-
-
-def track_from_dict(track: dict) -> Track:
-    """Build an engine track from the dict shape the API and worker already use."""
-    return Track(
-        artist=track.get("artist", ""),
-        title=track.get("title", ""),
-        recording_mbid=track.get("recording_mbid") or None,
-        track_mbid=track.get("track_mbid") or None,
-        rating=track.get("plex_rating"),
-    )
 
 
 def track_to_dict(track: Track) -> dict:
@@ -54,12 +40,7 @@ def track_to_dict(track: Track) -> dict:
 async def source_for(db: AsyncSession, config: object) -> Source:
     """Build the source described by a request config."""
     if isinstance(config, PlexFromConfig):
-        return await source_for_service(
-            db,
-            "plex",
-            rating_threshold=config.rating_threshold,
-            comparison=config.comparison,
-        )
+        return await source_for_service(db, "plex", feedback_type=config.feedback_type)
     if isinstance(config, LastFMFromConfig):
         return await source_for_service(db, "lastfm")
     if isinstance(config, ListenBrainzFromConfig):
@@ -69,14 +50,23 @@ async def source_for(db: AsyncSession, config: object) -> Source:
     raise ValueError(f"Unknown source service: {config}")
 
 
-async def target_for(db: AsyncSession, config: object) -> Target:
-    """Build the target described by a request config."""
+def relay_for(config: object) -> str:
+    """The relay identity of a request's source config (see ``relay_identity``)."""
+    if isinstance(config, PlexFromConfig):
+        return relay_identity("plex", feedback_type=config.feedback_type)
+    if isinstance(config, LastFMFromConfig):
+        return relay_identity("lastfm")
+    if isinstance(config, ListenBrainzFromConfig):
+        return relay_identity("listenbrainz", feedback_type=config.feedback_type)
+    raise ValueError(f"Unknown source service: {config}")
+
+
+async def target_for(db: AsyncSession, config: object, relay: str = "love") -> Target:
+    """Build the target described by a request config, for a run of *relay*."""
     if isinstance(config, PlexToConfig):
-        return await target_for_service(db, "plex", plex_rating=config.rating)
+        return await target_for_service(db, "plex", relay=relay)
     if isinstance(config, LastFMToConfig):
-        return await target_for_service(db, "lastfm")
+        return await target_for_service(db, "lastfm", relay=relay)
     if isinstance(config, ListenBrainzToConfig):
-        return await target_for_service(
-            db, "listenbrainz", feedback_type=config.feedback_type
-        )
+        return await target_for_service(db, "listenbrainz", relay=relay)
     raise ValueError(f"Unknown target service: {config}")

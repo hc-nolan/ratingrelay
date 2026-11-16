@@ -15,6 +15,7 @@ from ratingrelay.engine import (
     Reason,
     SyncedTrack,
     Track,
+    TrackMapping,
     pipeline,
 )
 from ratingrelay.engine.normalize import track_key
@@ -38,6 +39,13 @@ class FakePlexLibrary:
             raise RuntimeError(self._fail_with)
         self.writes.append((external_id, rating))
 
+    async def current_rating(self, external_id: str) -> Optional[float]:
+        rating = next((c.rating for c in self._candidates if c.external_id == external_id), None)
+        for key, written in self.writes:
+            if key == external_id:
+                rating = written
+        return rating
+
 
 class FakeLastFmClient:
     def __init__(self, fail_with: Optional[str] = None):
@@ -53,6 +61,9 @@ class FakeLastFmClient:
             raise RuntimeError(self._fail_with)
         self.unloves.append((artist, title))
 
+    async def loved(self) -> list:
+        return []
+
 
 class FakeListenBrainzClient:
     def __init__(self, fail_with: Optional[str] = None):
@@ -63,6 +74,9 @@ class FakeListenBrainzClient:
         if self._fail_with is not None:
             raise RuntimeError(self._fail_with)
         self.submissions.append((score, mbid))
+
+    async def feedback(self, score: int) -> list:
+        return []
 
 
 class CountingResolver:
@@ -339,3 +353,111 @@ async def test_the_recorded_mbid_is_what_an_undo_uses():
 
     assert client.submissions == [(0, "rec-1")]
     assert resolver.calls == 0
+
+
+async def _loved(count: int) -> tuple[MemorySyncStore, list[Track]]:
+    store = MemorySyncStore()
+    tracks = [Track("Artist", f"Song {n}") for n in range(count)]
+    for track in tracks:
+        await store.remember(
+            "plex",
+            "lastfm",
+            SyncedTrack(track.key, intent="love", target_key=f'["Artist", "{track.title}"]'),
+        )
+    return store, tracks
+
+
+async def test_a_mass_undo_is_refused_and_keeps_every_record():
+    """A source that answers with nothing must not un-love the whole account."""
+    target, client = _lastfm_target()
+    store, _ = await _loved(pipeline.MASS_UNDO_MIN)
+
+    for dry_run in (True, False):
+        report = await pipeline.run_tracks(
+            [], [target], source_service="plex", sync_store=store, dry_run=dry_run
+        )
+
+        assert {o.status for o in report.outcomes} == {OutcomeStatus.FAILED}
+        assert {o.reason for o in report.outcomes} == {Reason.MASS_UNDO_REFUSED}
+        assert len(report.outcomes) == pipeline.MASS_UNDO_MIN
+        assert report.status != "completed"
+    assert client.unloves == []
+    assert len(store.records[("plex", "lastfm")]) == pipeline.MASS_UNDO_MIN
+
+
+async def test_a_mass_undo_runs_when_the_run_allows_it():
+    target, client = _lastfm_target()
+    store, _ = await _loved(pipeline.MASS_UNDO_MIN)
+
+    report = await pipeline.run_tracks(
+        [], [target], source_service="plex", sync_store=store, allow_mass_undo=True
+    )
+
+    assert {o.status for o in report.outcomes} == {OutcomeStatus.REVERTED}
+    assert len(client.unloves) == pipeline.MASS_UNDO_MIN
+    assert store.records[("plex", "lastfm")] == {}
+
+
+async def test_withdrawing_a_minority_is_an_ordinary_reconcile():
+    target, client = _lastfm_target()
+    store, tracks = await _loved(2 * pipeline.MASS_UNDO_MIN)
+    kept = tracks[: pipeline.MASS_UNDO_MIN]
+
+    report = await pipeline.run_tracks(kept, [target], source_service="plex", sync_store=store)
+
+    assert len(client.unloves) == pipeline.MASS_UNDO_MIN
+    assert Reason.MASS_UNDO_REFUSED not in {o.reason for o in report.outcomes}
+
+
+def test_a_small_library_is_never_a_mass_undo():
+    assert not pipeline.is_mass_undo(pipeline.MASS_UNDO_MIN - 1, pipeline.MASS_UNDO_MIN - 1)
+    assert pipeline.is_mass_undo(pipeline.MASS_UNDO_MIN, pipeline.MASS_UNDO_MIN)
+
+
+# ---------------------------------------------------------------------------
+# A user's mapping outranks what an earlier run resolved
+# ---------------------------------------------------------------------------
+
+
+async def test_a_mapping_made_after_the_write_re_points_it():
+    """The recorded MBID is a hint; a correction made later must take effect.
+
+    The old feedback is withdrawn (it was ours) before the corrected one is given.
+    """
+    client = FakeListenBrainzClient()
+    track = Track("Artist", "Song")
+    mappings = MemoryMappingStore(
+        {"listenbrainz": {track.key: TrackMapping("Artist", "Song", "rec-right")}}
+    )
+    target = ListenBrainzTarget(client, mappings, CountingResolver("rec-wrong"))
+    store = MemorySyncStore()
+    await store.remember(
+        "plex",
+        "listenbrainz",
+        SyncedTrack(track.key, recording_mbid="rec-wrong", intent="love", target_key="rec-wrong"),
+    )
+
+    report = await pipeline.run_tracks([track], [target], source_service="plex", sync_store=store)
+
+    assert report.outcomes[0].status is OutcomeStatus.WRITTEN
+    assert client.submissions == [(0, "rec-wrong"), (1, "rec-right")]
+    assert store.records[("plex", "listenbrainz")][track.key].target_key == "rec-right"
+
+    # and once converged it is a no-op again
+    await pipeline.run_tracks([track], [target], source_service="plex", sync_store=store)
+    assert len(client.submissions) == 2
+
+
+async def test_a_matcher_change_of_mind_never_re_points_a_record():
+    """Without a mapping, a different match for a synced track is not a re-point."""
+    target, library = _plex_target([Candidate("Artist", "Song", external_id="2")])
+    store = MemorySyncStore()
+    track = Track("Artist", "Song")
+    await store.remember(
+        "plex", "plex", SyncedTrack(track.key, intent="rating:10.0", target_key='["1"]')
+    )
+
+    report = await pipeline.run_tracks([track], [target], source_service="plex", sync_store=store)
+
+    assert report.outcomes[0].reason is Reason.ALREADY_SYNCED
+    assert library.writes == []

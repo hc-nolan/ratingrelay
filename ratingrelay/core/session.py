@@ -26,7 +26,6 @@ from plexapi.myplex import MyPlexAccount
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ratingrelay.db import session_maker
-
 from ratingrelay.db.credentials import get_credential
 from ratingrelay.engine.thread import run_sync
 from ratingrelay.models.services import ServiceName

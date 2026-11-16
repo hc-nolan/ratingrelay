@@ -124,6 +124,29 @@ These are the point of the tool. v1 got them right; keep them that way.
    attached, and a human resolves them.
 7. **Idempotent and resumable.** Re-running a completed job is a no-op. Interrupted
    jobs resume without duplicating writes.
+8. **A service is not an account.** An account is addressed by a **ref**
+   (`engine/refs.py`): the bare kind for the account that already exists
+   (`lastfm`), `kind:name` for a second one (`lastfm:old`). Very little here is
+   negotiable:
+   - The bare kind is the first account's ref **permanently**. That is why adding a
+     second account moves no history, and why a ref is produced by `account_ref`
+     and never assembled at a call site — a wrong ref is a silent cross-account
+     reconcile, and the mass-undo guard would be the only thing between that and a
+     wipe.
+   - `lastfm` → `lastfm:new` is a **migration** between two accounts and is legal;
+     `lastfm` → `lastfm` is one account relaying into itself and is refused
+     (`factory.pairing_refusal`, judged on refs). Capabilities that belong to the
+     service are still judged on the *kind*: a hate relay cannot reach any Last.fm
+     account.
+   - The bare kind is a **slot** — disconnecting and reconnecting refills it, and
+     the relay keeps reconciling against the history written under it (that is what
+     switching Plex servers already meant). A **named** ref is an identity: once
+     removed, its ref is never reissued, so a different account cannot inherit its
+     records. Removal is always a soft delete that keeps no secret material.
+   - Settings (`PLEX_TOKEN`, `LASTFM_TOKEN`, …) describe **one** account: the one
+     whose ref is the bare kind. An environment variable cannot name a second one.
+   - Mappings resolve ref → kind → `all`, so a mapping written before a second
+     account existed still applies to it.
 
 ## Conventions
 

@@ -5,8 +5,10 @@
 
 set shell := ["bash", "-uc"]
 
-# API port read from .config / environment.
-api_port := `uv run python -c "from ratingrelay.settings import get_settings; print(get_settings().port)"`
+# API port read from .config / environment. Read inside the recipes that need it,
+# not as a top-level backtick: just evaluates those on every invocation, so
+# `just check` would need uv (and CI's frontend job has none).
+port_cmd := 'uv run python -c "from ratingrelay.settings import get_settings; print(get_settings().port)"'
 
 # Install backend and frontend dependencies.
 install:
@@ -19,7 +21,7 @@ api:
 
 # Run the SvelteKit dev server on :5173, proxying /api to the API.
 web:
-    cd frontend && BACKEND_URL="http://localhost:{{api_port}}" pnpm dev
+    cd frontend && BACKEND_URL="http://localhost:$({{port_cmd}})" pnpm dev
 
 # Run the API and the dev server together. Ctrl-C stops both.
 dev:
@@ -27,7 +29,7 @@ dev:
     set -euo pipefail
     trap 'kill 0' EXIT INT TERM
     uv run app.py &
-    (cd frontend && BACKEND_URL="http://localhost:{{api_port}}" pnpm dev) &
+    (cd frontend && BACKEND_URL="http://localhost:$({{port_cmd}})" pnpm dev) &
     wait
 
 # Backend tests.

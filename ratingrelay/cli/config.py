@@ -83,6 +83,15 @@ class RelaySpec:
             raise ConfigError(
                 f"{self.name}: feedback_type must be one of {', '.join(FEEDBACK_TYPES)}"
             )
+        # Lazy, like ``relay`` below: parsing a config must not need settings.
+        from ratingrelay.core.factory import (  # pylint: disable=import-outside-toplevel
+            unsupported_target,
+        )
+
+        for target in self.targets:
+            refusal = unsupported_target(self.relay, target)
+            if refusal:
+                raise ConfigError(f"{self.name}: {refusal}")
 
     @property
     def relay(self) -> str:

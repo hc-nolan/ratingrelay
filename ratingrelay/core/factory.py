@@ -49,6 +49,18 @@ def relay_identity(service: str, *, feedback_type: str = "love") -> str:
     raise ValueError(f"Unknown source service: {service}")
 
 
+# Targets that can only record a love. Writing a hate relay to one would love the
+# hated tracks, so that pairing is refused before anything is fetched.
+LOVE_ONLY_TARGETS = ("lastfm",)
+
+
+def unsupported_target(relay: str, target: str) -> Optional[str]:
+    """Why *target* cannot receive a run of *relay*, or ``None`` if it can."""
+    if relay == "hate" and target in LOVE_ONLY_TARGETS:
+        return f"{target} has no hate to write; a hate relay cannot target it"
+    return None
+
+
 def plex_threshold(relay: str) -> float:
     """The Plex rating that means *relay* (``love``/``hate``), from settings.
 
@@ -124,6 +136,11 @@ async def target_for_service(
     direction's threshold (:func:`plex_threshold`), and needs the direction to
     know whether a copy already rated above (love) or below (hate) it holds it.
     """
+    refusal = unsupported_target(relay, service)
+    if refusal:
+        # Also here, not only where configs are accepted: a job stored before
+        # the pairing was refused must fail, not love what the user hates.
+        raise ValueError(refusal)
     _, mappings = stores(db)
     if service == "plex":
         library = plex_library or PlexLibrary(await plex_credentials(db))

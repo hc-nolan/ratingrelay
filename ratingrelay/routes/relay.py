@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ratingrelay.core import adapters
+from ratingrelay.core.factory import unsupported_target
 from ratingrelay.core.relay import execute_relay
 from ratingrelay.db import get_async_session
 from ratingrelay.schemas.relay import (
@@ -49,6 +51,11 @@ async def run_relay(
         source, (PlexFromConfig, LastFMFromConfig, ListenBrainzFromConfig)
     ):
         raise HTTPException(status_code=400, detail="Unknown source service")
+    relay = adapters.relay_for(source)
+    for target in body.targets:
+        refusal = unsupported_target(relay, target.service)
+        if refusal:
+            raise HTTPException(status_code=422, detail=refusal)
 
     try:
         result = await execute_relay(

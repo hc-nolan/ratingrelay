@@ -267,10 +267,24 @@
 		else lbzTargetEnabled = on;
 	}
 
-	/** Targets the flow may offer: connected, and never the source itself. */
+	/** Loves or hates: what the source reads, so what a Plex target writes. Mirrors relay_identity. */
+	let relayDirection = $derived<'love' | 'hate'>(
+		selectedSource === 'plex'
+			? plexSourceConfig.feedbackType
+			: selectedSource === 'listenbrainz'
+				? lbzSourceConfig.feedbackType
+				: 'love'
+	);
+
+	/**
+	 * Targets the flow may offer: connected, never the source itself, and never
+	 * Last.fm for a hate relay (it has no hate, so it would love them). Mirrors
+	 * unsupported_target.
+	 */
 	const availableTargets = $derived(
 		targetCatalog.filter((t) => {
 			if (t.id === selectedSource) return false;
+			if (t.id === 'lastfm' && relayDirection === 'hate') return false;
 			if (t.id === 'plex') return plex.status === 'connected' && !!plex.server_name;
 			if (t.id === 'lastfm') return lastfm.status === 'connected';
 			return listenbrainz.status === 'connected';
@@ -297,18 +311,12 @@
 			resetTargetService = resetOptions[0].id;
 		}
 		for (const id of ['plex', 'lastfm', 'listenbrainz']) {
-			if (id === selectedSource && isAllocated(id)) setAllocated(id, false);
+			if (isAllocated(id) && !availableTargets.some((t) => t.id === id)) {
+				setAllocated(id, false);
+			}
 		}
 	});
 
-	/** Loves or hates: what the source reads, so what a Plex target writes. Mirrors relay_identity. */
-	let relayDirection = $derived<'love' | 'hate'>(
-		selectedSource === 'plex'
-			? plexSourceConfig.feedbackType
-			: selectedSource === 'listenbrainz'
-				? lbzSourceConfig.feedbackType
-				: 'love'
-	);
 	let plexWrite = $derived({
 		rating: data.thresholds
 			? relayDirection === 'love'

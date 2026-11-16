@@ -39,7 +39,12 @@ direction, relay identity, overlap and range validation, defaults, endpoint);
 CLI tests for the removed keys and flags; a jobs-API test for an older stored
 comparison.
 
-## Known gap (not in scope)
+## Hate relays and Last.fm
 
-A Plex *hate* relay to Last.fm loves the hated tracks, because Last.fm has no hate.
-It should be refused at config time.
+Last.fm has no hate, so a Plex or ListenBrainz hate relay to Last.fm would love
+the hated tracks. `factory.unsupported_target` refuses the pairing, and every
+entry point asks it: `RelaySpec` (config file and flags, exit 2), `POST
+/api/relay/jobs` and `/api/relay/run` (422), and the relay page, which doesn't
+offer Last.fm for a hate relay. `target_for_service` asks it too, so a job queued
+before the refusal existed fails every track on Last.fm with the reason instead
+of writing.

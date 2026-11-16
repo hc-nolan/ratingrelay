@@ -150,7 +150,9 @@ def test_a_config_file_cannot_switch_the_mass_undo_guard_off(tmp_path):
 
 
 def test_the_direction_reaches_the_spec():
-    args = cli.build_parser().parse_args(["relay", "--feedback-type", "hate"])
+    args = cli.build_parser().parse_args(
+        ["relay", "--feedback-type", "hate", "--target", "listenbrainz"]
+    )
     spec = cli.spec_from_args(args)
 
     assert spec.feedback_type == "hate"
@@ -202,7 +204,7 @@ def test_a_config_file_can_hold_several_relays(tmp_path):
 [[relay]]
 name = "nightly"
 source = "plex"
-targets = ["lastfm", "listenbrainz"]
+targets = ["listenbrainz"]
 feedback_type = "hate"
 
 [[relay]]
@@ -216,7 +218,7 @@ dry_run = true
     specs = load_relays(path)
 
     assert [spec.name for spec in specs] == ["nightly", "reverse"]
-    assert specs[0].targets == ("lastfm", "listenbrainz")
+    assert specs[0].targets == ("listenbrainz",)
     assert specs[0].feedback_type == "hate"
     assert specs[1].dry_run is True
 
@@ -544,3 +546,17 @@ def test_the_report_says_why_a_mass_undo_failed_and_how_to_allow_it():
 
     assert text.count("refused on lastfm") == 1
     assert "would undo 12 of 12 recorded writes (pass --allow-mass-undo)" in text
+
+
+@pytest.mark.parametrize("source", ["plex", "listenbrainz"])
+def test_a_hate_relay_to_lastfm_is_refused(source):
+    with pytest.raises(ConfigError, match="hate relay"):
+        RelaySpec(source=source, targets=("lastfm",), feedback_type="hate")
+
+
+def test_a_hate_relay_to_lastfm_is_refused_from_flags():
+    args = cli.build_parser().parse_args(
+        ["relay", "--feedback-type", "hate", "--target", "lastfm"]
+    )
+    with pytest.raises(ConfigError, match="hate relay"):
+        cli.spec_from_args(args)

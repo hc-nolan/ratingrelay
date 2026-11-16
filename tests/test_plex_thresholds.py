@@ -97,3 +97,19 @@ async def test_the_ui_can_read_the_thresholds(monkeypatch):
     body = await relay_routes.thresholds()
 
     assert (body.love_threshold, body.hate_threshold) == (6.0, 3.0)
+
+
+@pytest.mark.parametrize("source", ["plex", "listenbrainz"])
+def test_a_hate_relay_cannot_target_lastfm(source):
+    relay = factory.relay_identity(source, feedback_type="hate")
+
+    assert factory.unsupported_target(relay, "lastfm")
+    assert factory.unsupported_target(relay, "listenbrainz") is None
+    assert factory.unsupported_target("love", "lastfm") is None
+
+
+async def test_a_stored_hate_job_cannot_build_a_lastfm_target(thresholds):
+    # A job queued before the pairing was refused reaches the factory directly;
+    # it must fail there instead of loving what the user hates.
+    with pytest.raises(ValueError, match="hate relay"):
+        await factory.target_for_service(None, "lastfm", relay="hate")

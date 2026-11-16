@@ -146,9 +146,12 @@ async def test_a_relay_that_would_fight_an_active_one_is_refused(client):
 
 
 async def test_opposite_directions_may_share_a_pair(client):
-    loves = await client.post("/api/relay/jobs", json=PAYLOAD)
+    lbz = {"service": "listenbrainz"}
+    loves = await client.post(
+        "/api/relay/jobs", json={"source": PLEX_SOURCE, "targets": [lbz]}
+    )
     hates = {**PLEX_SOURCE, "feedback_type": "hate"}
-    resp = await client.post("/api/relay/jobs", json={"source": hates, "targets": [LFM_TARGET]})
+    resp = await client.post("/api/relay/jobs", json={"source": hates, "targets": [lbz]})
     assert loves.status_code == 201
     assert resp.status_code == 201
 
@@ -157,7 +160,8 @@ async def test_a_plex_comparison_from_an_older_build_keeps_its_direction(client)
     """``comparison: lte`` was a hate relay. Pydantic ignores unknown keys, so
     without the legacy mapping it would come back as a love relay."""
     legacy = {"service": "plex", "rating_threshold": 2.0, "comparison": "lte"}
-    resp = await client.post("/api/relay/jobs", json={"source": legacy, "targets": [LFM_TARGET]})
+    lbz = {"service": "listenbrainz", "feedback_type": "hate"}
+    resp = await client.post("/api/relay/jobs", json={"source": legacy, "targets": [lbz]})
 
     assert resp.status_code == 201
     assert resp.json()["source_config"] == {"service": "plex", "feedback_type": "hate"}
@@ -220,3 +224,19 @@ async def test_cancelling_a_queued_job_cancels_it(client):
 
     assert resp.status_code == 200
     assert resp.json()["status"] == "cancelled"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        {"service": "plex", "feedback_type": "hate"},
+        {"service": "listenbrainz", "feedback_type": "hate"},
+    ],
+)
+async def test_a_hate_relay_to_lastfm_is_refused(client, source):
+    resp = await client.post(
+        "/api/relay/jobs", json={"source": source, "targets": [LFM_TARGET]}
+    )
+
+    assert resp.status_code == 422
+    assert "hate relay" in resp.json()["detail"]

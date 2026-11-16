@@ -272,8 +272,21 @@ the pairing becoming legal is all it needs, plus the test below.
   credential helpers, settings pinned to the primary account. Wire format, CLI
   and UI are untouched: a config with no `account` is the first account, so the
   app behaves exactly as it did.
-- **C** (API: `account` on every config, `/api/services`, account-addressed
-  reset), **D** (CLI `service[:account]`), **E** (services page, flow builder)
-  outstanding. Until C lands, a run can only reach the primary account from the
-  web app — the factory can already build a second one, which is what the tests
-  above exercise.
+- **C landed** (`feat(api): a relay may name a second account`,
+  `feat(api): add, list and remove a second account of a service`): `account` on
+  every source and target config, `target_account` on a reset, pairing judged by
+  ref, result rows keyed by ref, `/api/services`, and `account`/`label` on the
+  credential routes (`/api/plex/server` too, so a second Plex server is a second
+  account of the same login).
+- **D landed** (`feat(cli): name a second account as service:account`):
+  `relays.toml` and the flags take `service[:account]`, and the same-account
+  check compares refs.
+- **E landed** (`feat(web): a second account on the services page and in the
+  flow`): account rows with their own Disconnect, an add form that asks for a
+  short name, and nodes built from `/api/services` so a second account is
+  pickable like the first.
+
+What is left is polish, not capability: the reset chip labels (`Plex · Attic`,
+above), a `plex_library` column so a second server can name its own music
+section instead of using `PLEX_MUSIC_LIBRARY`, and a pipeline test for
+`plex → plex:attic` against two different fake libraries.

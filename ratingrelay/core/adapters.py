@@ -2,19 +2,15 @@
 
 This is the seam AGENTS.md asks for — ``api``/``core`` marshal, the engine
 decides. Everything here is translation: a pydantic config becomes a source or
-target, a dict becomes a :class:`~ratingrelay.engine.types.Track`, and the
-database becomes the engine's two stores.
+target, and an engine :class:`~ratingrelay.engine.types.Track` becomes the
+dict shape the worker and the SPA read.
 """
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ratingrelay.core.factory import (  # re-exported for callers of adapters.stores
-    SOURCE_SERVICES,
-    TARGET_SERVICES,
-    mbid_cache,
+from ratingrelay.core.factory import (
     relay_identity,
     source_for_service,
-    stores,
     target_for_service,
 )
 from ratingrelay.engine.services import Source, Target
@@ -27,17 +23,6 @@ from ratingrelay.schemas.relay import (
     PlexFromConfig,
     PlexToConfig,
 )
-
-
-def track_from_dict(track: dict) -> Track:
-    """Build an engine track from the dict shape the API and worker already use."""
-    return Track(
-        artist=track.get("artist", ""),
-        title=track.get("title", ""),
-        recording_mbid=track.get("recording_mbid") or None,
-        track_mbid=track.get("track_mbid") or None,
-        rating=track.get("plex_rating"),
-    )
 
 
 def track_to_dict(track: Track) -> dict:

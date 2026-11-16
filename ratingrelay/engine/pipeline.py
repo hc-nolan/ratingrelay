@@ -108,22 +108,9 @@ async def _apply(
     # now: a changed rating or a withdrawn love is a different intent, and gets
     # written again. So does one a user's mapping has moved to another target key.
     repoint = _repoints(plan, record, target)
-    if (
-        not repoint
-        and record is not None
-        and plan.intent is not None
-        and record.intent == plan.intent.key
-    ):
-        return plan.to_outcome(OutcomeStatus.SKIPPED, Reason.ALREADY_SYNCED, None)
-
-    if plan.status is not OutcomeStatus.WRITTEN:
-        return plan.to_outcome()
-    if not plan.actionable:
-        return plan.to_outcome(
-            OutcomeStatus.FAILED,
-            Reason.WRITE_FAILED,
-            f"{target.service} produced no write for this track",
-        )
+    settled = _settled(plan, record, repoint, target)
+    if settled is not None:
+        return settled
 
     outcome = plan.to_outcome()
     if dry_run:
@@ -142,7 +129,8 @@ async def _apply(
         await attempt(
             plan.commit, f"{target.service} write for '{track.title}'"
         )
-    except Exception as exc:  # noqa: BLE001 - one failed write must not stop the run
+    # One failed write must not stop the run.
+    except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         logger.error("Write to %s failed for '%s': %s", target.service, track.title, exc)
         return plan.to_outcome(OutcomeStatus.FAILED, Reason.WRITE_FAILED, str(exc))
 
@@ -158,6 +146,28 @@ async def _apply(
         ),
     )
     return outcome
+
+
+def _settled(
+    plan: WritePlan, record: Optional[SyncedTrack], repoint: bool, target: Target
+) -> Optional[TrackOutcome]:
+    """The outcome of a plan that needs no write, or ``None`` if it does."""
+    if (
+        not repoint
+        and record is not None
+        and plan.intent is not None
+        and record.intent == plan.intent.key
+    ):
+        return plan.to_outcome(OutcomeStatus.SKIPPED, Reason.ALREADY_SYNCED, None)
+    if plan.status is not OutcomeStatus.WRITTEN:
+        return plan.to_outcome()
+    if not plan.actionable:
+        return plan.to_outcome(
+            OutcomeStatus.FAILED,
+            Reason.WRITE_FAILED,
+            f"{target.service} produced no write for this track",
+        )
+    return None
 
 
 async def _undo(
@@ -205,7 +215,8 @@ async def _undo(
         return TrackOutcome(
             track, target.service, OutcomeStatus.SKIPPED, Reason.UNRECORDED_TARGET, str(exc)
         )
-    except Exception as exc:  # noqa: BLE001 - one failed undo must not stop the run
+    # One failed undo must not stop the run.
+    except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         logger.error("Undo on %s failed for '%s': %s", target.service, record.key, exc)
         return TrackOutcome(
             track, target.service, OutcomeStatus.FAILED, Reason.WRITE_FAILED, str(exc)

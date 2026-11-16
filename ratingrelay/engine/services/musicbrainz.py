@@ -34,9 +34,9 @@ class Resolution:
 
 def _candidate(recording: dict) -> Optional[Candidate]:
     """One search result as a candidate, or ``None`` when it cannot be compared."""
-    credits = recording.get("artist-credit") or []
+    artist_credits = recording.get("artist-credit") or []
     try:
-        artist = credits[0]["name"]
+        artist = artist_credits[0]["name"]
     except (IndexError, KeyError, TypeError):
         return None
     if not artist or not recording.get("title"):

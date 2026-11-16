@@ -5,7 +5,6 @@ can hand the target its own resolver, and the target stays free of MusicBrainz
 network behaviour.
 """
 
-import asyncio
 from dataclasses import dataclass, field
 from typing import Callable, Awaitable, Optional
 
@@ -26,7 +25,6 @@ from ratingrelay.engine.types import (
 )
 
 PAGE_SIZE = 100
-RATE_LIMIT_BACKOFF_SECONDS = 60
 
 Resolver = Callable[[Optional[str], str, str], Awaitable[Resolution]]
 
@@ -69,14 +67,14 @@ class ListenBrainzClient:
         return tracks
 
     async def submit(self, score: int, mbid: str) -> None:
-        """Submit feedback, backing off once if the service rate-limits us."""
-        try:
-            await run_sync(lambda: self._client.submit_user_feedback(score, mbid))
-        except Exception as exc:  # noqa: BLE001 - inspected below
-            if "429" not in str(exc):
-                raise
-            await asyncio.sleep(RATE_LIMIT_BACKOFF_SECONDS)
-            await run_sync(lambda: self._client.submit_user_feedback(score, mbid))
+        """Submit feedback.
+
+        Rate limiting is liblistenbrainz's job: it waits out ``X-RateLimit-Reset-In``
+        and retries a 429 itself (honouring ``Retry-After``). When it gives up it
+        raises ``requests.RetryError`` — an ``OSError``, so the engine's retry
+        sees it like any other transport failure.
+        """
+        await run_sync(lambda: self._client.submit_user_feedback(score, mbid))
 
 
 @dataclass

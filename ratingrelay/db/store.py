@@ -9,9 +9,8 @@ and later against a CLI's own storage.
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import col
 
 from ratingrelay.engine.store import SyncedTrack, TrackMapping
 from ratingrelay.models.mappings import TrackMapping as TrackMappingRow
@@ -75,7 +74,7 @@ class SqlSyncStore:
                 select(SyncRecord)
                 .where(SyncRecord.source_service == source_service)
                 .where(SyncRecord.target_service == target_service)
-                .where(col(SyncRecord.relay).in_((relay, UNCLAIMED)))
+                .where(or_(SyncRecord.relay == relay, SyncRecord.relay == UNCLAIMED))
                 .order_by(SyncRecord.relay == relay)
             )
             return {row.normalized_key: _synced(row) for row in result.scalars().all()}

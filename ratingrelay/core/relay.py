@@ -11,6 +11,7 @@ argument and the list shape of ``execute_relay``'s result.
 """
 
 import json
+from functools import partial
 from typing import Awaitable, Callable, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +22,7 @@ from ratingrelay.core.credentials import (
     listenbrainz_credentials,
     plex_credentials,
 )
+from ratingrelay.core.factory import stores
 from ratingrelay.db.store import SqlSyncStore
 from ratingrelay.engine import pipeline
 from ratingrelay.engine.normalize import track_key
@@ -31,18 +33,13 @@ from ratingrelay.engine.services.plex import PlexLibrary
 from ratingrelay.engine.store import ProgressSink
 from ratingrelay.engine.types import OutcomeStatus, Reason, RunReport, TrackOutcome
 from ratingrelay.schemas.relay import (
-    LastFMFromConfig,
     LastFMToConfig,
-    ListenBrainzFromConfig,
     ListenBrainzToConfig,
-    PlexFromConfig,
     PlexToConfig,
     ResetFromConfig,
 )
 from ratingrelay.settings import logger
 
-# Callback type: (track_dict, target_service_name, success, error_or_None, skipped)
-# skipped=True means the track was already synced; success/error are ignored in that case.
 # A callback receives the display dict, the target service, whether the target
 # now holds what the source wanted, an error string for the UI, whether a dry
 # run skipped the write, and the typed outcome behind all of it. The outcome is
@@ -103,109 +100,9 @@ class CallbackProgress:
         )
 
 
-# ---------------------------------------------------------------------------
-# Source fetchers
-# ---------------------------------------------------------------------------
-
-
-async def _fetch(db: AsyncSession, config: object) -> list[dict]:
-    source = await adapters.source_for(db, config)
-    return [adapters.track_to_dict(track) for track in await source.fetch()]
-
-
-async def fetch_plex(db: AsyncSession, config: PlexFromConfig) -> list[dict]:
-    return await _fetch(db, config)
-
-
-async def fetch_lastfm(db: AsyncSession, config: LastFMFromConfig) -> list[dict]:
-    return await _fetch(db, config)
-
-
-async def fetch_listenbrainz(
-    db: AsyncSession, config: ListenBrainzFromConfig
-) -> list[dict]:
-    return await _fetch(db, config)
-
-
-# ---------------------------------------------------------------------------
-# Target writers
-# ---------------------------------------------------------------------------
-
-
-def _counts(report: RunReport) -> tuple[int, int, int]:
-    """(ok, err, skipped) for a single-target report, in the shape callers expect."""
-    target = report.targets[0]
-    return target.written + target.reverted, target.unmatched + target.failed, target.skipped
-
-
-async def _write(
-    db: AsyncSession,
-    tracks: list[dict],
-    config: object,
-    source_service: str,
-    on_track: TrackCallback,
-    dry_run: bool,
-) -> tuple[int, int, int]:
-    try:
-        target = await adapters.target_for(db, config)
-    except ValueError as exc:
-        for track in tracks:
-            await on_track(track, target_service(config), False, str(exc), False, None)
-        return 0, len(tracks), 0
-
-    # These helpers relay a pre-fetched list with no source config, so they
-    # carry no direction; they write under the love relay, as every relay from
-    # Last.fm and every default-config relay does.
-    sync_store, _ = adapters.stores(
-        db, adapters.relay_identity(source_service), dry_run=dry_run
-    )
-    report = await pipeline.run_tracks(
-        [adapters.track_from_dict(track) for track in tracks],
-        [target],
-        sync_store=sync_store,
-        source_service=source_service,
-        progress=CallbackProgress(None, on_track),
-        dry_run=dry_run,
-    )
-    return _counts(report)
-
-
 def target_service(config: object) -> str:
     """The service name a request config names, without touching credentials."""
     return str(getattr(config, "service", "unknown"))
-
-
-async def write_to_plex(
-    db: AsyncSession,
-    tracks: list[dict],
-    config: PlexToConfig,
-    source_service: str,
-    on_track: TrackCallback = _noop_track,
-    dry_run: bool = False,
-) -> tuple[int, int, int]:
-    return await _write(db, tracks, config, source_service, on_track, dry_run)
-
-
-async def write_to_lastfm(
-    db: AsyncSession,
-    tracks: list[dict],
-    config: LastFMToConfig,
-    source_service: str,
-    on_track: TrackCallback = _noop_track,
-    dry_run: bool = False,
-) -> tuple[int, int, int]:
-    return await _write(db, tracks, config, source_service, on_track, dry_run)
-
-
-async def write_to_listenbrainz(
-    db: AsyncSession,
-    tracks: list[dict],
-    config: ListenBrainzToConfig,
-    source_service: str,
-    on_track: TrackCallback = _noop_track,
-    dry_run: bool = False,
-) -> tuple[int, int, int]:
-    return await _write(db, tracks, config, source_service, on_track, dry_run)
 
 
 # ---------------------------------------------------------------------------
@@ -292,10 +189,9 @@ async def _reset_recorded(
             ok += 1
             continue
         try:
-            await attempt(
-                lambda: target.undo(record), f"{target_svc} undo for '{record.key}'"
-            )
-        except Exception as exc:  # noqa: BLE001 - reported per track
+            await attempt(partial(target.undo, record), f"{target_svc} undo for '{record.key}'")
+        # Reported per track.
+        except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
             logger.error("Reset %s failed for '%s': %s", target_svc, record.key, exc)
             await on_track(
                 data,
@@ -445,7 +341,8 @@ async def reset_plex(
                 await on_cleared(str(plex_track.ratingKey))
             await on_track(track, "plex", True, None, False)
             ok += 1
-        except Exception as exc:  # noqa: BLE001 - reported per track
+        # Reported per track.
+        except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
             logger.error("Plex reset failed for '%s': %s", plex_track.title, exc)
             await on_track(track, "plex", False, str(exc), False)
             err += 1
@@ -476,7 +373,8 @@ async def reset_lastfm(
                 await on_cleared(track_key(track.artist, track.title))
             await on_track(data, "lastfm", True, None, False)
             ok += 1
-        except Exception as exc:  # noqa: BLE001 - reported per track
+        # Reported per track.
+        except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
             logger.error("LFM unlove failed '%s – %s': %s", track.artist, track.title, exc)
             await on_track(data, "lastfm", False, str(exc), False)
             err += 1
@@ -511,7 +409,8 @@ async def reset_listenbrainz(
                 await on_cleared(track.recording_mbid)
             await on_track(data, "listenbrainz", True, None, False)
             ok += 1
-        except Exception as exc:  # noqa: BLE001 - reported per track
+        # Reported per track.
+        except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
             logger.error("LBZ reset failed for %s: %s", track.recording_mbid, exc)
             await on_track(data, "listenbrainz", False, str(exc), False)
             err += 1
@@ -550,42 +449,73 @@ async def execute_relay(
     progress: ProgressSink = CallbackProgress(on_fetch_complete, on_track)
     await progress.fetch_complete(len(tracks))
 
-    ready, unconfigured = [], []
-    for config in targets:
-        try:
-            ready.append(await adapters.target_for(db, config))
-        except ValueError as exc:
-            unconfigured.append((target_service(config), str(exc)))
+    ready, unconfigured = await _build_targets(db, targets)
 
-    sync_store, _ = adapters.stores(db, adapters.relay_for(source), dry_run=dry_run)
     report = await pipeline.run_tracks(
         tracks,
         ready,
-        sync_store=sync_store,
+        sync_store=stores(db, adapters.relay_for(source), dry_run=dry_run)[0],
         source_service=source_service,
         progress=progress,
         dry_run=dry_run,
         allow_mass_undo=allow_mass_undo,
     )
 
+    return {
+        "tracks_fetched": len(tracks),
+        "results": await _results(targets, report, tracks, unconfigured, on_track),
+    }
+
+
+async def _results(
+    targets: list,
+    report: RunReport,
+    tracks: list,
+    unconfigured: dict[str, str],
+    on_track: TrackCallback,
+) -> list[dict]:
+    """One ``{service, ok, err, skipped}`` row per requested target, in order."""
     counts = {result.target: result for result in report.targets}
     results = []
     for config in targets:
         service = target_service(config)
         if service in counts:
             result = counts[service]
-            ok = result.written + result.reverted
-            err, skipped = result.unmatched + result.failed, result.skipped
-        else:
-            detail = next(message for name, message in unconfigured if name == service)
-            for track in tracks:
-                await on_track(
-                    adapters.track_to_dict(track), service, False, detail, False, None
+            results.append(
+                _result_row(
+                    service,
+                    result.written + result.reverted,
+                    result.unmatched + result.failed,
+                    result.skipped,
                 )
-            ok, err, skipped = 0, len(tracks), 0
-        results.append({"service": service, "ok": ok, "err": err, "skipped": skipped})
+            )
+        else:
+            await _report_unconfigured(tracks, service, unconfigured[service], on_track)
+            results.append(_result_row(service, 0, len(tracks), 0))
+    return results
 
-    return {"tracks_fetched": len(tracks), "results": results}
+
+async def _build_targets(db: AsyncSession, targets: list) -> tuple[list, dict[str, str]]:
+    """The targets that could be built, and why each of the others could not."""
+    ready, unconfigured = [], {}
+    for config in targets:
+        try:
+            ready.append(await adapters.target_for(db, config))
+        except ValueError as exc:
+            unconfigured[target_service(config)] = str(exc)
+    return ready, unconfigured
+
+
+async def _report_unconfigured(
+    tracks: list, service: str, detail: str, on_track: TrackCallback
+) -> None:
+    """A target that cannot be built fails every track, visibly."""
+    for track in tracks:
+        await on_track(adapters.track_to_dict(track), service, False, detail, False, None)
+
+
+def _result_row(service: str, ok: int, err: int, skipped: int) -> dict:
+    return {"service": service, "ok": ok, "err": err, "skipped": skipped}
 
 
 async def _execute_reset(

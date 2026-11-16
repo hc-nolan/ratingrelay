@@ -1,5 +1,5 @@
 """
-Tests for dry-run write suppression in the relay wrappers.
+Tests for dry-run write suppression through ``execute_relay``.
 
 Uses a real in-memory SQLite DB together with fake service layers, and verifies
 that dry_run=True suppresses external writes and SyncRecord creation while still
@@ -12,14 +12,14 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy import select
 from sqlmodel import SQLModel
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import ratingrelay.models.jobs  # noqa: F401
 import ratingrelay.models.sync  # noqa: F401
 import ratingrelay.models.mappings  # noqa: F401
 import ratingrelay.models.services  # noqa: F401
 
-from ratingrelay.core.relay import write_to_lastfm, write_to_listenbrainz
+from ratingrelay.core.relay import execute_relay
 from ratingrelay.db.store import SqlSyncStore
 from ratingrelay.engine.credentials import (
     LastFmCredentials,
@@ -27,8 +27,9 @@ from ratingrelay.engine.credentials import (
 )
 from ratingrelay.engine.normalize import track_key
 from ratingrelay.engine.store import SyncedTrack
+from ratingrelay.engine.types import Track
 from ratingrelay.models.sync import SyncRecord
-from ratingrelay.schemas.relay import LastFMToConfig, ListenBrainzToConfig
+from ratingrelay.schemas.relay import LastFMToConfig, ListenBrainzToConfig, PlexFromConfig
 
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
 
@@ -59,6 +60,39 @@ async def _sync_record_count(db: AsyncSession) -> int:
     return len(result.scalars().all())
 
 
+class _ListSource:
+    """A Plex source that hands back a fixed list, so only the target is real."""
+
+    service = "plex"
+
+    def __init__(self, tracks: list[dict]):
+        self._tracks = tracks
+
+    async def fetch(self) -> list[Track]:
+        return [
+            Track(
+                artist=t["artist"],
+                title=t["title"],
+                recording_mbid=t.get("recording_mbid"),
+                rating=10.0,
+            )
+            for t in self._tracks
+        ]
+
+
+async def _relay(db, tracks, config, on_track, dry_run) -> tuple[int, int, int]:
+    """One relay from Plex to *config*, returning that target's (ok, err, skipped)."""
+    with patch(
+        "ratingrelay.core.relay.adapters.source_for",
+        AsyncMock(return_value=_ListSource(tracks)),
+    ):
+        result = await execute_relay(
+            db, PlexFromConfig(service="plex"), [config], on_track=on_track, dry_run=dry_run
+        )
+    row = result["results"][0]
+    return row["ok"], row["err"], row["skipped"]
+
+
 def _lastfm_patches():
     """Credential stub plus a fake pylast module, for the lifetime of one write."""
     return (
@@ -81,7 +115,7 @@ def _listenbrainz_patches():
 
 
 # ---------------------------------------------------------------------------
-# write_to_lastfm dry_run=True
+# Last.fm, dry run
 # ---------------------------------------------------------------------------
 
 
@@ -90,13 +124,11 @@ async def test_lastfm_dry_run_suppresses_write(db):
     calls = []
 
     async def capture(track, target, success, error, skipped=False, outcome=None):
-        calls.append((track, target, success, error, skipped))
+        calls.append(({"artist": track["artist"], "title": track["title"]}, target, success, error, skipped))
 
     creds_patch, pylast_patch = _lastfm_patches()
     with creds_patch, pylast_patch as fake_pylast:
-        ok, err, skipped = await write_to_lastfm(
-            db, [TRACK_A], LFM_CONFIG, "plex", capture, dry_run=True
-        )
+        ok, err, skipped = await _relay(db, [TRACK_A], LFM_CONFIG, capture, dry_run=True)
 
     assert ok == 1
     assert err == 0
@@ -118,13 +150,11 @@ async def test_lastfm_dry_run_skipped_track_fires_on_track(db):
     calls = []
 
     async def capture(track, target, success, error, skipped=False, outcome=None):
-        calls.append((track, target, success, error, skipped))
+        calls.append(({"artist": track["artist"], "title": track["title"]}, target, success, error, skipped))
 
     creds_patch, pylast_patch = _lastfm_patches()
     with creds_patch, pylast_patch:
-        ok, err, skip_count = await write_to_lastfm(
-            db, [TRACK_A], LFM_CONFIG, "plex", capture, dry_run=True
-        )
+        ok, err, skip_count = await _relay(db, [TRACK_A], LFM_CONFIG, capture, dry_run=True)
 
     assert ok == 0
     assert err == 0
@@ -148,11 +178,11 @@ async def test_lastfm_real_run_after_dry_run_writes_same_tracks(db):
     creds_patch, pylast_patch = _lastfm_patches()
     with creds_patch, pylast_patch:
         # Dry run — should NOT create SyncRecord
-        await write_to_lastfm(db, [TRACK_A], LFM_CONFIG, "plex", capture_dry, dry_run=True)
+        await _relay(db, [TRACK_A], LFM_CONFIG, capture_dry, dry_run=True)
         assert await _sync_record_count(db) == 0
 
         # Real run — should create SyncRecord
-        await write_to_lastfm(db, [TRACK_A], LFM_CONFIG, "plex", capture_real, dry_run=False)
+        await _relay(db, [TRACK_A], LFM_CONFIG, capture_real, dry_run=False)
 
     assert any(s is True for s, _ in calls_real)
     assert await _sync_record_count(db) == 1
@@ -168,9 +198,7 @@ async def test_lastfm_dry_run_unmatched_is_error(db):
     bad_track = {"artist": "", "title": ""}
     creds_patch, pylast_patch = _lastfm_patches()
     with creds_patch, pylast_patch:
-        ok, err, _ = await write_to_lastfm(
-            db, [bad_track], LFM_CONFIG, "plex", capture, dry_run=True
-        )
+        ok, err, _ = await _relay(db, [bad_track], LFM_CONFIG, capture, dry_run=True)
 
     assert ok == 0
     assert err == 1
@@ -178,7 +206,7 @@ async def test_lastfm_dry_run_unmatched_is_error(db):
 
 
 # ---------------------------------------------------------------------------
-# write_to_listenbrainz dry_run=True (no MBID lookup needed for already-known MBID)
+# ListenBrainz, dry run (no MBID lookup needed for an already-known MBID)
 # ---------------------------------------------------------------------------
 
 
@@ -187,15 +215,13 @@ async def test_listenbrainz_dry_run_suppresses_write(db):
     calls = []
 
     async def capture(track, target, success, error, skipped=False, outcome=None):
-        calls.append((track, target, success, error, skipped))
+        calls.append(({"artist": track["artist"], "title": track["title"]}, target, success, error, skipped))
 
     track_with_mbid = {**TRACK_A, "recording_mbid": "aaaaaaaa-0000-0000-0000-000000000001"}
     creds_patch, lbz_patch = _listenbrainz_patches()
     with creds_patch, lbz_patch as fake_listenbrainz:
         fake_client = fake_listenbrainz.return_value
-        ok, err, _ = await write_to_listenbrainz(
-            db, [track_with_mbid], LBZ_CONFIG, "plex", capture, dry_run=True
-        )
+        ok, err, _ = await _relay(db, [track_with_mbid], LBZ_CONFIG, capture, dry_run=True)
 
     assert ok == 1
     assert err == 0
@@ -219,9 +245,7 @@ async def test_listenbrainz_dry_run_skipped_fires_on_track(db):
 
     creds_patch, lbz_patch = _listenbrainz_patches()
     with creds_patch, lbz_patch:
-        ok, err, skip_count = await write_to_listenbrainz(
-            db, [track_with_mbid], LBZ_CONFIG, "plex", capture, dry_run=True
-        )
+        ok, err, skip_count = await _relay(db, [track_with_mbid], LBZ_CONFIG, capture, dry_run=True)
 
     assert ok == 0
     assert err == 0

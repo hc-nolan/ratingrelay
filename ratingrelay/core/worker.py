@@ -19,17 +19,19 @@ that was done before the crash, not work that just happened).
 
 import asyncio
 import json
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import select, update
+from sqlalchemy import asc, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ratingrelay.core.relay import execute_relay
 from ratingrelay.db import session_maker
 from ratingrelay.engine.types import Reason, TrackOutcome
 from ratingrelay.models.jobs import Job, TrackEvent
-from ratingrelay.schemas.relay import source_adapter as _source_adapter, targets_adapter as _targets_adapter
+from ratingrelay.schemas.relay import source_adapter as _source_adapter
+from ratingrelay.schemas.relay import targets_adapter as _targets_adapter
 from ratingrelay.settings import logger
 
 # ---------------------------------------------------------------------------
@@ -110,6 +112,51 @@ async def _schedule_next(db: AsyncSession, job: Job) -> None:
     logger.info("Worker: scheduled next run for job %s at %s", job.id, next_run)
 
 
+@dataclass
+class _Tally:
+    """The job's three counters, flushed to its row as the run goes."""
+
+    ok: int = 0
+    err: int = 0
+    skipped: int = 0
+
+    @classmethod
+    def continuing(cls, job: Job, resuming: bool) -> "_Tally":
+        """A resumed attempt continues the counters, or the totals would shrink."""
+        if not resuming:
+            return cls()
+        return cls(job.tracks_ok, job.tracks_err, job.tracks_skipped)
+
+    def count(self, success: bool, skipped: bool) -> None:
+        if skipped:
+            self.skipped += 1
+        elif success:
+            self.ok += 1
+        else:
+            self.err += 1
+
+    def flush(self, job: Job) -> None:
+        job.tracks_ok, job.tracks_err, job.tracks_skipped = self.ok, self.err, self.skipped
+
+    @property
+    def status(self) -> str:
+        """Nothing but failures is a failed job. A run that converged anything
+        (wrote, reverted or found it already in sync) got through, so its errors
+        make it partial."""
+        if self.ok == 0 and self.skipped == 0 and self.err > 0:
+            return "failed"
+        return "partial" if self.err > 0 else "completed"
+
+
+async def _finish(db: AsyncSession, job: Job, status: str, tally: Optional[_Tally]) -> None:
+    job.status = status
+    if tally is not None:
+        tally.flush(job)
+    job.completed_at = datetime.now(timezone.utc)
+    db.add(job)
+    await db.commit()
+
+
 async def run_job(job_id: str) -> None:
     async with session_maker() as db:
         # 1. Load job and mark as running
@@ -130,11 +177,7 @@ async def run_job(job_id: str) -> None:
         await db.commit()
         await db.refresh(job)
 
-        # Local counters (flushed to the job row per track). A resumed attempt
-        # continues them rather than restarting, or the totals would shrink.
-        tracks_ok = job.tracks_ok if resuming else 0
-        tracks_err = job.tracks_err if resuming else 0
-        tracks_skipped = job.tracks_skipped if resuming else 0
+        tally = _Tally.continuing(job, resuming)
 
         # 2. on_fetch_complete callback
         async def on_fetch_complete(count: int) -> None:
@@ -155,8 +198,6 @@ async def run_job(job_id: str) -> None:
             skipped: bool = False,
             outcome: Optional[TrackOutcome] = None,
         ) -> None:
-            nonlocal tracks_ok, tracks_err, tracks_skipped
-
             if (
                 resuming
                 and outcome is not None
@@ -182,21 +223,13 @@ async def run_job(job_id: str) -> None:
             )
             db.add(event)
 
-            if not skipped:
-                if success:
-                    tracks_ok += 1
-                else:
-                    tracks_err += 1
-            else:
-                tracks_skipped += 1
+            tally.count(success, skipped)
 
             # Commit per track. Two reasons: the events are the thing the stream
             # tails, so they must be visible outside this session while the run
             # is still going, and a crash mid-run should not lose the history of
             # the writes that did happen.
-            job.tracks_ok = tracks_ok
-            job.tracks_err = tracks_err
-            job.tracks_skipped = tracks_skipped
+            tally.flush(job)
             db.add(job)
             await db.commit()
 
@@ -221,50 +254,23 @@ async def run_job(job_id: str) -> None:
                 allow_mass_undo=job.allow_mass_undo,
             )
 
-            # 6. Determine final status from the counters, which on a resumed
-            # attempt span both tries. Nothing but failures is a failed job.
-            # A run that converged anything (wrote, reverted or found it already
-            # in sync) got through, so its errors make it partial.
-            if tracks_ok == 0 and tracks_skipped == 0 and tracks_err > 0:
-                final_status = "failed"
-            elif tracks_err > 0:
-                final_status = "partial"
-            else:
-                final_status = "completed"
-
-            job.status = final_status
-            job.tracks_ok = tracks_ok
-            job.tracks_err = tracks_err
-            job.tracks_skipped = tracks_skipped
-            job.completed_at = datetime.now(timezone.utc)
-            db.add(job)
-            await db.commit()
-
+            # 6. Final status from the counters, which on a resumed attempt
+            # span both tries.
+            await _finish(db, job, tally.status, tally)
             await _schedule_next(db, job)
 
         except RunCancelled:
             # The counters are the ones actually reached; the writes behind them
             # are already in the sync store, so the next run resumes from here.
-            job.status = "cancelled"
-            job.tracks_ok = tracks_ok
-            job.tracks_err = tracks_err
-            job.tracks_skipped = tracks_skipped
-            job.completed_at = datetime.now(timezone.utc)
-            db.add(job)
-            await db.commit()
+            await _finish(db, job, "cancelled", tally)
             logger.info(
-                "Worker: job %s cancelled after %d ok / %d err",
-                job_id,
-                tracks_ok,
-                tracks_err,
+                "Worker: job %s cancelled after %d ok / %d err", job_id, tally.ok, tally.err
             )
 
-        except Exception as exc:
+        # The job fails, not the worker.
+        except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.exception("Worker: job %s failed: %s", job_id, exc)
-            job.status = "failed"
-            job.completed_at = datetime.now(timezone.utc)
-            db.add(job)
-            await db.commit()
+            await _finish(db, job, "failed", None)
             # One bad night (a timeout, Plex restarting) must not end the
             # series: the next run is as likely to work as this one was not.
             # A cancel does end it — that is how a user stops a recurring relay.
@@ -307,7 +313,8 @@ async def worker_loop() -> None:
                     "Worker: %d job(s) were interrupted by a restart and will resume",
                     len(stale),
                 )
-    except Exception as exc:
+    # The queue still has to start.
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         logger.exception("Worker: error resetting stale jobs: %s", exc)
 
     while True:
@@ -334,7 +341,7 @@ async def worker_loop() -> None:
                 queued_result = await db.execute(
                     select(Job)
                     .where(Job.status == "queued")
-                    .order_by(Job.created_at.asc())
+                    .order_by(asc(Job.created_at))
                     .limit(1)
                 )
                 next_job = queued_result.scalars().first()
@@ -348,6 +355,7 @@ async def worker_loop() -> None:
         except asyncio.CancelledError:
             logger.info("Worker: loop cancelled, shutting down")
             break
-        except Exception as exc:
+        # The loop must outlive one bad poll.
+        except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.exception("Worker: unexpected error in loop: %s", exc)
             await asyncio.sleep(5)

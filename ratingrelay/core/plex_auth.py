@@ -21,7 +21,7 @@ from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
-from plexapi.myplex import MyPlexAccount, MyPlexPinLogin
+from plexapi.myplex import MyPlexPinLogin
 
 log = logging.getLogger("ratingrelay")
 
@@ -104,7 +104,8 @@ def create_session(forward_url: str, nonce: str = "") -> tuple[MyPlexPinLogin, s
         headers={"X-Plex-Product": "RatingRelay"},
     )
     oauth_url = pin_login.oauthUrl(forwardUrl=forward_url)
-    pin_id = int(pin_login._id)
+    # plexapi exposes the PIN id only as ``_id``; it is the key Plex redirects back with.
+    pin_id = int(pin_login._id)  # pylint: disable=protected-access
     _sessions[pin_id] = (pin_login, datetime.now(tz=timezone.utc), nonce)
     log.info("Plex OAuth session created for pin_id=%s", pin_id)
     _evict_expired()

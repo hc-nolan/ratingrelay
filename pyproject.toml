@@ -42,7 +42,14 @@ disable = ["C0114","C0115","C0116","W1203","R0903","W0613", "C0103"]
 
 # Ratchet upward as the code is cleaned up; never lower it.
 [tool.pylint.REPORTS]
-fail-under = 9.75
+fail-under = 10.0
+
+# Loosened deliberately: TrackCallback is a six-argument positional protocol, and
+# the engine's plan/report types are records, not objects with behaviour.
+[tool.pylint.DESIGN]
+max-args = 7
+max-positional-arguments = 6
+max-attributes = 12
 
 [tool.fastapi]
 entrypoint = "ratingrelay.main:app"

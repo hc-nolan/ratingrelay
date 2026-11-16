@@ -9,6 +9,7 @@ import json
 from dataclasses import dataclass, field
 
 import pytest
+from plexapi.exceptions import BadRequest
 
 from ratingrelay.engine import MemoryMappingStore, MemorySyncStore, OutcomeStatus, SyncedTrack, pipeline
 from ratingrelay.engine.credentials import PlexCredentials
@@ -37,7 +38,7 @@ class FakeSection:
     def searchTracks(self, **filters):
         self.calls.append(filters)
         if filters and self._reject:
-            raise ValueError("bad filter")
+            raise BadRequest("bad filter")
         if not filters:
             return list(self._tracks)
         (field_name, value), = filters.items()
@@ -171,3 +172,18 @@ async def test_a_withdrawn_rating_on_a_vanished_track_is_forgotten():
 
     assert report.outcomes[0].status is OutcomeStatus.REVERTED
     assert not store.records[("lastfm", "plex")]
+
+
+async def test_a_dropped_connection_is_not_mistaken_for_a_rejected_filter():
+    """Falling back would quietly fetch the whole library; a blip must surface."""
+
+    class DroppingSection(FakeSection):
+        def searchTracks(self, **filters):
+            self.calls.append(filters)
+            raise ConnectionResetError("reset by peer")
+
+    section = DroppingSection([FakePlexTrack("High", 9.5)])
+
+    with pytest.raises(ConnectionResetError):
+        await _library(section).rated(8.0, "gte")
+    assert section.calls == [{"userRating>>=": 8.0}]

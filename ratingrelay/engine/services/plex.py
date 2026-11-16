@@ -10,6 +10,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Optional
 
+from plexapi.exceptions import BadRequest, NotFound
 from plexapi.server import PlexServer
 
 from ratingrelay.engine.credentials import PlexCredentials
@@ -128,7 +129,7 @@ class PlexLibrary:
         operator = _RATING_OPERATORS[comparison]
         try:
             tracks = await self.search(**{operator: threshold})
-        except Exception as exc:  # noqa: BLE001 - an unknown operator must not fail the run
+        except (BadRequest, NotFound) as exc:  # an unknown operator must not fail the run
             logger.warning(
                 "Plex rejected the %s filter (%s); falling back to a local filter",
                 operator,

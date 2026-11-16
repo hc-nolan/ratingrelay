@@ -31,7 +31,7 @@ class Settings(BaseSettings):
         test_limit: Request limit used when running tests
     """
 
-    version: str = "2.0.0"
+    version: str = "3.0.0"
     model_config = SettingsConfigDict(env_file=".config")
 
     frontend_dir: str = "frontend/build"

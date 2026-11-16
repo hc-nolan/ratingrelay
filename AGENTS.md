@@ -39,9 +39,9 @@ just build      # frontend bundle that FastAPI serves
 - `.config` is gitignored and holds credentials. `.config.example` documents every
   key. Environment variables override `.config`; both override database-stored
   credentials (that hierarchy is the dev-override pattern — keep it).
-- `just check` runs svelte-check + prettier + eslint. Typecheck is clean; eslint still has
-  known failures listed in `docs/plans/2026-11-12-v3-baseline-and-workstreams.md`, cleared
-  by the UI rewrite — don't silence the rules to get green. `just lint` has a `fail-under`
+- `just check` runs svelte-check + prettier + eslint. All three are clean and CI
+  (`.github/workflows/ci.yml`) runs them with `just test` and `just lint` — keep them
+  green by fixing code, never by silencing a rule. `just lint` has a `fail-under`
   in `pyproject.toml`; ratchet it up, never down.
 
 ## Layout (current)

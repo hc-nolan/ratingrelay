@@ -50,7 +50,7 @@ relays:
 relay-check *args:
     uv run ratingrelay relay --target lastfm --target listenbrainz --dry-run {{args}}
 
-# Frontend typecheck and lint. eslint is still red: see docs/plans on the v3 baseline.
+# Frontend typecheck and lint.
 check:
     cd frontend && pnpm check
     cd frontend && pnpm lint

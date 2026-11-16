@@ -160,7 +160,7 @@ async def test_a_plex_comparison_from_an_older_build_keeps_its_direction(client)
     """``comparison: lte`` was a hate relay. Pydantic ignores unknown keys, so
     without the legacy mapping it would come back as a love relay."""
     legacy = {"service": "plex", "rating_threshold": 2.0, "comparison": "lte"}
-    lbz = {"service": "listenbrainz", "feedback_type": "hate"}
+    lbz = {"service": "listenbrainz"}
     resp = await client.post("/api/relay/jobs", json={"source": legacy, "targets": [lbz]})
 
     assert resp.status_code == 201

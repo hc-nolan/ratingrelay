@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { starLabel } from '$lib/relay';
-	import type { ListenBrainzTargetConfig, TargetOption } from '$lib/types/relay';
+	import type { TargetOption } from '$lib/types/relay';
 	import { cn } from '$lib/utils';
 	import ServiceMark from './ServiceMark.svelte';
 
@@ -10,7 +10,7 @@
 		onadd,
 		onremove,
 		plexWrite,
-		lbzConfig
+		direction
 	}: {
 		option: TargetOption;
 		/** Allocated cards are the same card, switched on: filled, accent-edged, configured. */
@@ -19,13 +19,9 @@
 		onremove: () => void;
 		/** What a Plex target writes: the threshold for the relay's direction (null: unknown). */
 		plexWrite?: { rating: number | null; setting: string };
-		lbzConfig?: ListenBrainzTargetConfig;
+		/** The relay's direction, which a ListenBrainz target writes. */
+		direction?: 'love' | 'hate';
 	} = $props();
-
-	const choices = [
-		{ value: 'love', label: 'Love' },
-		{ value: 'hate', label: 'Hate' }
-	] as const;
 </script>
 
 <!-- One card per target, in a grid that does not reflow when you pick one:
@@ -101,26 +97,11 @@
 				</span>
 			{:else if option.id === 'lastfm'}
 				<span class="text-sm text-muted-foreground">Love every track</span>
-			{:else if lbzConfig}
-				<div
-					class="inline-flex items-center gap-0.5 rounded-md border border-border bg-background p-0.5"
-				>
-					{#each choices as choice (choice.value)}
-						<button
-							type="button"
-							class={cn(
-								'rounded px-2.5 py-0.5 text-sm transition-colors',
-								lbzConfig.feedbackType === choice.value
-									? 'bg-primary text-primary-foreground'
-									: 'text-muted-foreground hover:text-foreground'
-							)}
-							onclick={() => (lbzConfig.feedbackType = choice.value)}
-							aria-pressed={lbzConfig.feedbackType === choice.value}
-						>
-							{choice.label}
-						</button>
-					{/each}
-				</div>
+			{:else if option.id === 'listenbrainz' && direction}
+				<!-- No toggle: a target writes what the source reads. -->
+				<span class="text-sm text-muted-foreground">
+					{direction === 'love' ? 'Love' : 'Hate'} every track
+				</span>
 			{/if}
 		{:else}
 			<span class="truncate text-sm text-muted-foreground/70">{option.hint}</span>

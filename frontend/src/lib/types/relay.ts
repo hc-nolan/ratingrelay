@@ -36,7 +36,3 @@ export interface PlexThresholds {
 	love_threshold: number;
 	hate_threshold: number;
 }
-
-export interface ListenBrainzTargetConfig {
-	feedbackType: 'love' | 'hate';
-}

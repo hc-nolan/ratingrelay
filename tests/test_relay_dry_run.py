@@ -36,7 +36,7 @@ TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
 TRACK_A = {"artist": "Artist A", "title": "Song A"}
 TRACK_B = {"artist": "Artist B", "title": "Song B"}
 LFM_CONFIG = LastFMToConfig(service="lastfm")
-LBZ_CONFIG = ListenBrainzToConfig(service="listenbrainz", feedback_type="love")
+LBZ_CONFIG = ListenBrainzToConfig(service="listenbrainz")
 
 LFM_CREDS = LastFmCredentials(
     api_key="key", api_secret="secret", username="user", password_hash="hash"

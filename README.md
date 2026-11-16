@@ -79,9 +79,9 @@ The main page reads from top to bottom:
 
 - **From**: where your ratings come from. For Plex and ListenBrainz, choose loves or
   hates.
-- **To**: switch on one or more destinations. ListenBrainz can receive a love or a
-  hate. Plex receives the love (or hate) rating. Last.fm only has loves, so it
-  isn't offered for a hate relay.
+- **To**: switch on one or more destinations. Each one writes what *From* reads:
+  loves become loves, hates become hates. Plex receives the love (or hate) rating.
+  Last.fm only has loves, so it isn't offered for a hate relay.
 - **Trigger**: run it **once**, or repeat it every hour, every few hours, daily or
   weekly. Tick **Dry run** to preview the run without changing anything.
 

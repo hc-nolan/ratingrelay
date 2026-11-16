@@ -163,12 +163,7 @@ async def run_relay(
             db, spec.source, feedback_type=spec.feedback_type
         )
         targets = [
-            await target_for_service(
-                db,
-                name,
-                feedback_type=spec.feedback_type,
-                relay=spec.relay,
-            )
+            await target_for_service(db, name, relay=spec.relay)
             for name in spec.targets
         ]
         sync_store, _ = stores(db, spec.relay, dry_run=spec.dry_run)

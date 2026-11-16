@@ -126,7 +126,6 @@ async def target_for_service(
     db: AsyncSession,
     service: str,
     *,
-    feedback_type: str = "love",
     plex_library: Optional[PlexLibrary] = None,
     relay: str = "love",
 ) -> Target:
@@ -135,6 +134,8 @@ async def target_for_service(
     *relay* is the run's :func:`relay_identity`. A Plex target writes that
     direction's threshold (:func:`plex_threshold`), and needs the direction to
     know whether a copy already rated above (love) or below (hate) it holds it.
+    A ListenBrainz target writes that direction's feedback: there is no separate
+    target direction, so a target can never write the opposite of its source.
     """
     refusal = unsupported_target(relay, service)
     if refusal:
@@ -154,7 +155,7 @@ async def target_for_service(
             client,
             mappings,
             resolve_recording_mbid,
-            _score(feedback_type),
+            _score(relay),
             cache=mbid_cache(db),
         )
     raise ValueError(f"Unknown target service: {service}")

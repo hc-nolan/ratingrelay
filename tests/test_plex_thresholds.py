@@ -113,3 +113,30 @@ async def test_a_stored_hate_job_cannot_build_a_lastfm_target(thresholds):
     # it must fail there instead of loving what the user hates.
     with pytest.raises(ValueError, match="hate relay"):
         await factory.target_for_service(None, "lastfm", relay="hate")
+
+
+@pytest.mark.parametrize("relay, score", [("love", 1), ("hate", -1)])
+async def test_a_listenbrainz_target_writes_the_relay_direction(monkeypatch, relay, score):
+    async def credentials(_db):
+        return None
+
+    monkeypatch.setattr(factory, "listenbrainz_credentials", credentials)
+    monkeypatch.setattr(factory, "ListenBrainzClient", lambda _creds: object())
+    monkeypatch.setattr(factory, "mbid_cache", lambda _db: None)
+    target = await factory.target_for_service(None, "listenbrainz", relay=relay)
+
+    assert target._score == score
+
+
+async def test_an_older_listenbrainz_target_direction_is_ignored(client):
+    # Before targets followed the source, a ListenBrainz target had its own
+    # direction, so a hate relay could be stored with a "love" target. It must
+    # read back (and run) as the relay's direction, not its own.
+    hates = {"service": "plex", "feedback_type": "hate"}
+    old_target = {"service": "listenbrainz", "feedback_type": "love"}
+    resp = await client.post(
+        "/api/relay/jobs", json={"source": hates, "targets": [old_target]}
+    )
+
+    assert resp.status_code == 201
+    assert resp.json()["targets_config"] == [{"service": "listenbrainz"}]

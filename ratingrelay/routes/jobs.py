@@ -66,7 +66,10 @@ def _job_to_dict(job: Job) -> dict:
         "source_config": _source_adapter.dump_python(
             _source_adapter.validate_json(job.source_config), mode="json"
         ),
-        "targets_config": json.loads(job.targets_config),
+        # Same for targets: an older ListenBrainz target's own direction is gone.
+        "targets_config": _targets_adapter.dump_python(
+            _targets_adapter.validate_json(job.targets_config), mode="json"
+        ),
         "recurring": job.recurring,
         "interval_minutes": job.interval_minutes,
         "run_at": job.run_at.isoformat() if job.run_at else None,

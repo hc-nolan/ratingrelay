@@ -63,8 +63,12 @@ class LastFMToConfig(BaseModel):
 
 
 class ListenBrainzToConfig(BaseModel):
+    """ListenBrainz as a target. It writes the relay's direction: a love relay
+    loves, a hate relay hates. Jobs from older builds carry a ``feedback_type``
+    here; it is ignored, so a target can never write the opposite of its source.
+    """
+
     service: Literal["listenbrainz"]
-    feedback_type: Literal["love", "hate"] = "love"
 
 
 ToConfig = Annotated[

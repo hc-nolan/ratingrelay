@@ -11,7 +11,6 @@
 	import type { JobData } from '$lib/types/jobs';
 	import type {
 		ListenBrainzSourceConfig,
-		ListenBrainzTargetConfig,
 		PlexSourceConfig,
 		SourceId,
 		SourceOption,
@@ -230,7 +229,6 @@
 	let plexTargetEnabled = $state(false);
 	let lastfmTargetEnabled = $state(false);
 	let lbzTargetEnabled = $state(false);
-	let lbzTargetConfig = $state<ListenBrainzTargetConfig>({ feedbackType: 'love' });
 
 	/** Whether the ghost list under the last node is showing. */
 
@@ -252,7 +250,7 @@
 	const targetCatalog: TargetOption[] = [
 		{ id: 'plex', name: 'Plex', hint: 'rate the library' },
 		{ id: 'lastfm', name: 'Last.fm', hint: 'love the track' },
-		{ id: 'listenbrainz', name: 'ListenBrainz', hint: 'love or hate' }
+		{ id: 'listenbrainz', name: 'ListenBrainz', hint: 'love or hate, as From reads' }
 	];
 
 	function isAllocated(id: string): boolean {
@@ -355,7 +353,7 @@
 			targets.push({ service: 'lastfm' });
 		}
 		if (lbzTargetEnabled && listenbrainz.status === 'connected') {
-			targets.push({ service: 'listenbrainz', feedback_type: lbzTargetConfig.feedbackType });
+			targets.push({ service: 'listenbrainz' });
 		}
 
 		return { source, targets };
@@ -522,7 +520,7 @@
 									onadd={() => setAllocated(target.id, true)}
 									onremove={() => setAllocated(target.id, false)}
 									plexWrite={target.id === 'plex' ? plexWrite : undefined}
-									lbzConfig={target.id === 'listenbrainz' ? lbzTargetConfig : undefined}
+									direction={relayDirection}
 								/>
 							{/each}
 						</div>

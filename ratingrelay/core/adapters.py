@@ -68,7 +68,5 @@ async def target_for(db: AsyncSession, config: object, relay: str = "love") -> T
     if isinstance(config, LastFMToConfig):
         return await target_for_service(db, "lastfm", relay=relay)
     if isinstance(config, ListenBrainzToConfig):
-        return await target_for_service(
-            db, "listenbrainz", feedback_type=config.feedback_type
-        )
+        return await target_for_service(db, "listenbrainz", relay=relay)
     raise ValueError(f"Unknown target service: {config}")

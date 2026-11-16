@@ -48,3 +48,11 @@ entry point asks it: `RelaySpec` (config file and flags, exit 2), `POST
 offer Last.fm for a hate relay. `target_for_service` asks it too, so a job queued
 before the refusal existed fails every track on Last.fm with the reason instead
 of writing.
+
+## Targets follow the source
+
+A ListenBrainz target used to have its own love/hate setting, so a Plex hate relay
+could send the hated tracks to ListenBrainz as loves. The target now writes the
+relay's direction (`target_for_service(..., relay=...)`); `ListenBrainzToConfig`
+has no `feedback_type`, a stored job's old value is ignored, and the UI shows
+"Love/Hate every track" instead of a toggle.

@@ -3,12 +3,16 @@
 	import { resolve } from '$app/paths';
 	import AppHeader from '$lib/components/AppHeader.svelte';
 	import ServiceMark from '$lib/components/flow/ServiceMark.svelte';
+	import AccountRow from '$lib/components/services/AccountRow.svelte';
 	import ConnectionChip from '$lib/components/services/ConnectionChip.svelte';
 	import LastFmForm from '$lib/components/services/LastFmForm.svelte';
 	import ListenBrainzForm from '$lib/components/services/ListenBrainzForm.svelte';
 	import { Button } from '$lib/components/ui/button';
+	import { Input } from '$lib/components/ui/input';
 	import { Select } from '$lib/components/ui/select';
+	import { loadAccounts } from '$lib/service-status';
 	import type { PlexServerItem, ServiceStatus } from '$lib/types/auth';
+	import type { ServiceAccountItem, ServiceKind } from '$lib/types/services';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -17,18 +21,72 @@
 	let lastfm = $state(untrack(() => ({ ...data.authStatus.lastfm })));
 	let listenbrainz = $state(untrack(() => ({ ...data.authStatus.listenbrainz })));
 
-	/** Which service is showing its credential form. */
-	let editing = $state<'lastfm' | 'listenbrainz' | null>(null);
+	/** Every connected account: the first of each service, plus any added. */
+	let accounts = $state<ServiceAccountItem[]>(untrack(() => [...data.accounts]));
 
-	/** Which service has been asked to disconnect and is waiting for a yes. */
-	let confirming = $state<'plex' | 'lastfm' | 'listenbrainz' | null>(null);
+	/** Which service is showing its primary credential form. */
+	let editing = $state<ServiceKind | null>(null);
+
+	/** Which account is one click away from being disconnected. */
+	let confirming = $state<string | null>(null);
+
+	/** Which service is offering "add another account", and under what name. */
+	let adding = $state<ServiceKind | null>(null);
+	let newSlug = $state('');
+	let newLabel = $state('');
+	/** Whether the user typed the slug, so the label stops rewriting it. */
+	let slugTouched = $state(false);
+
 	let busy = $state(false);
 	let error = $state('');
 
-	// ── Plex: server selection + disconnect ───────────────────────────────────
+	// ── Plex: server selection ────────────────────────────────────────────────
 	let servers = $state<PlexServerItem[]>([]);
 	let selectedServer = $state('');
 	let loadingServers = $state(false);
+
+	let rows = $derived.by(() => {
+		const grouped = { plex: [], lastfm: [], listenbrainz: [] } as Record<
+			ServiceKind,
+			ServiceAccountItem[]
+		>;
+		for (const account of accounts) grouped[account.service].push(account);
+		return grouped;
+	});
+
+	let statuses = $derived<Record<ServiceKind, ServiceStatus>>({
+		plex: plex.status,
+		lastfm: lastfm.status,
+		listenbrainz: listenbrainz.status
+	});
+
+	let connectedNames = $derived<Record<ServiceKind, string | undefined>>({
+		plex: plex.username,
+		lastfm: lastfm.username,
+		listenbrainz: listenbrainz.username
+	});
+
+	async function refresh() {
+		accounts = await loadAccounts(fetch);
+	}
+
+	function slugFrom(label: string): string {
+		return label
+			.toLowerCase()
+			.replace(/[^a-z0-9]+/g, '-')
+			.replace(/^-+|-+$/g, '')
+			.slice(0, 32);
+	}
+
+	function startAdding(service: ServiceKind) {
+		adding = service;
+		editing = null;
+		newSlug = '';
+		newLabel = '';
+		slugTouched = false;
+		error = '';
+		if (service === 'plex') void loadServers();
+	}
 
 	async function loadServers() {
 		loadingServers = true;
@@ -38,7 +96,7 @@
 			if (!res.ok) throw new Error(await res.text());
 			const body: { servers: PlexServerItem[] } = await res.json();
 			servers = body.servers;
-			selectedServer = plex.server_name ?? servers[0]?.name ?? '';
+			selectedServer = accounts.find((a) => a.service === 'plex')?.server_name ?? '';
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Could not list Plex servers';
 		} finally {
@@ -46,6 +104,7 @@
 		}
 	}
 
+	/** Switch the primary Plex server, keeping the login it was set up with. */
 	async function saveServer() {
 		if (!selectedServer) return;
 		busy = true;
@@ -61,6 +120,7 @@
 			plex.server_name = body.server_name;
 			plex.server_url = body.server_url;
 			servers = [];
+			await refresh();
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Could not switch server';
 		} finally {
@@ -68,29 +128,80 @@
 		}
 	}
 
-	// ── Disconnect ────────────────────────────────────────────────────────────
-	async function disconnect(service: 'plex' | 'lastfm' | 'listenbrainz') {
+	/** Add a second Plex server: same login, its own library. */
+	async function addPlexServer() {
+		if (!selectedServer || !newSlug) return;
 		busy = true;
 		error = '';
 		try {
-			const res = await fetch(`/api/${service}/auth`, { method: 'DELETE' });
+			const res = await fetch('/api/plex/server', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					name: selectedServer,
+					account: newSlug,
+					label: newLabel || selectedServer
+				})
+			});
+			if (!res.ok) throw new Error(await res.text());
+			adding = null;
+			servers = [];
+			await refresh();
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Could not add that server';
+		} finally {
+			busy = false;
+		}
+	}
+
+	// ── Disconnect ────────────────────────────────────────────────────────────
+	async function disconnect(account: ServiceAccountItem) {
+		busy = true;
+		error = '';
+		try {
+			const query = account.primary
+				? ''
+				: `?account=${encodeURIComponent(account.id.split(':')[1])}`;
+			const res = await fetch(`/api/${account.service}/auth${query}`, { method: 'DELETE' });
 			if (!res.ok) throw new Error(await res.text());
 			const body: { status: ServiceStatus; username?: string } = await res.json();
-			const state = service === 'plex' ? plex : service === 'lastfm' ? lastfm : listenbrainz;
-			state.status = body.status;
-			state.username = body.username;
-			if (service === 'plex') {
-				plex.server_name = undefined;
-				plex.server_url = undefined;
+			const state =
+				account.service === 'plex' ? plex : account.service === 'lastfm' ? lastfm : listenbrainz;
+			if (account.primary) {
+				state.status = body.status;
+				state.username = body.username;
+				if (account.service === 'plex') {
+					plex.server_name = undefined;
+					plex.server_url = undefined;
+				}
 			}
 			confirming = null;
 			editing = null;
+			await refresh();
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Could not disconnect';
 		} finally {
 			busy = false;
 		}
 	}
+
+	const services: { service: ServiceKind; name: string; blurb: string }[] = [
+		{
+			service: 'plex',
+			name: 'Plex',
+			blurb: 'Source of your media ratings'
+		},
+		{
+			service: 'lastfm',
+			name: 'Last.fm',
+			blurb: 'Love every track at or above the cutoff'
+		},
+		{
+			service: 'listenbrainz',
+			name: 'ListenBrainz',
+			blurb: 'Love or hate every track at or above the cutoff'
+		}
+	];
 </script>
 
 <svelte:head><title>Services · RatingRelay</title></svelte:head>
@@ -104,7 +215,8 @@
 			<p class="mt-1 max-w-2xl text-sm text-muted-foreground">
 				Plex is the source of truth for ratings; Last.fm and ListenBrainz are where they are
 				written. Changing a credential here does not touch anything the relay has already written —
-				the next run reconciles against it.
+				the next run reconciles against it. A second account of the same service is optional: add
+				one when you have another Plex server, or a new Last.fm or ListenBrainz account to move to.
 			</p>
 
 			{#if error}
@@ -112,218 +224,248 @@
 			{/if}
 
 			<div class="mt-6 space-y-2">
-				<!-- Plex -->
-				<section class="panel px-4 py-3.5">
-					<div class="flex items-center gap-3">
-						<ServiceMark service="plex" size={26} />
-						<div class="min-w-0 flex-1">
-							<h2 class="text-sm font-medium">Plex</h2>
-							<p class="text-xs text-muted-foreground">
-								Source of your media ratings{#if plex.server_name}
-									· {plex.server_name}{/if}
-							</p>
+				{#each services as service (service.service)}
+					<section class="panel px-4 py-3.5">
+						<div class="flex items-center gap-3">
+							<ServiceMark service={service.service} size={26} />
+							<div class="min-w-0 flex-1">
+								<h2 class="text-sm font-medium">{service.name}</h2>
+								<p class="text-xs text-muted-foreground">
+									{service.blurb}{#if service.service === 'plex' && plex.server_name}
+										· {plex.server_name}{/if}
+								</p>
+							</div>
+							<ConnectionChip
+								status={statuses[service.service]}
+								username={connectedNames[service.service]}
+							/>
 						</div>
-						<ConnectionChip status={plex.status} username={plex.username} />
-					</div>
 
-					{#if confirming === 'plex'}
-						<div class="mt-3 border-t border-border pt-3">
-							<p class="text-sm text-warn">
-								The login this app checks is signed with your Plex token. Disconnecting Plex removes
-								the only login RatingRelay has and leaves it open to anyone who can reach it, until
-								you sign in again.
-							</p>
-							<div class="mt-3 flex gap-2">
+						{#if rows[service.service].length > 0}
+							<div class="mt-3 space-y-1.5 border-t border-border pt-3">
+								{#each rows[service.service] as account (account.id)}
+									<AccountRow {account} {busy} ondisconnect={() => (confirming = account.id)} />
+									{#if confirming === account.id}
+										<div class="rounded-md border border-destructive/40 px-2.5 py-2">
+											<p class="text-sm text-warn">
+												{#if account.service === 'plex' && account.primary}
+													The login this app checks is signed with your Plex token. Disconnecting
+													Plex removes the only login RatingRelay has and leaves it open to anyone
+													who can reach it, until you sign in again.
+												{:else if account.service === 'plex'}
+													Forget this server. The login and your other servers stay as they are.
+												{:else if account.service === 'lastfm'}
+													Forget the Last.fm API key, secret and password for this account. What was
+													already written stays written.
+												{:else}
+													Forget this ListenBrainz token. Feedback already submitted stays
+													submitted.
+												{/if}
+											</p>
+											<div class="mt-2 flex gap-2">
+												<Button
+													variant="destructive"
+													class="h-8 px-3 text-sm"
+													onclick={() => disconnect(account)}
+													disabled={busy}>Disconnect anyway</Button
+												>
+												<Button
+													variant="outline"
+													class="h-8 px-3 text-sm"
+													onclick={() => (confirming = null)}>Cancel</Button
+												>
+											</div>
+										</div>
+									{/if}
+								{/each}
+							</div>
+						{/if}
+
+						{#if editing === service.service}
+							<div class="mt-3 border-t border-border pt-3">
+								{#if service.service === 'lastfm'}
+									<LastFmForm
+										submitLabel="Replace credentials"
+										onsubmitted={async (username) => {
+											lastfm.status = 'connected';
+											lastfm.username = username;
+											editing = null;
+											await refresh();
+										}}
+									/>
+								{:else if service.service === 'listenbrainz'}
+									<ListenBrainzForm
+										submitLabel="Replace token"
+										onsubmitted={async (username) => {
+											listenbrainz.status = 'connected';
+											listenbrainz.username = username;
+											editing = null;
+											await refresh();
+										}}
+									/>
+								{/if}
 								<Button
-									variant="destructive"
-									class="h-8 px-3 text-sm"
-									onclick={() => disconnect('plex')}
-									disabled={busy}>Disconnect anyway</Button
-								>
-								<Button
-									variant="outline"
-									class="h-8 px-3 text-sm"
-									onclick={() => (confirming = null)}>Cancel</Button
+									variant="ghost"
+									class="mt-2 h-8 px-3 text-sm"
+									onclick={() => (editing = null)}>Cancel</Button
 								>
 							</div>
-						</div>
-					{:else if plex.status === 'connected'}
-						<div class="mt-3 flex flex-wrap items-center gap-2 border-t border-border pt-3">
-							{#if servers.length > 0}
-								<Select
-									bind:value={selectedServer}
-									class="min-w-56"
-									label="Plex server"
-									options={servers.map((srv) => ({ value: srv.name, label: srv.name }))}
-								/>
-								<Button class="h-8 px-3 text-sm" onclick={saveServer} disabled={busy}>
-									Use this server
-								</Button>
-							{:else}
-								<Button
-									variant="outline"
-									class="h-8 px-3 text-sm"
-									onclick={loadServers}
-									disabled={loadingServers}
-								>
-									{loadingServers ? 'Loading servers…' : 'Change server'}
-								</Button>
-							{/if}
-							<Button
-								variant="ghost"
-								class="ml-auto h-8 px-3 text-sm text-destructive"
-								onclick={() => (confirming = 'plex')}>Disconnect</Button
-							>
-						</div>
-					{:else}
-						<div class="mt-3 border-t border-border pt-3 text-sm text-muted-foreground">
-							Plex is not connected. Signing in to Plex is part of
-							<a class="text-primary hover:underline" href={resolve('/')}>setup</a> — the login window
-							has to come from there.
-						</div>
-					{/if}
-				</section>
-
-				<!-- Last.fm -->
-				<section class="panel px-4 py-3.5">
-					<div class="flex items-center gap-3">
-						<ServiceMark service="lastfm" size={26} />
-						<div class="min-w-0 flex-1">
-							<h2 class="text-sm font-medium">Last.fm</h2>
-							<p class="text-xs text-muted-foreground">Love every track at or above the cutoff</p>
-						</div>
-						<ConnectionChip status={lastfm.status} username={lastfm.username} />
-					</div>
-
-					{#if confirming === 'lastfm'}
-						<div class="mt-3 border-t border-border pt-3">
-							<p class="text-sm text-muted-foreground">
-								Forget the Last.fm API key, secret and password. What was already written stays
-								written, and the next run has nothing to reconcile against Last.fm.
-							</p>
-							<div class="mt-3 flex gap-2">
-								<Button
-									variant="destructive"
-									class="h-8 px-3 text-sm"
-									onclick={() => disconnect('lastfm')}
-									disabled={busy}>Disconnect Last.fm</Button
-								>
-								<Button
-									variant="outline"
-									class="h-8 px-3 text-sm"
-									onclick={() => (confirming = null)}>Cancel</Button
-								>
-							</div>
-						</div>
-					{:else if editing === 'lastfm'}
-						<div class="mt-3 border-t border-border pt-3">
-							<LastFmForm
-								submitLabel="Replace credentials"
-								onsubmitted={(username) => {
-									lastfm.status = 'connected';
-									lastfm.username = username;
-									editing = null;
-								}}
-							/>
-							<Button variant="ghost" class="mt-2 h-8 px-3 text-sm" onclick={() => (editing = null)}
-								>Cancel</Button
-							>
-						</div>
-					{:else if lastfm.status === 'connected'}
-						<div class="mt-3 flex gap-2 border-t border-border pt-3">
-							<Button
-								variant="outline"
-								class="h-8 px-3 text-sm"
-								onclick={() => (editing = 'lastfm')}>Replace credentials</Button
-							>
-							<Button
-								variant="ghost"
-								class="ml-auto h-8 px-3 text-sm text-destructive"
-								onclick={() => (confirming = 'lastfm')}>Disconnect</Button
-							>
-						</div>
-					{:else}
-						<div class="mt-3 border-t border-border pt-3">
-							<LastFmForm
-								onsubmitted={(username) => {
-									lastfm.status = 'connected';
-									lastfm.username = username;
-								}}
-							/>
-						</div>
-					{/if}
-				</section>
-
-				<!-- ListenBrainz -->
-				<section class="panel px-4 py-3.5">
-					<div class="flex items-center gap-3">
-						<ServiceMark service="listenbrainz" size={26} />
-						<div class="min-w-0 flex-1">
-							<h2 class="text-sm font-medium">ListenBrainz</h2>
-							<p class="text-xs text-muted-foreground">
-								Love or hate every track at or above the cutoff
-							</p>
-						</div>
-						<ConnectionChip status={listenbrainz.status} username={listenbrainz.username} />
-					</div>
-
-					{#if confirming === 'listenbrainz'}
-						<div class="mt-3 border-t border-border pt-3">
-							<p class="text-sm text-muted-foreground">
-								Forget the ListenBrainz token. Feedback already submitted stays submitted.
-							</p>
-							<div class="mt-3 flex gap-2">
-								<Button
-									variant="destructive"
-									class="h-8 px-3 text-sm"
-									onclick={() => disconnect('listenbrainz')}
-									disabled={busy}>Disconnect ListenBrainz</Button
-								>
-								<Button
-									variant="outline"
-									class="h-8 px-3 text-sm"
-									onclick={() => (confirming = null)}>Cancel</Button
+						{:else if adding === service.service}
+							<div class="mt-3 space-y-2 border-t border-border pt-3">
+								<p class="text-sm text-muted-foreground">
+									{#if service.service === 'plex'}
+										A second server of the same Plex login. Give it a short name — a relay reaches
+										it as <code>plex:{newSlug || 'name'}</code>.
+									{:else}
+										A second {service.name} account. Give it a short name — a relay reaches it as
+										<code>{service.service}:{newSlug || 'name'}</code>.
+									{/if}
+								</p>
+								{#if service.service === 'plex'}
+									{#if servers.length > 0}
+										<Select
+											bind:value={selectedServer}
+											class="min-w-56"
+											label="Plex server"
+											options={servers.map((srv) => ({ value: srv.name, label: srv.name }))}
+										/>
+									{:else}
+										<Button
+											variant="outline"
+											class="h-8 px-3 text-sm"
+											onclick={loadServers}
+											disabled={loadingServers}
+										>
+											{loadingServers ? 'Loading servers…' : 'List servers'}
+										</Button>
+									{/if}
+								{/if}
+								<div class="grid gap-2 sm:grid-cols-2">
+									<Input
+										bind:value={newLabel}
+										placeholder="Name on this page (e.g. Old account)"
+										spellcheck={false}
+										oninput={() => {
+											if (!slugTouched) newSlug = slugFrom(newLabel);
+										}}
+									/>
+									<Input
+										bind:value={newSlug}
+										placeholder="Short name (e.g. old)"
+										autocomplete="off"
+										spellcheck={false}
+										oninput={() => (slugTouched = true)}
+									/>
+								</div>
+								{#if !newSlug}
+									<p class="text-xs text-muted-foreground">
+										Give it a short name above and the form appears.
+									</p>
+								{:else if service.service !== 'plex'}
+									{#if service.service === 'lastfm'}
+										<LastFmForm
+											submitLabel={newSlug ? 'Add this account' : 'Name it first'}
+											account={newSlug}
+											label={newLabel || undefined}
+											onsubmitted={async () => {
+												adding = null;
+												await refresh();
+											}}
+										/>
+									{:else}
+										<ListenBrainzForm
+											submitLabel={newSlug ? 'Add this account' : 'Name it first'}
+											account={newSlug}
+											label={newLabel || undefined}
+											onsubmitted={async () => {
+												adding = null;
+												await refresh();
+											}}
+										/>
+									{/if}
+								{:else}
+									<Button
+										class="h-8 px-3 text-sm"
+										onclick={addPlexServer}
+										disabled={busy || !selectedServer || !newSlug}>Add this server</Button
+									>
+								{/if}
+								<Button variant="ghost" class="h-8 px-3 text-sm" onclick={() => (adding = null)}
+									>Cancel</Button
 								>
 							</div>
-						</div>
-					{:else if editing === 'listenbrainz'}
-						<div class="mt-3 border-t border-border pt-3">
-							<ListenBrainzForm
-								submitLabel="Replace token"
-								onsubmitted={(username) => {
-									listenbrainz.status = 'connected';
-									listenbrainz.username = username;
-									editing = null;
-								}}
-							/>
-							<Button variant="ghost" class="mt-2 h-8 px-3 text-sm" onclick={() => (editing = null)}
-								>Cancel</Button
-							>
-						</div>
-					{:else if listenbrainz.status === 'connected'}
-						<div class="mt-3 flex gap-2 border-t border-border pt-3">
-							<Button
-								variant="outline"
-								class="h-8 px-3 text-sm"
-								onclick={() => (editing = 'listenbrainz')}>Replace token</Button
-							>
-							<Button
-								variant="ghost"
-								class="ml-auto h-8 px-3 text-sm text-destructive"
-								onclick={() => (confirming = 'listenbrainz')}>Disconnect</Button
-							>
-						</div>
-					{:else}
-						<div class="mt-3 border-t border-border pt-3">
-							<ListenBrainzForm
-								onsubmitted={(username) => {
-									listenbrainz.status = 'connected';
-									listenbrainz.username = username;
-								}}
-							/>
-						</div>
-					{/if}
-				</section>
+						{:else if service.service === 'plex'}
+							<div class="mt-3 flex flex-wrap items-center gap-2 border-t border-border pt-3">
+								{#if statuses.plex !== 'connected'}
+									<p class="text-sm text-muted-foreground">
+										Plex is not connected. Signing in to Plex is part of
+										<a class="text-primary hover:underline" href={resolve('/')}>setup</a> — the login
+										window has to come from there.
+									</p>
+								{:else}
+									{#if servers.length > 0}
+										<Select
+											bind:value={selectedServer}
+											class="min-w-56"
+											label="Plex server"
+											options={servers.map((srv) => ({ value: srv.name, label: srv.name }))}
+										/>
+										<Button class="h-8 px-3 text-sm" onclick={saveServer} disabled={busy}>
+											Use this server
+										</Button>
+									{:else}
+										<Button
+											variant="outline"
+											class="h-8 px-3 text-sm"
+											onclick={loadServers}
+											disabled={loadingServers}
+										>
+											{loadingServers ? 'Loading servers…' : 'Change server'}
+										</Button>
+									{/if}
+									<Button
+										variant="outline"
+										class="ml-auto h-8 px-3 text-sm"
+										onclick={() => startAdding('plex')}>Add another server</Button
+									>
+								{/if}
+							</div>
+						{:else if statuses[service.service] === 'connected'}
+							<div class="mt-3 flex flex-wrap gap-2 border-t border-border pt-3">
+								<Button
+									variant="outline"
+									class="h-8 px-3 text-sm"
+									onclick={() => (editing = service.service)}>Replace credentials</Button
+								>
+								<Button
+									variant="outline"
+									class="h-8 px-3 text-sm"
+									onclick={() => startAdding(service.service)}>Add another account</Button
+								>
+							</div>
+						{:else}
+							<div class="mt-3 border-t border-border pt-3">
+								{#if service.service === 'lastfm'}
+									<LastFmForm
+										onsubmitted={async (username) => {
+											lastfm.status = 'connected';
+											lastfm.username = username;
+											await refresh();
+										}}
+									/>
+								{:else}
+									<ListenBrainzForm
+										onsubmitted={async (username) => {
+											listenbrainz.status = 'connected';
+											listenbrainz.username = username;
+											await refresh();
+										}}
+									/>
+								{/if}
+							</div>
+						{/if}
+					</section>
+				{/each}
 			</div>
 		</div>
 	</main>

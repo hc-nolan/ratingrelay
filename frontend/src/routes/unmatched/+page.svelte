@@ -8,7 +8,7 @@
 	import { Select } from '$lib/components/ui/select';
 	import ServiceMark from '$lib/components/flow/ServiceMark.svelte';
 	import type { Candidate } from '$lib/types/relay';
-	import type { SourceId } from '$lib/types/relay';
+	import type { ServiceMarkId } from '$lib/types/relay';
 	import { cn } from '$lib/utils';
 
 	interface UnmatchedTrack {
@@ -312,7 +312,7 @@
 									{#if group.service === 'all'}
 										<span class="size-2 rounded-full bg-muted-foreground"></span>
 									{:else}
-										<ServiceMark service={group.service as SourceId} size={14} />
+										<ServiceMark service={group.service as ServiceMarkId} size={14} />
 									{/if}
 								</span>
 								<h2 class="text-sm font-medium text-foreground">

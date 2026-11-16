@@ -2,7 +2,8 @@
 	import FlowNode from './FlowNode.svelte';
 	import ServiceMark from './ServiceMark.svelte';
 	import { cn } from '$lib/utils';
-	import type { SourceId, SourceOption } from '$lib/types/relay';
+	import type { SourceOption } from '$lib/types/relay';
+	import { markFor } from '$lib/types/relay';
 
 	let {
 		options,
@@ -11,8 +12,8 @@
 		resetOptions
 	}: {
 		options: SourceOption[];
-		selected: SourceId;
-		resetService: SourceId;
+		selected: string;
+		resetService: string;
 		resetOptions: SourceOption[];
 	} = $props();
 </script>
@@ -34,7 +35,7 @@
 				)}
 				aria-pressed={active}
 			>
-				<ServiceMark service={option.id} size={18} />
+				<ServiceMark service={markFor(option.id)} size={18} />
 				<span
 					class={cn('text-base font-medium', active ? 'text-foreground' : 'text-muted-foreground')}
 				>
@@ -62,7 +63,7 @@
 						)}
 						aria-pressed={resetService === option.id}
 					>
-						<ServiceMark service={option.id} size={14} />
+						<ServiceMark service={markFor(option.id)} size={14} />
 						{option.name}
 					</button>
 				{/each}

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { starLabel } from '$lib/relay';
 	import type { TargetOption } from '$lib/types/relay';
+	import { markFor } from '$lib/types/relay';
 	import { cn } from '$lib/utils';
 	import ServiceMark from './ServiceMark.svelte';
 
@@ -39,7 +40,7 @@
 >
 	<div class="flex items-center gap-3">
 		<span class={allocated ? 'opacity-100' : 'opacity-60'}>
-			<ServiceMark service={option.id} size={22} />
+			<ServiceMark service={markFor(option.id)} size={22} />
 		</span>
 		<span
 			class={cn(

@@ -27,10 +27,9 @@ from ratingrelay.cli.config import (
     ConfigError,
     DEFAULT_CONFIG,
     RelaySpec,
-    SOURCE_SERVICES,
-    TARGET_SERVICES,
     load_relays,
 )
+from ratingrelay.engine.refs import KNOWN_SERVICES, parse_ref
 
 EXIT_OK = 0
 EXIT_PARTIAL = 1
@@ -78,20 +77,32 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _account_ref(value: str) -> str:
+    """argparse type for a source or target: ``service`` or ``service:account``."""
+    try:
+        return parse_ref(value).ref
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"{exc} — use one of {', '.join(KNOWN_SERVICES)}, or one of those "
+            "followed by ':account' (e.g. lastfm:new)"
+        ) from exc
+
+
 def _add_relay_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--source",
         default="plex",
-        choices=SOURCE_SERVICES,
+        type=_account_ref,
+        metavar="SERVICE[:ACCOUNT]",
         help="where the ratings come from (default: plex)",
     )
     parser.add_argument(
         "--target",
         dest="targets",
         action="append",
-        choices=TARGET_SERVICES,
+        type=_account_ref,
         default=[],
-        metavar="SERVICE",
+        metavar="SERVICE[:ACCOUNT]",
         help="where they go; repeat for more than one (default: lastfm)",
     )
     parser.add_argument(

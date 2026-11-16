@@ -18,10 +18,14 @@ from pathlib import Path
 import tomllib
 from typing import Any
 
+from ratingrelay.engine.refs import KNOWN_SERVICES, parse_ref
+
 DEFAULT_CONFIG = "relays.toml"
 
-SOURCE_SERVICES = ("plex", "lastfm", "listenbrainz")
-TARGET_SERVICES = ("plex", "lastfm", "listenbrainz")
+# A source or target is an account *ref*: a service, optionally followed by
+# ``:account`` for a second one (``lastfm:new``). The bare kind is the account
+# that already exists, so a file written before accounts existed still means what
+# it meant. See ``ratingrelay.engine.refs``.
 FEEDBACK_TYPES = ("love", "hate")
 
 _KNOWN_KEYS = {
@@ -45,6 +49,18 @@ _MOVED_KEYS = {
 
 class ConfigError(ValueError):
     """A relay definition the CLI refuses to guess at."""
+
+
+def _read_ref(name: str, side: str, value: str) -> str:
+    """Validate one source or target as an account ref, or say why not."""
+    try:
+        return parse_ref(value).ref
+    except ValueError as exc:
+        raise ConfigError(
+            f"{name}: {exc} (a {side} is one of "
+            f"{', '.join(KNOWN_SERVICES)}, or one of those followed by "
+            "':account' — e.g. lastfm:new)"
+        ) from exc
 
 
 @dataclass(frozen=True)
@@ -73,20 +89,15 @@ class RelaySpec:
     def __post_init__(self) -> None:
         if not self.name:
             raise ConfigError("a relay needs a name")
-        if self.source not in SOURCE_SERVICES:
-            raise ConfigError(
-                f"{self.name}: unknown source {self.source!r} "
-                f"(one of {', '.join(SOURCE_SERVICES)})"
-            )
+        _read_ref(self.name, "source", self.source)
         if not self.targets:
             raise ConfigError(f"{self.name}: a relay needs at least one target")
         for target in self.targets:
-            if target not in TARGET_SERVICES:
-                raise ConfigError(
-                    f"{self.name}: unknown target {target!r} "
-                    f"(one of {', '.join(TARGET_SERVICES)})"
-                )
-            if target == self.source:
+            _read_ref(self.name, "target", target)
+            # Judged on the ref, not the kind: ``plex`` -> ``plex:attic`` is the
+            # point of a second account, ``plex`` -> ``plex`` is one account
+            # relaying into itself.
+            if parse_ref(target).ref == parse_ref(self.source).ref:
                 raise ConfigError(
                     f"{self.name}: {target!r} is both the source and a target"
                 )

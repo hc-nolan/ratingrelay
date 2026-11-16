@@ -25,3 +25,12 @@ feedback_type = "love"      # love or hate
 name = "back-to-plex"
 source = "lastfm"
 targets = ["plex"]
+
+# A second account of a service is named after the colon. Add it on the Services
+# page first; the account that was already connected keeps the bare name. A
+# second Plex server (targets = ["plex:attic"]) and a second ListenBrainz account
+# work the same way. The ref is whichever account you named when you added it.
+# [[relay]]
+# name = "move-to-new-account"
+# source = "lastfm"
+# targets = ["lastfm:new"]

@@ -203,6 +203,64 @@ def test_a_relay_cannot_write_back_to_its_source():
         RelaySpec(source="lastfm", targets=("lastfm",))
 
 
+# ---------------------------------------------------------------------------
+# A second account of a service
+# ---------------------------------------------------------------------------
+
+
+def test_a_relay_can_name_a_second_account():
+    spec = RelaySpec(source="lastfm", targets=("lastfm:new",))
+    assert spec.targets == ("lastfm:new",)
+    assert spec.summary == "lastfm → lastfm:new"
+    # The source reads the same direction either way; the pair of refs keeps the
+    # two accounts' records apart.
+    assert spec.relay == "love"
+
+
+def test_the_same_account_cannot_be_both_ends():
+    """``lastfm`` -> ``lastfm:new`` is a migration; ``lastfm`` -> ``lastfm`` is not."""
+    with pytest.raises(ConfigError, match="both the source and a target"):
+        RelaySpec(source="lastfm:old", targets=("lastfm:old",))
+    with pytest.raises(ConfigError, match="both the source and a target"):
+        RelaySpec(source="plex", targets=("plex",))
+
+
+def test_a_plex_relay_between_two_servers_is_allowed():
+    spec = RelaySpec(source="plex", targets=("plex:attic",))
+    assert spec.targets == ("plex:attic",)
+
+
+def test_a_hate_relay_cannot_target_a_second_lastfm_account():
+    with pytest.raises(ConfigError, match="no hate"):
+        RelaySpec(source="plex", targets=("lastfm:new",), feedback_type="hate")
+
+
+def test_an_unreadable_account_name_says_what_is_allowed():
+    with pytest.raises(ConfigError, match="lastfm:new"):
+        RelaySpec(source="plex", targets=("lastfm:New Account",))
+
+
+def test_the_flags_take_a_service_and_an_account():
+    args = cli.build_parser().parse_args(
+        ["relay", "--source", "lastfm", "--target", "lastfm:new"]
+    )
+    assert (args.source, args.targets) == ("lastfm", ["lastfm:new"])
+
+
+def test_a_flag_with_an_unreadable_ref_is_a_parser_error():
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(["relay", "--target", "lastfm:"])
+
+
+def test_the_config_file_takes_a_second_account(tmp_path):
+    path = tmp_path / "relays.toml"
+    path.write_text(
+        '[[relay]]\nname = "move"\nsource = "lastfm"\ntargets = ["lastfm:new"]\n'
+    )
+    (spec,) = load_relays(path)
+    assert (spec.source, spec.targets) == ("lastfm", ("lastfm:new",))
+
+
 def test_a_relay_needs_a_target():
     with pytest.raises(ConfigError, match="at least one target"):
         RelaySpec(source="plex", targets=())

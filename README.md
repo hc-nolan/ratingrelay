@@ -254,6 +254,29 @@ loves and Plex hates, both to ListenBrainz). Two that read the same direction, s
 as two Plex love relays into one target, are refused: each run would undo what only
 the other one passes. Merge them into one relay.
 
+### A second account of a service
+
+A source or target is a service, optionally followed by `:account`. The account
+already connected keeps the bare name, and a second one is named when you add it
+on **Services** in the web app:
+
+```toml
+[[relay]]
+name = "move-to-new-account"
+source = "lastfm"            # the account that was already connected
+targets = ["lastfm:new"]     # the second one, named "new" on the Services page
+```
+
+The same syntax works for a second Plex server (`targets = ["plex:attic"]`) and
+for ListenBrainz. The flags take it too: `ratingrelay relay --source lastfm
+--target lastfm:new`.
+
+One thing a relay cannot do is name the *same* account as both ends: `lastfm` →
+`lastfm:new` is a migration, `lastfm` → `lastfm` is an account relaying into
+itself. A second account is optional and lives in the database, so environment
+variables (`LASTFM_TOKEN` and friends) still describe the first account of each
+service only.
+
 ### When a run refuses to undo
 
 If a run would take back more than half of what RatingRelay has written to a

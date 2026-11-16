@@ -16,6 +16,8 @@ from ratingrelay.engine.types import Track
 class Source(Protocol):
     """A service that holds the ratings we read."""
 
+    # The account's ref (``plex``, ``lastfm:old``), not just the kind: it is half
+    # of the key the sync store is written under. See ``engine.refs``.
     service: str
 
     async def fetch(self) -> list[Track]:
@@ -25,6 +27,7 @@ class Source(Protocol):
 class Target(Protocol):
     """A service we write ratings to."""
 
+    # The account's ref (``plex:attic``), see ``Source.service``.
     service: str
 
     async def plan(self, track: Track) -> WritePlan:
@@ -54,6 +57,11 @@ class MappedTarget:
     All three targets resolve mappings the same way and only differ in what they
     do next, so the lookup is shared. The cache lasts one run, which is what the
     ``plan()``-per-track loop needs.
+
+    ``service`` is the target's ref, set by the constructor of each concrete
+    target: mappings are looked up for that account, then its kind, then ``all``
+    (:func:`ratingrelay.engine.refs.mapping_scopes`), so a mapping written
+    before a service had a second account still applies to it.
     """
 
     service: str = ""

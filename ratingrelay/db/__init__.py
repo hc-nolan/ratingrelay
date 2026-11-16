@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from ratingrelay.settings import settings
 from ratingrelay.models.models import Loves, Hates, Reset
-from ratingrelay.models.services import ServiceCredential  # noqa: F401 — ensure table is registered
+from ratingrelay.models.services import ServiceAccount  # noqa: F401 — ensure table is registered
 import ratingrelay.models.jobs  # noqa: F401 — register Job and TrackEvent tables
 import ratingrelay.models.sync  # noqa: F401 — register SyncRecord table
 import ratingrelay.models.mappings  # noqa: F401 — register TrackMapping table

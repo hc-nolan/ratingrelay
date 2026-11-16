@@ -2,8 +2,10 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+from ratingrelay.schemas.services import AccountFields
 
-class LastFMAuthRequest(BaseModel):
+
+class LastFMAuthRequest(AccountFields):
     api_key: str
     api_secret: str
     username: str

@@ -5,7 +5,7 @@ can hand the target its own resolver, and the target stays free of MusicBrainz
 network behaviour.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable, Awaitable, Optional
 
 from liblistenbrainz import ListenBrainz
@@ -82,11 +82,15 @@ class ListenBrainzClient:
 
 @dataclass
 class ListenBrainzSource:
-    """The account's feedback at one score."""
+    """The account's feedback at one score.
+
+    ``service`` is the account's ref (``listenbrainz``, ``listenbrainz:new``) —
+    see ``engine.refs``.
+    """
 
     client: ListenBrainzClient
     score: int = 1
-    service: str = field(default="listenbrainz", init=False)
+    service: str = "listenbrainz"
 
     async def fetch(self) -> list[Track]:
         return await self.client.feedback(self.score)
@@ -95,7 +99,7 @@ class ListenBrainzSource:
 class ListenBrainzTarget(MappedTarget):
     """Submits feedback for a resolved recording MBID."""
 
-    service = "listenbrainz"
+    KIND = "listenbrainz"
 
     def __init__(
         self,
@@ -104,8 +108,11 @@ class ListenBrainzTarget(MappedTarget):
         resolve: Resolver,
         score: int = 1,
         cache: Optional[MbidCache] = None,
+        *,
+        service: str = KIND,
     ):
         super().__init__(mappings)
+        self.service = service
         self._client = client
         self._resolve = resolve
         self._score = score

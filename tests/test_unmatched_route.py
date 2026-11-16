@@ -21,7 +21,9 @@ import ratingrelay.models.sync  # noqa: F401
 
 from fastapi import FastAPI
 from ratingrelay.db import get_async_session
+from ratingrelay.engine.normalize import track_key
 from ratingrelay.models.jobs import TrackEvent
+from ratingrelay.models.mappings import TrackMapping
 from ratingrelay.routes.unmatched import router
 
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
@@ -316,3 +318,38 @@ async def test_rows_for_a_service_we_no_longer_write_to_are_left_out(client):
     await _record(factory, **_record_args(target_service="spotify", target_key=None))
 
     assert (await http.get("/api/relay/unrevertable")).json() == []
+
+
+async def test_a_kind_wide_mapping_still_counts_for_a_second_account(client):
+    """A mapping written for the kind applies to the kind's second account.
+
+    The queue asks the same question the target does when it resolves a mapping,
+    so it must not offer to create one that already applies — otherwise every
+    second account looks permanently unmapped.
+    """
+    http, factory = client
+    await _event(
+        factory,
+        artist="Sigur Ros",
+        title="Hoppipolla",
+        target_service="lastfm:old",
+        success=False,
+        outcome="unmatched",
+        reason="no_match",
+    )
+    async with factory() as session:
+        session.add(
+            TrackMapping(
+                source_normalized_key=track_key("Sigur Ros", "Hoppipolla"),
+                source_artist="Sigur Ros",
+                source_title="Hoppipolla",
+                mapped_artist="Sigur Rós",
+                mapped_title="Hoppípolla",
+                target_service="lastfm",
+            )
+        )
+        await session.commit()
+
+    body = (await http.get("/api/relay/unmatched")).json()
+
+    assert [item["has_mapping"] for item in body] == [True]

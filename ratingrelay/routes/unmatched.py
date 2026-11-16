@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ratingrelay.db import get_async_session
 from ratingrelay.db.store import SqlSyncStore
 from ratingrelay.engine.normalize import track_key
+from ratingrelay.engine.refs import mapping_scopes, service_kind
 from ratingrelay.engine.services.registry import UNDO_PRECONDITIONS
 from ratingrelay.engine.types import Reason
 from ratingrelay.models.jobs import TrackEvent
@@ -90,11 +91,9 @@ async def list_unmatched(
     # Load all mappings once
     mapping_result = await db.execute(select(TrackMapping))
     all_mappings = mapping_result.scalars().all()
-    mapped_keys: set[tuple[str, str]] = set()
-    for m in all_mappings:
-        mapped_keys.add((m.source_normalized_key, m.target_service))
-        if m.target_service != "all":
-            mapped_keys.add((m.source_normalized_key, "all"))
+    mapped_keys: set[tuple[str, str]] = {
+        (m.source_normalized_key, m.target_service) for m in all_mappings
+    }
 
     # Deduplicate by (artist, title, target_service): the newest event decides
     # whether the track is listed, and every failure since then is counted.
@@ -109,10 +108,13 @@ async def list_unmatched(
             continue
         if key not in seen:
             norm_key = _sync_key(ev.artist, ev.title)
-            has_mapping = (
-                (norm_key, ev.target_service) in mapped_keys
-                or (norm_key, "all") in mapped_keys
-            )
+            # Same scopes the target resolves when it looks a mapping up, so this
+            # list cannot offer to create one that already applies.
+            try:
+                scopes = mapping_scopes(ev.target_service)
+            except ValueError:
+                scopes = (ev.target_service, "all")
+            has_mapping = any((norm_key, scope) in mapped_keys for scope in scopes)
             seen[key] = {
                 "artist": ev.artist,
                 "title": ev.title,
@@ -144,7 +146,12 @@ async def list_unrevertable(
     """
     refusals: list[UnrevertableRecord] = []
     for target_service, record in await SqlSyncStore(db).all_records():
-        precondition = UNDO_PRECONDITIONS.get(target_service)
+        try:
+            # Records name an account (``lastfm:old``); the rule that decides
+            # whether one can be undone belongs to the service kind.
+            precondition = UNDO_PRECONDITIONS.get(service_kind(target_service))
+        except ValueError:
+            precondition = None
         if precondition is None:
             continue  # a target we no longer write to has nothing to refuse
         try:

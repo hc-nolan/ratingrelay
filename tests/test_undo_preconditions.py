@@ -20,10 +20,10 @@ TARGETS = (PlexTarget, LastFmTarget, ListenBrainzTarget)
 def test_the_queue_asks_the_question_the_targets_undo_runs():
     """Same function object, not an equal one: no room for a second rule."""
     for cls in TARGETS:
-        assert UNDO_PRECONDITIONS[cls.service] is cls.undoable
+        assert UNDO_PRECONDITIONS[cls.KIND] is cls.undoable
 
 
-@pytest.mark.parametrize("cls", TARGETS, ids=lambda c: c.service)
+@pytest.mark.parametrize("cls", TARGETS, ids=lambda c: c.KIND)
 async def test_undo_refuses_an_unaddressable_record_without_calling_out(cls):
     calls: list[tuple] = []
 
@@ -56,10 +56,10 @@ async def test_undo_refuses_an_unaddressable_record_without_calling_out(cls):
     assert calls == [], "undo wrote something before checking it could"
 
 
-@pytest.mark.parametrize("cls", TARGETS, ids=lambda c: c.service)
+@pytest.mark.parametrize("cls", TARGETS, ids=lambda c: c.KIND)
 def test_asking_is_side_effect_free(cls):
     """``undoable`` must not need a client at all: the queue calls it per row."""
     record = SyncedTrack(key="artist||song", intent="love")
 
     with pytest.raises(ValueError):
-        UNDO_PRECONDITIONS[cls.service](record)
+        UNDO_PRECONDITIONS[cls.KIND](record)

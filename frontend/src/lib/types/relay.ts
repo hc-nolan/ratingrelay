@@ -5,19 +5,33 @@ export interface Candidate {
 	recording_mbid?: string | null;
 }
 
-/** The four things the FROM node can be: three services, or a reset. */
-export type SourceId = 'plex' | 'lastfm' | 'listenbrainz' | 'reset';
+/**
+ * A source or target is an account **ref** (`lastfm`, or `lastfm:old` for a
+ * second account of it), plus the literal `reset` as a source. Refs come from
+ * `/api/services`, so the UI does not carry a list of services of its own.
+ */
+export type SourceRef = string;
 
-/** A service that can receive writes. */
-export type TargetId = 'plex' | 'lastfm' | 'listenbrainz';
+/**
+ * The three services, plus the reset node: only what a *mark* is drawn for. It
+ * says nothing about which account — that is the ref above.
+ */
+export type ServiceMarkId = 'plex' | 'lastfm' | 'listenbrainz' | 'reset';
+
+/** The mark to draw for an account ref; `reset` is the one non-service node. */
+export function markFor(ref: string): ServiceMarkId {
+	if (ref === 'reset') return 'reset';
+	const kind = ref.split(':')[0];
+	return (['plex', 'lastfm', 'listenbrainz'].includes(kind) ? kind : 'reset') as ServiceMarkId;
+}
 
 export interface SourceOption {
-	id: SourceId;
+	id: SourceRef;
 	name: string;
 }
 
 export interface TargetOption {
-	id: TargetId;
+	id: SourceRef;
 	name: string;
 	/** What the node says when it is not allocated yet. */
 	hint: string;

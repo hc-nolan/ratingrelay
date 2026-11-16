@@ -20,7 +20,7 @@ from ratingrelay.core.session import (
     verify_session,
 )
 from ratingrelay.db import get_async_session
-from ratingrelay.models.services import ServiceCredential, ServiceName
+from ratingrelay.models.services import ServiceAccount, ServiceName
 from ratingrelay.routes.auth import router as auth_router
 
 OWNER_TOKEN = "owner-plex-token"
@@ -81,8 +81,10 @@ async def client(factory, monkeypatch):
 async def _configure_owner(factory) -> None:
     async with factory() as db:
         db.add(
-            ServiceCredential(
+            ServiceAccount(
+                id="plex",
                 service=ServiceName.plex,
+                label="Plex",
                 token=OWNER_TOKEN,
                 username="chunned",
             )

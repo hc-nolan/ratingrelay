@@ -3,6 +3,11 @@
 Precedence is settings, then the stored credential row — the dev-override
 pattern the project keeps. The result is a plain value object; nothing below
 this layer knows where a token came from.
+
+Every function takes an account *ref* (``plex``, ``lastfm:old``; see
+``engine.refs``). Settings describe **one** account — the one whose ref is the
+bare kind — because an environment variable cannot name a second one. A second
+account is configured in the web app and read from its row alone.
 """
 
 from typing import Optional
@@ -16,37 +21,49 @@ from ratingrelay.engine.credentials import (
     ListenBrainzCredentials,
     PlexCredentials,
 )
-from ratingrelay.models.services import ServiceName
+from ratingrelay.engine.refs import is_primary
 from ratingrelay.settings import get_settings
 
 
-async def plex_credentials(db: AsyncSession) -> PlexCredentials:
+async def plex_credentials(db: AsyncSession, service: str = "plex") -> PlexCredentials:
     settings = get_settings()
-    cred = await get_credential(db, ServiceName.plex)
-    token = settings.plex_token or (cred.token if cred else None)
+    cred = await get_credential(db, service)
+    primary = is_primary(service)
+    token = (settings.plex_token if primary else None) or (cred.token if cred else None)
     server_url = (
         str(settings.plex_server_url).rstrip("/")
-        if settings.plex_server_url
+        if primary and settings.plex_server_url
         else (cred.plex_server_url if cred else None)
     )
     if not token or not server_url:
-        raise ValueError("Plex not configured")
+        raise ValueError(f"Plex not configured ({service})")
     return PlexCredentials(
         server_url=server_url, token=token, library=settings.plex_music_library
     )
 
 
-async def lastfm_credentials(db: AsyncSession) -> LastFmCredentials:
+async def lastfm_credentials(
+    db: AsyncSession, service: str = "lastfm"
+) -> LastFmCredentials:
     settings = get_settings()
-    cred = await get_credential(db, ServiceName.lastfm)
-    api_key = settings.lastfm_token or (cred.token if cred else None)
-    api_secret = settings.lastfm_secret or (cred.secret if cred else None)
-    username = settings.lastfm_username or (cred.username if cred else None)
+    cred = await get_credential(db, service)
+    primary = is_primary(service)
+    api_key = (settings.lastfm_token if primary else None) or (
+        cred.token if cred else None
+    )
+    api_secret = (settings.lastfm_secret if primary else None) or (
+        cred.secret if cred else None
+    )
+    username = (settings.lastfm_username if primary else None) or (
+        cred.username if cred else None
+    )
     password_hash: Optional[str] = (
-        pylast.md5(settings.lastfm_password) if settings.lastfm_password else None
+        pylast.md5(settings.lastfm_password)
+        if primary and settings.lastfm_password
+        else None
     ) or (cred.password_hash if cred else None)
     if not api_key or not api_secret or not username or not password_hash:
-        raise ValueError("Last.fm not configured")
+        raise ValueError(f"Last.fm not configured ({service})")
     return LastFmCredentials(
         api_key=api_key,
         api_secret=api_secret,
@@ -55,11 +72,18 @@ async def lastfm_credentials(db: AsyncSession) -> LastFmCredentials:
     )
 
 
-async def listenbrainz_credentials(db: AsyncSession) -> ListenBrainzCredentials:
+async def listenbrainz_credentials(
+    db: AsyncSession, service: str = "listenbrainz"
+) -> ListenBrainzCredentials:
     settings = get_settings()
-    cred = await get_credential(db, ServiceName.listenbrainz)
-    token = settings.listenbrainz_token or (cred.token if cred else None)
-    username = settings.listenbrainz_username or (cred.username if cred else None)
+    cred = await get_credential(db, service)
+    primary = is_primary(service)
+    token = (settings.listenbrainz_token if primary else None) or (
+        cred.token if cred else None
+    )
+    username = (settings.listenbrainz_username if primary else None) or (
+        cred.username if cred else None
+    )
     if not token or not username:
-        raise ValueError("ListenBrainz not configured")
+        raise ValueError(f"ListenBrainz not configured ({service})")
     return ListenBrainzCredentials(token=token, username=username)

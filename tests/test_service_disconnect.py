@@ -130,3 +130,54 @@ async def test_plex_disconnect_clears_the_session_cookie(client, factory):
     assert res.json()["status"] == "needs-auth"
     assert SESSION_COOKIE in res.headers.get("set-cookie", "")
     assert await _cred(factory, ServiceName.plex) is None
+
+
+async def test_a_disconnected_service_can_be_connected_again(
+    client, factory, monkeypatch
+):
+    """Disconnect, then connect: the slot is refilled, not refused.
+
+    The app tells the user to disconnect Plex to switch accounts, and replacing a
+    Last.fm account is the same act. A soft-deleted ref that could never be
+    reconnected would make both a dead end — and the records written under it are
+    exactly what the next run reconciles against.
+    """
+
+    class _User:
+        def get_name(self):
+            return "someone-else"
+
+    class _Network:
+        def __init__(self, **_kwargs):
+            pass
+
+        def get_authenticated_user(self):
+            return _User()
+
+    monkeypatch.setattr(lastfm.pylast, "md5", lambda password: "hash")
+    monkeypatch.setattr(lastfm.pylast, "LastFMNetwork", _Network)
+    await _store(
+        factory,
+        ServiceName.lastfm,
+        token="old-key",
+        secret="secret",
+        username="someone",
+        password_hash="hash",
+    )
+    await client.delete("/api/lastfm/auth")
+
+    res = await client.post(
+        "/api/lastfm/auth",
+        json={
+            "api_key": "new-key",
+            "api_secret": "secret",
+            "username": "someone-else",
+            "password": "hunter2",
+        },
+    )
+
+    assert res.status_code == 200
+    assert res.json()["status"] == "connected"
+    cred = await _cred(factory, ServiceName.lastfm)
+    assert cred is not None
+    assert (cred.token, cred.username) == ("new-key", "someone-else")

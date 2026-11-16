@@ -28,7 +28,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ratingrelay.db import session_maker
 from ratingrelay.db.credentials import get_credential
 from ratingrelay.engine.thread import run_sync
-from ratingrelay.models.services import ServiceName
 from ratingrelay.settings import get_settings
 
 SESSION_COOKIE = "relay_session"
@@ -86,7 +85,7 @@ async def owner_token(db: AsyncSession) -> Optional[str]:
     settings = get_settings()
     if settings.plex_token:
         return settings.plex_token
-    cred = await get_credential(db, ServiceName.plex)
+    cred = await get_credential(db, "plex")
     return cred.token if cred else None
 
 

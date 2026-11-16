@@ -8,7 +8,7 @@ Last.fm needs to look one up.
 
 import asyncio
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 import pylast
@@ -94,10 +94,14 @@ class LastFmClient:
 
 @dataclass
 class LastFmSource:
-    """The account's loved tracks."""
+    """The account's loved tracks.
+
+    ``service`` is the account's ref (``lastfm``, ``lastfm:old``) — see
+    ``engine.refs``.
+    """
 
     client: LastFmClient
-    service: str = field(default="lastfm", init=False)
+    service: str = "lastfm"
 
     async def fetch(self) -> list[Track]:
         return await self.client.loved()
@@ -106,10 +110,13 @@ class LastFmSource:
 class LastFmTarget(MappedTarget):
     """Loves a track, with a user mapping applied when one exists."""
 
-    service = "lastfm"
+    KIND = "lastfm"
 
-    def __init__(self, client: LastFmClient, mappings: MappingStore):
+    def __init__(
+        self, client: LastFmClient, mappings: MappingStore, service: str = KIND
+    ):
         super().__init__(mappings)
+        self.service = service
         self._client = client
         self._loved: Optional[set[str]] = None
 

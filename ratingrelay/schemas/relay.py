@@ -1,11 +1,11 @@
-from typing import Annotated, Literal, Union
+from typing import Annotated, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, TypeAdapter, model_validator
 
 
 class PlexFromConfig(BaseModel):
     """Plex as a source. The ratings that count as a love or a hate are the
-    ``love_threshold``/``hate_threshold`` settings, not per relay."""
+    shared love/hate thresholds (settings or the UI), not per relay."""
 
     service: Literal["plex"]
     feedback_type: Literal["love", "hate"] = "love"
@@ -125,7 +125,21 @@ class UnrevertableRecord(BaseModel):
 
 
 class ThresholdsResponse(BaseModel):
-    """Returned by GET /api/relay/thresholds. Read-only: set in settings."""
+    """Returned by GET/PUT /api/relay/thresholds: the thresholds in force.
+
+    A ``*_locked`` threshold is set in settings (env or ``.config``) and can't
+    be changed from the UI.
+    """
 
     love_threshold: float
     hate_threshold: float
+    love_locked: bool = False
+    hate_locked: bool = False
+
+
+class ThresholdsUpdate(BaseModel):
+    """Body of PUT /api/relay/thresholds. Plex scale, whole numbers: 1 is half
+    a star, 10 is five. A field left out keeps its value."""
+
+    love_threshold: Optional[int] = Field(default=None, ge=1, le=10)
+    hate_threshold: Optional[int] = Field(default=None, ge=1, le=10)

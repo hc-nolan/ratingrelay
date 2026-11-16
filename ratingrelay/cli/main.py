@@ -99,7 +99,7 @@ def _add_relay_flags(parser: argparse.ArgumentParser) -> None:
         choices=("love", "hate"),
         default="love",
         help="relay loves or hates (default: love). Plex reads and writes the "
-        "LOVE_THRESHOLD / HATE_THRESHOLD settings",
+        "love/hate thresholds set in the web app or LOVE_THRESHOLD / HATE_THRESHOLD",
     )
     _add_run_flags(parser)
 

@@ -8,6 +8,7 @@ from ratingrelay.models.services import ServiceCredential  # noqa: F401 — ensu
 import ratingrelay.models.jobs  # noqa: F401 — register Job and TrackEvent tables
 import ratingrelay.models.sync  # noqa: F401 — register SyncRecord table
 import ratingrelay.models.mappings  # noqa: F401 — register TrackMapping table
+import ratingrelay.models.thresholds  # noqa: F401 — register RatingThresholds table
 
 
 SQLITE_URL = f"sqlite+aiosqlite:///{settings.database}"

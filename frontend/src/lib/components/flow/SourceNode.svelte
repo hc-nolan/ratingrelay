@@ -1,65 +1,23 @@
 <script lang="ts">
 	import FlowNode from './FlowNode.svelte';
 	import ServiceMark from './ServiceMark.svelte';
-	import { starLabel, thresholdSetting } from '$lib/relay';
 	import { cn } from '$lib/utils';
-	import type {
-		ListenBrainzSourceConfig,
-		PlexSourceConfig,
-		PlexThresholds,
-		SourceId,
-		SourceOption
-	} from '$lib/types/relay';
+	import type { SourceId, SourceOption } from '$lib/types/relay';
 
 	let {
 		options,
 		selected = $bindable(),
-		plexConfig,
-		lbzConfig,
-		thresholds,
 		resetService = $bindable(),
 		resetOptions
 	}: {
 		options: SourceOption[];
 		selected: SourceId;
-		plexConfig: PlexSourceConfig;
-		lbzConfig: ListenBrainzSourceConfig;
-		thresholds: PlexThresholds | null;
 		resetService: SourceId;
 		resetOptions: SourceOption[];
 	} = $props();
 </script>
 
-{#snippet feedbackToggle(
-	config: { feedbackType: 'love' | 'hate' },
-	value: 'love' | 'hate',
-	text: string
-)}
-	<button
-		type="button"
-		class={cn(
-			'rounded px-2.5 py-0.5 text-sm transition-colors',
-			config.feedbackType === value
-				? 'bg-primary text-primary-foreground'
-				: 'text-muted-foreground hover:text-foreground'
-		)}
-		onclick={() => (config.feedbackType = value)}
-		aria-pressed={config.feedbackType === value}
-	>
-		{text}
-	</button>
-{/snippet}
-
-{#snippet directionPicker(config: { feedbackType: 'love' | 'hate' }, noun: string)}
-	<span class="text-sm text-muted-foreground">Fetch</span>
-	<div class="inline-flex items-center gap-0.5 rounded-md border border-border bg-background p-0.5">
-		{@render feedbackToggle(config, 'love', 'loved')}
-		{@render feedbackToggle(config, 'hate', 'hated')}
-	</div>
-	<span class="text-sm text-muted-foreground">{noun}</span>
-{/snippet}
-
-<FlowNode label="From" tone={selected === 'reset' ? 'danger' : 'source'}>
+<FlowNode label="Source" tone={selected === 'reset' ? 'danger' : 'source'}>
 	<div class="flex flex-wrap items-stretch gap-1.5">
 		{#each options as option (option.id)}
 			{@const active = selected === option.id}
@@ -86,24 +44,10 @@
 		{/each}
 	</div>
 
-	<div class="mt-3 flex flex-wrap items-center gap-x-2 gap-y-2 border-t border-border/60 pt-3">
-		{#if selected === 'plex'}
-			{@render directionPicker(plexConfig, 'tracks')}
-			<p class="w-full text-sm leading-snug text-muted-foreground">
-				{#if thresholds}
-					{plexConfig.feedbackType === 'love'
-						? `Rated ${starLabel(thresholds.love_threshold)} or more.`
-						: `Rated ${starLabel(thresholds.hate_threshold)} or less.`}
-				{/if}
-				Set by
-				<code class="font-mono text-xs">{thresholdSetting[plexConfig.feedbackType]}</code> in the server
-				settings.
-			</p>
-		{:else if selected === 'lastfm'}
-			<p class="text-sm text-muted-foreground">Every loved track on Last.fm.</p>
-		{:else if selected === 'listenbrainz'}
-			{@render directionPicker(lbzConfig, 'recordings')}
-		{:else}
+	<!-- Only a reset has more to choose here; the direction and thresholds of a
+	     relay live in the Rating box below. -->
+	{#if selected === 'reset'}
+		<div class="mt-3 flex flex-wrap items-center gap-x-2 gap-y-2 border-t border-border/60 pt-3">
 			<span class="text-sm text-muted-foreground">Clear</span>
 			<div class="flex flex-wrap items-center gap-1">
 				{#each resetOptions as option (option.id)}
@@ -127,6 +71,6 @@
 				Undoes the writes this tool recorded on that service. Ratings it did not write are left
 				alone.
 			</p>
-		{/if}
-	</div>
+		</div>
+	{/if}
 </FlowNode>

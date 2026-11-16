@@ -34,10 +34,15 @@ class Settings(BaseSettings):
         hate_threshold: The Plex rating (out of 10) that counts as a hate. A Plex
             source reads tracks rated at most this (and rated at all); a Plex
             target writes it. Must be below ``love_threshold``.
+
+        Both thresholds can be changed from the UI. Setting one here (env or
+        ``.config``) pins it: the UI shows it read-only.
     """
 
     version: str = "3.0.0"
-    model_config = SettingsConfigDict(env_file=".config")
+    # An empty variable counts as unset: compose passes LOVE_THRESHOLD through as
+    # "" when .env doesn't set it, and that must not pin the threshold.
+    model_config = SettingsConfigDict(env_file=".config", env_ignore_empty=True)
 
     frontend_dir: str = "frontend/build"
     host: str = "0.0.0.0"
@@ -71,7 +76,10 @@ class Settings(BaseSettings):
     def _thresholds_apart(self) -> "Settings":
         # A track can't be both: with overlapping thresholds the love and hate
         # relays would each claim it, and a Plex target couldn't tell them apart.
-        if self.hate_threshold >= self.love_threshold:
+        # Only a pair set here is checked now; with one side from the UI, the
+        # pair in force is checked where it's used (core/thresholds.py).
+        pinned = {"love_threshold", "hate_threshold"} <= self.model_fields_set
+        if pinned and self.hate_threshold >= self.love_threshold:
             raise ValueError(
                 f"hate_threshold ({self.hate_threshold}) must be below "
                 f"love_threshold ({self.love_threshold})"

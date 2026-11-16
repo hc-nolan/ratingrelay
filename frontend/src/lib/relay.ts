@@ -1,4 +1,4 @@
-import type { PlexThresholds } from '$lib/types/relay';
+import type { Direction, PlexThresholds } from '$lib/types/relay';
 
 export const serviceLabels: Record<string, string> = {
 	plex: 'Plex',
@@ -71,10 +71,7 @@ export function starLabel(rating: number): string {
 	return `${stars} ${stars === 1 ? 'star' : 'stars'}`;
 }
 
-/**
- * The love/hate thresholds. They are server settings (LOVE_THRESHOLD /
- * HATE_THRESHOLD), so the UI only shows them; null if the server didn't answer.
- */
+/** The love/hate thresholds in force; null if the server didn't answer. */
 export async function loadThresholds(fetchFn: typeof fetch): Promise<PlexThresholds | null> {
 	// Never let this fail the page: an older server answers with the SPA's HTML.
 	try {
@@ -85,5 +82,22 @@ export async function loadThresholds(fetchFn: typeof fetch): Promise<PlexThresho
 	}
 }
 
-/** Where each threshold is set, for the hint next to it. */
+/**
+ * Save one threshold for every relay. Resolves to the thresholds in force, or
+ * throws with the server's reason (overlap, or pinned in settings).
+ */
+export async function saveThreshold(direction: Direction, rating: number): Promise<PlexThresholds> {
+	const res = await fetch('/api/relay/thresholds', {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ [`${direction}_threshold`]: rating })
+	});
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({}));
+		throw new Error(typeof err.detail === 'string' ? err.detail : 'Could not save the threshold');
+	}
+	return (await res.json()) as PlexThresholds;
+}
+
+/** The setting that pins each threshold, named when it is locked. */
 export const thresholdSetting = { love: 'LOVE_THRESHOLD', hate: 'HATE_THRESHOLD' } as const;

@@ -30,8 +30,8 @@ _KNOWN_KEYS = {"name", "source", "targets", "dry_run", "feedback_type"}
 # every relay, so a file still naming them is told where they went instead of
 # getting a bare "unknown key".
 _MOVED_KEYS = {
-    "rating_threshold": "set LOVE_THRESHOLD / HATE_THRESHOLD in settings",
-    "plex_rating": "a Plex target writes LOVE_THRESHOLD / HATE_THRESHOLD from settings",
+    "rating_threshold": "set the love/hate thresholds in the web app or settings",
+    "plex_rating": "a Plex target writes the shared love/hate thresholds",
     "comparison": 'use feedback_type = "love" or "hate"',
 }
 
@@ -53,7 +53,7 @@ class RelaySpec:
     dry_run: bool = False
     # The direction: which Plex/ListenBrainz ratings a source reads, and which
     # feedback a ListenBrainz target writes. The Plex ratings that mean love and
-    # hate are the LOVE_THRESHOLD / HATE_THRESHOLD settings.
+    # hate are the shared thresholds (web app, or pinned in settings).
     feedback_type: str = "love"
     # Only ever set from the command line, never from relays.toml: a file key
     # would switch the guard off for every unattended run after this one.

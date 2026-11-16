@@ -7,6 +7,7 @@ import ratingrelay.models.jobs  # noqa: F401 — register tables
 import ratingrelay.models.mappings  # noqa: F401
 import ratingrelay.models.services  # noqa: F401
 import ratingrelay.models.sync  # noqa: F401
+import ratingrelay.models.thresholds  # noqa: F401
 
 from fastapi import FastAPI
 from ratingrelay.db import get_async_session

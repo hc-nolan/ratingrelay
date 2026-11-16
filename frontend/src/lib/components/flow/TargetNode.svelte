@@ -17,8 +17,8 @@
 		allocated: boolean;
 		onadd: () => void;
 		onremove: () => void;
-		/** What a Plex target writes: the threshold for the relay's direction (null: unknown). */
-		plexWrite?: { rating: number | null; setting: string };
+		/** What a Plex destination writes: the threshold for the relay's direction (null: unknown). */
+		plexWrite?: { rating: number | null };
 		/** The relay's direction, which a ListenBrainz target writes. */
 		direction?: 'love' | 'hate';
 	} = $props();
@@ -87,13 +87,9 @@
 		{#if allocated}
 			{#if option.id === 'plex' && plexWrite}
 				<span class="text-sm text-muted-foreground">
-					{#if plexWrite.rating === null}
-						Rate at
-						<code class="font-mono text-xs">{plexWrite.setting}</code>
-					{:else}
-						Rate {starLabel(plexWrite.rating)}
-						<span class="text-xs">(<code class="font-mono">{plexWrite.setting}</code>)</span>
-					{/if}
+					{plexWrite.rating === null
+						? 'Rate at the threshold'
+						: `Rate ${starLabel(plexWrite.rating)}`}
 				</span>
 			{:else if option.id === 'lastfm'}
 				<span class="text-sm text-muted-foreground">Love every track</span>
@@ -114,7 +110,7 @@
 		<button
 			type="button"
 			onclick={onadd}
-			aria-label="Add {option.name} as a target"
+			aria-label="Add {option.name} as a destination"
 			class="absolute inset-0 rounded-lg focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
 		></button>
 	{/if}

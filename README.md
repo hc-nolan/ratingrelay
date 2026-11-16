@@ -93,18 +93,20 @@ its own changes are removed, never ratings you made yourself.
 
 ### Rating thresholds
 
-Two settings decide which Plex ratings count as a love and a hate. They apply to
-every relay, so a two-way setup writes back exactly what it reads:
+Two thresholds decide which Plex ratings count as a love and a hate. They apply to
+every relay, scheduled ones included, so a two-way setup writes back exactly what
+it reads:
 
-| setting | default | Plex as a source | Plex as a target |
-| ------- | ------- | ---------------- | ---------------- |
-| `LOVE_THRESHOLD` | `8` (4 stars) | loves are tracks rated at least this | a love is written as this rating |
-| `HATE_THRESHOLD` | `2` (1 star) | hates are tracks rated at most this | a hate is written as this rating |
+| threshold | default | Plex as a source | Plex as a target |
+| --------- | ------- | ---------------- | ---------------- |
+| love | 4 stars | loves are tracks rated at least this | a love is written as this rating |
+| hate | 1 star | hates are tracks rated at most this | a hate is written as this rating |
 
-Ratings are out of 10, so each star is 2. Set them in `.env`
-(`RATINGRELAY_LOVE_THRESHOLD`, `RATINGRELAY_HATE_THRESHOLD`) and run
-`docker compose up -d` again. The hate threshold must be below the love one. The web
-app shows the current values but can't change them.
+Change them in the web app's **Rating** box; the hate threshold must be below the
+love one. To pin one instead, set it in `.env` (`RATINGRELAY_LOVE_THRESHOLD`,
+`RATINGRELAY_HATE_THRESHOLD`, out of 10, so each star is 2) and run
+`docker compose up -d` again; the web app then shows it read-only. The headless
+CLI uses the same values.
 
 A track already rated on the right side of the threshold is left alone: a love
 relay doesn't touch a track you rated 4 or 5 stars, and a hate relay doesn't touch

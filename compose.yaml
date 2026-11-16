@@ -17,10 +17,10 @@ services:
       SECRET: ${RATINGRELAY_SECRET:?set RATINGRELAY_SECRET in .env}
       # Times in the UI are shown in this zone (IANA name, e.g. Europe/London).
       TIMEZONE: ${RATINGRELAY_TIMEZONE:-UTC}
-      # The Plex ratings (out of 10, so 8 = 4 stars) that count as a love and a
-      # hate. A Plex source reads them; a Plex target writes them.
-      LOVE_THRESHOLD: ${RATINGRELAY_LOVE_THRESHOLD:-8}
-      HATE_THRESHOLD: ${RATINGRELAY_HATE_THRESHOLD:-2}
+      # The Plex ratings that count as a love and a hate are set in the web app.
+      # Setting one in .env pins it there instead; empty leaves it to the app.
+      LOVE_THRESHOLD: ${RATINGRELAY_LOVE_THRESHOLD:-}
+      HATE_THRESHOLD: ${RATINGRELAY_HATE_THRESHOLD:-}
       # Only needed behind a reverse proxy or on a custom domain: the address your
       # browser uses, so the Plex sign-in comes back to it.
       # BASE_URL: https://ratingrelay.example.com

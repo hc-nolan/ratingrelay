@@ -47,8 +47,10 @@ reload = true
 # relay shares them: Plex as a source reads tracks rated this way, and Plex as
 # a target writes the threshold, so a two-way setup writes back what it reads.
 # hate_threshold must be below love_threshold.
-love_threshold = 8
-hate_threshold = 2
+# Set them in the web app. Uncommenting one here pins it: the app shows it
+# read-only. Defaults 8 and 2.
+# love_threshold = 8
+# hate_threshold = 2
 
 # --- Plex --------------------------------------------------------------
 # Full URL including port, e.g. http://192.168.0.10:32400

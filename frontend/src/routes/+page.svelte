@@ -12,11 +12,14 @@
 	import type {
 		ListenBrainzSourceConfig,
 		PlexSourceConfig,
+		PlexThresholds,
 		SourceId,
 		SourceOption,
 		TargetOption
 	} from '$lib/types/relay';
 	import SourceNode from '$lib/components/flow/SourceNode.svelte';
+	import FlowNode from '$lib/components/flow/FlowNode.svelte';
+	import RatingNode from '$lib/components/flow/RatingNode.svelte';
 	import TargetNode from '$lib/components/flow/TargetNode.svelte';
 	import FlowLink from '$lib/components/flow/FlowLink.svelte';
 	import RunDock from '$lib/components/flow/RunDock.svelte';
@@ -30,7 +33,6 @@
 	import ListenBrainzForm from '$lib/components/services/ListenBrainzForm.svelte';
 	import { cn } from '$lib/utils';
 	import { TONE_CHIP, statusLabel, statusTone } from '$lib/format';
-	import { thresholdSetting } from '$lib/relay';
 
 	let { data }: { data: PageData } = $props();
 
@@ -250,7 +252,7 @@
 	const targetCatalog: TargetOption[] = [
 		{ id: 'plex', name: 'Plex', hint: 'rate the library' },
 		{ id: 'lastfm', name: 'Last.fm', hint: 'love the track' },
-		{ id: 'listenbrainz', name: 'ListenBrainz', hint: 'love or hate, as From reads' }
+		{ id: 'listenbrainz', name: 'ListenBrainz', hint: 'love or hate, per the rating' }
 	];
 
 	function isAllocated(id: string): boolean {
@@ -315,14 +317,25 @@
 		}
 	});
 
+	/** Shared by every relay; the Rating box saves changes back into it. */
+	let thresholds = $state<PlexThresholds | null>(untrack(() => data.thresholds));
+
 	let plexWrite = $derived({
-		rating: data.thresholds
+		rating: thresholds
 			? relayDirection === 'love'
-				? data.thresholds.love_threshold
-				: data.thresholds.hate_threshold
-			: null,
-		setting: thresholdSetting[relayDirection]
+				? thresholds.love_threshold
+				: thresholds.hate_threshold
+			: null
 	});
+
+	/** The direction toggle belongs to the source; Last.fm has only loves. */
+	let directionConfig = $derived(
+		selectedSource === 'plex'
+			? plexSourceConfig
+			: selectedSource === 'listenbrainz'
+				? lbzSourceConfig
+				: null
+	);
 
 	let canRelay = $derived(
 		!relaying &&
@@ -489,9 +502,6 @@
 					<SourceNode
 						options={sourceOptions}
 						bind:selected={selectedSource}
-						plexConfig={plexSourceConfig}
-						lbzConfig={lbzSourceConfig}
-						thresholds={data.thresholds}
 						bind:resetService={resetTargetService}
 						{resetOptions}
 					/>
@@ -499,31 +509,39 @@
 					{#if selectedSource !== 'reset'}
 						<FlowLink />
 
-						<p class="eyebrow mx-auto mb-3 w-fit bg-background px-2 text-center">To</p>
+						<RatingNode
+							config={directionConfig}
+							bind:thresholds
+							plexInvolved={selectedSource === 'plex' || isAllocated('plex')}
+						/>
 
-						<!-- Every target keeps its card and its place. Picking one switches
+						<FlowLink />
+
+						<FlowNode label="Destination" tone="target">
+							<!-- Every target keeps its card and its place. Picking one switches
 						     that card on; it does not move the row around underneath you.
 						     A lone configured target sits centred, at the width it would have
 						     beside a second one, so the row never reads as half-empty. -->
-						<div
-							class={cn(
-								'grid gap-2',
-								availableTargets.length > 1
-									? 'sm:grid-cols-2'
-									: 'sm:mx-auto sm:w-[calc(50%-0.25rem)]'
-							)}
-						>
-							{#each availableTargets as target (target.id)}
-								<TargetNode
-									option={target}
-									allocated={isAllocated(target.id)}
-									onadd={() => setAllocated(target.id, true)}
-									onremove={() => setAllocated(target.id, false)}
-									plexWrite={target.id === 'plex' ? plexWrite : undefined}
-									direction={relayDirection}
-								/>
-							{/each}
-						</div>
+							<div
+								class={cn(
+									'grid gap-2',
+									availableTargets.length > 1
+										? 'sm:grid-cols-2'
+										: 'sm:mx-auto sm:w-[calc(50%-0.25rem)]'
+								)}
+							>
+								{#each availableTargets as target (target.id)}
+									<TargetNode
+										option={target}
+										allocated={isAllocated(target.id)}
+										onadd={() => setAllocated(target.id, true)}
+										onremove={() => setAllocated(target.id, false)}
+										plexWrite={target.id === 'plex' ? plexWrite : undefined}
+										direction={relayDirection}
+									/>
+								{/each}
+							</div>
+						</FlowNode>
 					{/if}
 
 					<FlowLink />

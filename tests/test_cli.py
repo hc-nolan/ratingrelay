@@ -161,7 +161,7 @@ def test_the_direction_reaches_the_spec():
 
 @pytest.mark.parametrize("flag", ["--rating-threshold", "--comparison", "--plex-rating"])
 def test_the_per_relay_plex_ratings_are_gone(flag):
-    """The Plex ratings are the LOVE_THRESHOLD / HATE_THRESHOLD settings now."""
+    """The Plex ratings are the shared love/hate thresholds now."""
     with pytest.raises(SystemExit):
         cli.build_parser().parse_args(["relay", flag, "8"])
 
@@ -238,8 +238,8 @@ def test_targets_may_be_a_string(tmp_path):
 @pytest.mark.parametrize(
     "line, hint",
     [
-        ("rating_threshold = 9.0", "LOVE_THRESHOLD"),
-        ("plex_rating = 8.0", "LOVE_THRESHOLD"),
+        ("rating_threshold = 9.0", "love/hate thresholds"),
+        ("plex_rating = 8.0", "love/hate thresholds"),
         ('comparison = "lte"', "feedback_type"),
     ],
 )

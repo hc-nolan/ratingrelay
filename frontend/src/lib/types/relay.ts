@@ -31,8 +31,15 @@ export interface ListenBrainzSourceConfig {
 	feedbackType: 'love' | 'hate';
 }
 
-/** The Plex ratings (0–10) that count as a love and a hate. Server settings, read-only here. */
+/**
+ * The Plex ratings (0–10) that count as a love and a hate, shared by every relay.
+ * A locked one is pinned in the server settings and can't be changed here.
+ */
 export interface PlexThresholds {
 	love_threshold: number;
 	hate_threshold: number;
+	love_locked: boolean;
+	hate_locked: boolean;
 }
+
+export type Direction = 'love' | 'hate';

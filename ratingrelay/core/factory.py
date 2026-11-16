@@ -28,6 +28,7 @@ from ratingrelay.engine.services.listenbrainz import (
 )
 from ratingrelay.engine.services.musicbrainz import resolve_recording_mbid
 from ratingrelay.engine.services.plex import PlexLibrary, PlexSource, PlexTarget
+from ratingrelay.core.thresholds import effective_thresholds
 from ratingrelay.settings import get_settings
 
 SOURCE_SERVICES = ("plex", "lastfm", "listenbrainz")
@@ -61,15 +62,21 @@ def unsupported_target(relay: str, target: str) -> Optional[str]:
     return None
 
 
-def plex_threshold(relay: str) -> float:
-    """The Plex rating that means *relay* (``love``/``hate``), from settings.
+async def plex_threshold(db: AsyncSession, relay: str) -> float:
+    """The Plex rating that means *relay* (``love``/``hate``).
 
     One number per direction, shared by both ends of a pair: a Plex source reads
     loves at or above it and a Plex target writes it, so a two-way setup writes
-    back exactly what it reads. Changing it in settings moves both at once.
+    back exactly what it reads. It comes from settings or the UI
+    (:func:`effective_thresholds`); changing it moves every relay at once.
     """
-    current = get_settings()
-    return current.love_threshold if relay == "love" else current.hate_threshold
+    current = await effective_thresholds(db, get_settings())
+    overlap = current.overlap()
+    if overlap:
+        # Settings pin one side and the UI saved the other past it: fail the
+        # run rather than read or write a track as both.
+        raise ValueError(overlap)
+    return current.for_relay(relay)
 
 
 def stores(
@@ -113,7 +120,7 @@ async def source_for_service(
         library = PlexLibrary(await plex_credentials(db))
         relay = relay_identity("plex", feedback_type=feedback_type)
         comparison = "gte" if relay == "love" else "lte"
-        return PlexSource(library, plex_threshold(relay), comparison)
+        return PlexSource(library, await plex_threshold(db, relay), comparison)
     if service == "lastfm":
         return LastFmSource(LastFmClient(await lastfm_credentials(db)))
     if service == "listenbrainz":
@@ -145,7 +152,7 @@ async def target_for_service(
     _, mappings = stores(db)
     if service == "plex":
         library = plex_library or PlexLibrary(await plex_credentials(db))
-        return PlexTarget(library, mappings, plex_threshold(relay), relay)
+        return PlexTarget(library, mappings, await plex_threshold(db, relay), relay)
     if service == "lastfm":
         client = LastFmClient(await lastfm_credentials(db))
         return LastFmTarget(client, mappings)

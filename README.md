@@ -297,11 +297,14 @@ cp .config.example .config   # settings and, optionally, credentials
 just install     # uv sync + pnpm install
 just dev         # API on :8100 + Vite dev server on :5173, Ctrl-C stops both
 just demo        # the UI against made-up data on :5174; calls no real service
+just screenshots # re-take docs/screenshots from that demo data
 just test        # pytest
 just lint        # pylint
 just check       # svelte-check + prettier + eslint
 just build && uv run app.py   # serve the built app from the API, as the image does
 ```
 
-The screenshots above come from `just demo`. Contributor notes, including the
-layering rules and the behaviour the relay must not regress, are in `AGENTS.md`.
+The screenshots above come from `just demo`; `just screenshots` re-takes them from
+that same seeded data, so they can't drift from the UI. Contributor notes,
+including the layering rules and the behaviour the relay must not regress, are in
+`AGENTS.md`.

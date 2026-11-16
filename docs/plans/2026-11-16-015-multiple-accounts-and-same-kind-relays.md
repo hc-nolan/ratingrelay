@@ -68,11 +68,16 @@ the load-bearing part of phase A, not the plumbing.
 - The suffix is *not* editable: renaming a ref would strand every sync record
   and every `relays.toml` on disk (a file the app cannot rewrite). Rename the
   label instead; delete and re-add if the ref itself is wrong.
-- Deleting an account is a **soft delete** (`deleted_at`), so the ref stays
-  taken. Reissuing a deleted ref would attach another account's writes to your
-  old ones — the same "never re-point an existing record" rule as contract §6,
-  one level down. A soft-deleted row is ignored by credential lookup and by the
-  services page, and still resolves a name for the history and reset views.
+- Deleting an account is a **soft delete** (`deleted_at`), so the row that holds
+  the ref outlives the credential in it, and the secret material is wiped.
+- **The bare kind is a slot; a named ref is an identity.** Disconnecting and
+  reconnecting a service refills `lastfm` — that is what "switch Plex server" and
+  "replace my Last.fm account" already meant, and the history written under the
+  ref is exactly what the run after it reconciles against. A *named* ref is never
+  filled again: `lastfm:old` names one account that has history, so a different
+  account must take a different name. Reissuing either onto another account would
+  attach its writes to somebody else's record — the same "never re-point an
+  existing record" rule as contract §6, one level down.
 
 ### What pairings become legal
 

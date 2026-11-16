@@ -231,8 +231,12 @@ async def _reset_service(
         reset = reset_plex
     elif target_svc == "lastfm":
         reset = reset_lastfm
-    else:
+    elif target_svc == "listenbrainz":
         reset = reset_listenbrainz
+    else:
+        # Never fall through to a wipe of some other service: this is the most
+        # destructive call the tool makes, and a ref it does not know is a bug.
+        raise ValueError(f"Unknown service to reset: {target_svc}")
     ok, err = await reset(
         db, on_fetch_complete, on_track, dry_run=dry_run, on_cleared=on_cleared
     )

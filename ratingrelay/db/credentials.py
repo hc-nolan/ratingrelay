@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
 
-from ratingrelay.engine.refs import ServiceRef, parse_ref
+from ratingrelay.engine.refs import ServiceRef, default_label, parse_ref
 from ratingrelay.models.services import ServiceAccount, ServiceName
 
 
@@ -57,17 +57,24 @@ async def upsert_credential(
     Keyword arguments are applied as field updates on the existing row (if any)
     or used to construct a new one.  ``updated_at`` is always refreshed.
 
-    Re-connecting a **removed** ref is refused rather than un-deleting it: the
-    writes recorded under that ref belong to an account whose credentials are
-    gone, and a different account must not inherit them.
+    The bare kind is a **slot**, not an identity: it is the first account's ref
+    for good, so disconnecting and reconnecting refills the same slot and the
+    relay keeps reconciling against the history written under it (that is what
+    "switch Plex server" and "replace my Last.fm account" already meant).
+
+    A *named* ref is an identity. Re-connecting one after it was removed is
+    refused: the writes recorded under it belong to an account whose credentials
+    are gone, and a different account must not inherit them.
     """
     parsed = parse_ref(ref)
     existing = await get_account(db, parsed.ref)
     if existing is not None and existing.deleted_at is not None:
-        raise ValueError(
-            f"{parsed.ref} was removed; add it under a different name "
-            "rather than reusing a ref that already has history"
-        )
+        if not parsed.is_primary:
+            raise ValueError(
+                f"{parsed.ref} was removed; add it under a different name "
+                "rather than reusing a ref that already has history"
+            )
+        existing.deleted_at = None
     if existing:
         for key, value in fields.items():
             setattr(existing, key, value)
@@ -77,7 +84,7 @@ async def upsert_credential(
         account = ServiceAccount(
             id=parsed.ref,
             service=parsed.kind,
-            label=fields.pop("label", "") or parsed.account or parsed.kind,
+            label=fields.pop("label", "") or parsed.account or default_label(parsed.kind),
             **fields,
         )
         db.add(account)
@@ -100,12 +107,15 @@ async def delete_credential(db: AsyncSession, ref: str) -> bool:
         return False
     account.deleted_at = _now()
     account.updated_at = account.deleted_at
-    # A disconnected account keeps no secret material, and the username goes with
-    # it: the tombstone exists to hold the ref, nothing else.
+    # A disconnected account keeps no secret material, and nothing that points at
+    # the old server: the tombstone exists to hold the ref, nothing else. The
+    # next connect refills the slot from scratch rather than inheriting a library.
     account.token = ""
     account.secret = None
     account.password_hash = None
     account.username = None
+    account.plex_server_url = None
+    account.plex_server_name = None
     await db.commit()
     return True
 

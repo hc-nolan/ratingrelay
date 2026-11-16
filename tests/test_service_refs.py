@@ -28,6 +28,7 @@ from ratingrelay.db.store import SqlMappingStore, SqlSyncStore
 from ratingrelay.engine.refs import (
     ServiceRef,
     account_ref,
+    default_label,
     is_primary,
     mapping_scopes,
     parse_ref,
@@ -215,6 +216,9 @@ async def test_the_first_account_keeps_the_bare_ref(session):
         session, "lastfm", token="key", secret="secret", username="tester"
     )
     assert (account.id, account.service.value) == ("lastfm", "lastfm")
+    # The label a fresh connect gets is the one the migration writes, so an
+    # upgraded database and a new one read the same in the web app.
+    assert account.label == default_label("lastfm") == "Last.fm"
 
 
 async def test_a_second_account_takes_its_name_as_the_default_label(session):
@@ -255,6 +259,49 @@ async def test_a_removed_ref_cannot_be_reconnected(session):
 
     with pytest.raises(ValueError, match="different name"):
         await upsert_credential(session, "lastfm:old", token="new-key")
+
+
+async def test_a_disconnected_service_can_be_reconnected(session):
+    """The bare kind is a slot: disconnecting and connecting again refills it.
+
+    The app tells the user to disconnect Plex to switch accounts, and replacing a
+    Last.fm account is the same act. Refusing the second connect would make both
+    a dead end — and the history written under the ref is exactly what the run
+    after it has to reconcile against.
+    """
+    await upsert_credential(
+        session, "lastfm", token="old-key", secret="s", username="old", password_hash="h"
+    )
+    store = SqlSyncStore(session, "love")
+    await store.remember("plex", "lastfm", SyncedTrack(key="kept", intent="love"))
+
+    assert await delete_credential(session, "lastfm") is True
+    revived = await upsert_credential(
+        session, "lastfm", token="new-key", secret="s", username="new", password_hash="h"
+    )
+
+    assert revived.deleted_at is None
+    assert (revived.token, revived.username) == ("new-key", "new")
+    assert await get_credential(session, "lastfm") is not None
+    # The record of what was written outlives the credential, as it always did.
+    assert set(await store.load("plex", "lastfm")) == {"kept"}
+
+
+async def test_a_reconnected_plex_does_not_keep_the_old_server(session):
+    await upsert_credential(
+        session,
+        "plex",
+        token="old-token",
+        username="old",
+        plex_server_url="http://attic:32400",
+        plex_server_name="Attic",
+    )
+    await delete_credential(session, "plex")
+
+    revived = await upsert_credential(session, "plex", token="new-token")
+
+    assert revived.plex_server_url is None
+    assert revived.plex_server_name is None
 
 
 async def test_settings_describe_the_first_account_only(monkeypatch, session):

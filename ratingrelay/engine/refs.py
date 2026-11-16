@@ -109,6 +109,17 @@ def is_primary(ref: str) -> bool:
     return parse_ref(ref).is_primary
 
 
+# The name the web app shows for an account that has not been given one. Shared
+# with the migration that creates the first accounts, so an upgraded database and
+# a fresh connect read the same.
+_DEFAULT_LABELS = {"plex": "Plex", "lastfm": "Last.fm", "listenbrainz": "ListenBrainz"}
+
+
+def default_label(kind: str) -> str:
+    """The display name of the first account of *kind*."""
+    return _DEFAULT_LABELS[ServiceRef(kind).kind]
+
+
 def mapping_scopes(ref: str) -> tuple[str, ...]:
     """Where a target's mappings may live, most specific first.
 

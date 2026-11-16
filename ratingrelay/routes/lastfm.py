@@ -1,46 +1,46 @@
 from functools import partial
+from typing import Optional
 
 import pylast
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ratingrelay.core.credentials import lastfm_credentials
 from ratingrelay.core.thread import run_sync
 from ratingrelay.db import get_async_session
-from ratingrelay.db.credentials import delete_credential, get_credential, upsert_credential
-from ratingrelay.models.services import ServiceName
+from ratingrelay.db.credentials import delete_credential, upsert_credential
+from ratingrelay.engine.refs import account_ref
 from ratingrelay.schemas.lastfm import LastFMAuthRequest, LastFMStatusResponse
-from ratingrelay.settings import get_settings, logger
-
-settings = get_settings()
+from ratingrelay.settings import logger
 
 router = APIRouter(prefix="/api/lastfm", tags=["lastfm"])
 
 
 @router.get("/auth/status", response_model=LastFMStatusResponse)
 async def lastfm_auth_status(
+    account: Optional[str] = None,
     db: AsyncSession = Depends(get_async_session),
 ) -> LastFMStatusResponse:
-    cred = await get_credential(db, ServiceName.lastfm)
-    # Settings values take precedence (dev override); fall back to DB
-    api_key = settings.lastfm_token or (cred.token if cred else None)
-    api_secret = settings.lastfm_secret or (cred.secret if cred else None)
-    username = settings.lastfm_username or (cred.username if cred else None)
-    password = settings.lastfm_password  # only in settings; DB stores hash
-    password_hash = (pylast.md5(password) if password else None) or (
-        cred.password_hash if cred else None
-    )
+    """Is this Last.fm account connected?
 
-    if not api_key or not api_secret or not username or not password_hash:
+    ``account`` names a second one; leaving it out asks about the account that
+    already existed. Credential precedence (settings, then the stored row) lives
+    in ``core.credentials``, which pins settings to the first account — an
+    environment variable cannot name a second one.
+    """
+    try:
+        credentials = await lastfm_credentials(db, account_ref("lastfm", account))
+    except ValueError:
         return LastFMStatusResponse(status="needs-auth")
 
     try:
         network = await run_sync(
             partial(
                 pylast.LastFMNetwork,
-                api_key=api_key,
-                api_secret=api_secret,
-                username=username,
-                password_hash=password_hash,
+                api_key=credentials.api_key,
+                api_secret=credentials.api_secret,
+                username=credentials.username,
+                password_hash=credentials.password_hash,
             )
         )
         user = await run_sync(network.get_authenticated_user)
@@ -59,6 +59,12 @@ async def lastfm_auth(
     body: LastFMAuthRequest,
     db: AsyncSession = Depends(get_async_session),
 ) -> LastFMStatusResponse:
+    """Store a validated Last.fm credential, for one account.
+
+    A second account (``account`` set) gets its own ref and its own history; the
+    first one keeps the bare kind, so everything the relay has already written
+    stays attached to it.
+    """
     password_hash = pylast.md5(body.password)
 
     try:
@@ -77,35 +83,39 @@ async def lastfm_auth(
         logger.warning("Last.fm auth failed: %s", exc)
         raise HTTPException(
             status_code=401, detail=f"Last.fm authentication failed: {exc}"
-        )
+        ) from exc
     except Exception as exc:
         logger.error("Last.fm auth error: %s", exc)
         raise HTTPException(
             status_code=500, detail="Failed to authenticate with Last.fm"
-        )
+        ) from exc
 
-    await upsert_credential(
-        db,
-        ServiceName.lastfm,
-        token=body.api_key,
-        secret=body.api_secret,
-        username=username,
-        password_hash=password_hash,
-    )
-    logger.info("Last.fm authenticated as %s", username)
+    fields = {
+        "token": body.api_key,
+        "secret": body.api_secret,
+        "username": username,
+        "password_hash": password_hash,
+    }
+    if body.label:
+        fields["label"] = body.label
+    ref = account_ref("lastfm", body.account)
+    await upsert_credential(db, ref, **fields)
+    logger.info("Last.fm authenticated as %s (%s)", username, ref)
     return LastFMStatusResponse(status="connected", username=username)
 
 
 @router.delete("/auth", response_model=LastFMStatusResponse)
 async def lastfm_disconnect(
+    account: Optional[str] = None,
     db: AsyncSession = Depends(get_async_session),
 ) -> LastFMStatusResponse:
-    """Forget the stored Last.fm credentials.
+    """Forget one Last.fm account's credentials.
 
     Sync records are deliberately kept: they are what the relay wrote, and a
-    reconnected account has to be able to undo those rather than rediscover
-    them as if they were the user's own.
+    reconnected account has to be able to undo those rather than rediscover them
+    as if they were the user's own. Another account of Last.fm is untouched.
     """
-    if await delete_credential(db, ServiceName.lastfm):
-        logger.info("Last.fm credentials removed")
-    return await lastfm_auth_status(db)
+    ref = account_ref("lastfm", account)
+    if await delete_credential(db, ref):
+        logger.info("Last.fm credentials removed (%s)", ref)
+    return await lastfm_auth_status(account=account, db=db)

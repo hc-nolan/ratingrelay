@@ -1,9 +1,33 @@
 from typing import Annotated, Literal, Optional, Union
 
-from pydantic import BaseModel, Field, TypeAdapter, model_validator
+from pydantic import BaseModel, Field, TypeAdapter, field_validator, model_validator
+
+from ratingrelay.engine.refs import check_account
 
 
-class PlexFromConfig(BaseModel):
+class _AccountScoped(BaseModel):
+    """A config that may name a second account of its service.
+
+    ``account`` is the part after the colon in an account's ref
+    (``lastfm:old`` — see ``engine.refs``). Leaving it out names the account that
+    already existed, which is exactly what every config stored before accounts
+    existed means, so old job rows and old clients keep working.
+    """
+
+    account: Optional[str] = None
+
+    @field_validator("account")
+    @classmethod
+    def _valid_account(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        try:
+            return check_account(value)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+
+
+class PlexFromConfig(_AccountScoped):
     """Plex as a source. The ratings that count as a love or a hate are the
     shared love/hate thresholds (settings or the UI), not per relay."""
 
@@ -24,26 +48,38 @@ class PlexFromConfig(BaseModel):
         return data
 
 
-class LastFMFromConfig(BaseModel):
+class LastFMFromConfig(_AccountScoped):
     service: Literal["lastfm"]
 
 
-class ListenBrainzFromConfig(BaseModel):
+class ListenBrainzFromConfig(_AccountScoped):
     service: Literal["listenbrainz"]
     feedback_type: Literal["love", "hate"] = "love"
 
 
 class ResetFromConfig(BaseModel):
-    """Reset the target to the state it was in before this tool ran.
+    """Reset one account's target to the state it was in before this tool ran.
 
-    By default that means undoing the writes we recorded for the target and
-    leaving every other rating alone. ``all`` clears the whole service, which is
-    destructive and never implied.
+    By default that means undoing the writes we recorded for *that account* and
+    leaving every other rating alone — including another account of the same
+    service. ``all`` clears the whole service, which is destructive and never
+    implied.
     """
 
     service: Literal["reset"] = "reset"
     target_service: Literal["plex", "lastfm", "listenbrainz"] = "plex"
+    target_account: Optional[str] = None
     all: bool = False
+
+    @field_validator("target_account")
+    @classmethod
+    def _valid_target_account(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        try:
+            return check_account(value)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
 
 
 FromConfig = Annotated[
@@ -52,17 +88,17 @@ FromConfig = Annotated[
 ]
 
 
-class PlexToConfig(BaseModel):
+class PlexToConfig(_AccountScoped):
     """Plex as a target. It writes the threshold for the relay's direction."""
 
     service: Literal["plex"]
 
 
-class LastFMToConfig(BaseModel):
+class LastFMToConfig(_AccountScoped):
     service: Literal["lastfm"]
 
 
-class ListenBrainzToConfig(BaseModel):
+class ListenBrainzToConfig(_AccountScoped):
     """ListenBrainz as a target. It writes the relay's direction: a love relay
     loves, a hate relay hates. Jobs from older builds carry a ``feedback_type``
     here; it is ignored, so a target can never write the opposite of its source.
@@ -84,6 +120,9 @@ class RelayRequest(BaseModel):
     # reports what it would write; only the write calls are suppressed. It is
     # the same flag the job worker already carries.
     dry_run: bool = False
+    # Write again what the target has since dropped. Off by default: a target's
+    # own edits are left alone unless the relay asks for this.
+    reapply_target_drift: bool = False
 
 
 class TargetResult(BaseModel):

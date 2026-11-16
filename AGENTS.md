@@ -101,6 +101,11 @@ These are the point of the tool. v1 got them right; keep them that way.
 2. **Reconcile every run, don't append.** Each run compares the source's current
    loves/hates to what we previously wrote to each target, and converges the target.
    A rating that changed re-propagates; a love that was withdrawn gets un-loved.
+   A target's *own* edits are not policed: an unchanged intent is `already_synced`,
+   so a track someone un-loved on the target stays that way. A relay that names
+   `reapply_target_drift` opts out of that, and only for a write the target has
+   *dropped* — a replacement the user chose is never overwritten (same rule as
+   undo, below).
 3. **Only undo our own writes.** Never clear a target rating this tool did not create.
    Reset is an explicit, narrow action — never a whole-service wipe by default.
    Sync records are keyed by source, target **and relay** (the direction the source
@@ -119,6 +124,29 @@ These are the point of the tool. v1 got them right; keep them that way.
    attached, and a human resolves them.
 7. **Idempotent and resumable.** Re-running a completed job is a no-op. Interrupted
    jobs resume without duplicating writes.
+8. **A service is not an account.** An account is addressed by a **ref**
+   (`engine/refs.py`): the bare kind for the account that already exists
+   (`lastfm`), `kind:name` for a second one (`lastfm:old`). Very little here is
+   negotiable:
+   - The bare kind is the first account's ref **permanently**. That is why adding a
+     second account moves no history, and why a ref is produced by `account_ref`
+     and never assembled at a call site — a wrong ref is a silent cross-account
+     reconcile, and the mass-undo guard would be the only thing between that and a
+     wipe.
+   - `lastfm` → `lastfm:new` is a **migration** between two accounts and is legal;
+     `lastfm` → `lastfm` is one account relaying into itself and is refused
+     (`factory.pairing_refusal`, judged on refs). Capabilities that belong to the
+     service are still judged on the *kind*: a hate relay cannot reach any Last.fm
+     account.
+   - The bare kind is a **slot** — disconnecting and reconnecting refills it, and
+     the relay keeps reconciling against the history written under it (that is what
+     switching Plex servers already meant). A **named** ref is an identity: once
+     removed, its ref is never reissued, so a different account cannot inherit its
+     records. Removal is always a soft delete that keeps no secret material.
+   - Settings (`PLEX_TOKEN`, `LASTFM_TOKEN`, …) describe **one** account: the one
+     whose ref is the bare kind. An environment variable cannot name a second one.
+   - Mappings resolve ref → kind → `all`, so a mapping written before a second
+     account existed still applies to it.
 
 ## Conventions
 
@@ -135,8 +163,12 @@ These are the point of the tool. v1 got them right; keep them that way.
   prints, so a clean run prints a short block, `--verbose` adds per-track lines on
   stderr, `--json` prints one document. Never exit 0 on a partial run — 0/1/2 are
   the only signal a scheduler reads.
-- **Credentials**: one `ServiceCredential` row per service, read through
-  `ratingrelay.db.credentials`. Settings take precedence over the DB row.
+- **Credentials**: one `ServiceAccount` row per connected account, addressed by
+  its **ref** (`lastfm`, `lastfm:old` — see `engine/refs.py`) and read through
+  `ratingrelay.db.credentials`. Settings take precedence over the DB row, and only
+  for the account whose ref is the bare kind: an env var cannot name a second
+  account. The ref is what sync records, mappings and job configs key on, so it is
+  immutable and a removed account is soft-deleted rather than losing its row.
 - **Auth is the Plex account, not a password store**: the API needs a session
   (`core/session.py`, signed with `settings.secret` + the Plex token) once a Plex
   credential exists. Sign with the **stored** token (`owner_token(db)`), never the

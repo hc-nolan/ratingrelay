@@ -4,10 +4,15 @@
 
 	let {
 		onsubmitted,
-		submitLabel = 'Connect'
+		submitLabel = 'Connect',
+		account = undefined,
+		label = undefined
 	}: {
 		onsubmitted: (username: string) => void;
 		submitLabel?: string;
+		/** Adding a second account: its slug, and the name to show for it. */
+		account?: string;
+		label?: string;
 	} = $props();
 
 	let form = $state({ username: '', token: '' });
@@ -17,14 +22,19 @@
 	let complete = $derived(!!form.username.trim() && !!form.token.trim());
 
 	async function submit() {
-		if (!complete || pending) return;
+		// A second account needs its short name before it can be stored.
+		if (!complete || pending || (account !== undefined && !account)) return;
 		pending = true;
 		error = '';
 		try {
 			const res = await fetch('/api/listenbrainz/auth', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ username: form.username.trim(), token: form.token.trim() })
+				body: JSON.stringify({
+					username: form.username.trim(),
+					token: form.token.trim(),
+					...(account ? { account, label } : {})
+				})
 			});
 			if (!res.ok) {
 				const body = await res.json().catch(() => ({ detail: 'Authentication failed' }));

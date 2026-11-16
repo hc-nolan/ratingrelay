@@ -35,6 +35,13 @@ class Existing:
     # What a write would replace, opaque per target like ``target_key``; undo
     # restores it rather than clearing.
     prior: Optional[str] = None
+    # Whether the target holds *anything* here: a rating, a score, a love.
+    # ``not holds and not occupied`` is a target that holds nothing at all, which
+    # is how a run tells a write that was removed from one somebody replaced. A
+    # relay with ``reapply_target_drift`` re-writes only the former. ``None`` is
+    # "the target did not say", and is read as occupied: a plan that forgets to
+    # fill this in must never cause a write on every run.
+    occupied: Optional[bool] = None
 
 
 @dataclass(frozen=True, slots=True)

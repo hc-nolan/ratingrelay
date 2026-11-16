@@ -15,6 +15,7 @@ from ratingrelay.routes.listenbrainz import router as listenbrainz_router
 from ratingrelay.routes.plex import router as plex_router
 from ratingrelay.routes.relay import router as relay_router
 from ratingrelay.routes.jobs import router as jobs_router
+from ratingrelay.routes.services import router as services_router
 from ratingrelay.routes.unmatched import router as unmatched_router
 from ratingrelay.core.worker import worker_loop
 from ratingrelay.settings import get_settings
@@ -52,6 +53,7 @@ app.include_router(listenbrainz_router)
 app.include_router(relay_router)
 app.include_router(jobs_router)
 app.include_router(unmatched_router)
+app.include_router(services_router)
 
 
 def spa_file(frontend_dir: str, full_path: str) -> Path:

@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ratingrelay.core import credentials as credential_resolution
 from ratingrelay.core import factory
-from ratingrelay.models.services import ServiceCredential, ServiceName
+from ratingrelay.models.services import ServiceAccount, ServiceName
 from ratingrelay.settings import Settings
 
 from tests.integration import fakes
@@ -79,21 +79,27 @@ async def _connect(session: AsyncSession) -> None:
     """The credential rows a user's setup leaves behind, and nothing more."""
     session.add_all(
         [
-            ServiceCredential(
+            ServiceAccount(
+                id="plex",
                 service=ServiceName.plex,
+                label="Plex",
                 token="plex-token",
                 plex_server_url="http://plex.invalid:32400",
                 plex_server_name="Test Plex",
             ),
-            ServiceCredential(
+            ServiceAccount(
+                id="lastfm",
                 service=ServiceName.lastfm,
+                label="Last.fm",
                 token="lastfm-api-key",
                 secret="lastfm-api-secret",
                 username="tester",
                 password_hash="00000000000000000000000000000000",
             ),
-            ServiceCredential(
+            ServiceAccount(
+                id="listenbrainz",
                 service=ServiceName.listenbrainz,
+                label="ListenBrainz",
                 token="listenbrainz-token",
                 username="tester",
             ),

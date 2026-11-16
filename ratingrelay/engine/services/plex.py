@@ -7,7 +7,7 @@ used for identity here; the matching ladder decides.
 """
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 from plexapi.exceptions import BadRequest, NotFound
@@ -71,6 +71,11 @@ def _passes_rating(rating: Optional[float], threshold: float, comparison: str) -
     if value <= 0:
         return False
     return value >= threshold if comparison == "gte" else value <= threshold
+
+
+def _rated(rating: Optional[float]) -> bool:
+    """Whether a copy carries a rating at all: to us, Plex's 0 is unrated."""
+    return rating is not None and rating > 0
 
 
 class PlexLibrary:
@@ -168,12 +173,17 @@ class PlexLibrary:
 
 @dataclass
 class PlexSource:
-    """Rated tracks from a Plex library."""
+    """Rated tracks from a Plex library.
+
+    ``service`` is the account's ref (``plex``, ``plex:attic``), not just the
+    kind: it is half of the key the sync store is written under, so two Plex
+    servers never reconcile against each other's writes.
+    """
 
     library: PlexLibrary
     threshold: float = DEFAULT_LOVE_RATING
     comparison: str = "gte"
-    service: str = field(default="plex", init=False)
+    service: str = "plex"
 
     async def fetch(self) -> list[Track]:
         rated = await self.library.rated(self.threshold, self.comparison)
@@ -195,7 +205,8 @@ class PlexTarget(MappedTarget):
     writing 8 must not lower a 5-star one.
     """
 
-    service = "plex"
+    # The service this class speaks to, whatever account it is pointed at.
+    KIND = "plex"
 
     def __init__(
         self,
@@ -203,8 +214,10 @@ class PlexTarget(MappedTarget):
         mappings: MappingStore,
         rating: float = DEFAULT_LOVE_RATING,
         direction: str = "love",
+        service: str = KIND,
     ):
         super().__init__(mappings)
+        self.service = service
         self._library = library
         self._rating = rating
         self._direction = direction
@@ -245,6 +258,9 @@ class PlexTarget(MappedTarget):
         target_key = json.dumps(external_ids)
         prior = {match.external_id: match.rating for match in outcome.matches}
         to_write = [key for key in external_ids if not self.holds(prior[key])]
+        # A copy rated *something* is a copy a person chose for: only a track
+        # with no rated copy at all is one whose write was simply removed.
+        occupied = any(_rated(prior[key]) for key in external_ids)
 
         async def commit() -> None:
             for external_id in to_write:
@@ -257,7 +273,9 @@ class PlexTarget(MappedTarget):
             intent=Intent(IntentKind.RATING, rating),
             target_key=target_key,
             mapped=await self.has_mapping(track),
-            existing=Existing(holds=not to_write, prior=json.dumps(prior)),
+            existing=Existing(
+                holds=not to_write, prior=json.dumps(prior), occupied=occupied
+            ),
             commit=commit,
         )
 

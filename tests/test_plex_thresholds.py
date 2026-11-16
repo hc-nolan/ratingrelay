@@ -35,7 +35,7 @@ def _settings(monkeypatch, module, **pinned):
     monkeypatch.setattr(module, "get_settings", lambda: Settings(_env_file=None, **pinned))
 
 
-async def _no_credentials(_db):
+async def _no_credentials(_db, _service="plex"):
     return None
 
 
@@ -57,7 +57,7 @@ def thresholds(monkeypatch, session):
         factory, "get_settings", lambda: Settings(love_threshold=6.0, hate_threshold=3.0)
     )
 
-    async def no_credentials(_db):
+    async def no_credentials(_db, _service="plex"):
         return None
 
     monkeypatch.setattr(factory, "plex_credentials", no_credentials)
@@ -224,7 +224,7 @@ async def test_a_stored_hate_job_cannot_build_a_lastfm_target(thresholds):
 
 @pytest.mark.parametrize("relay, score", [("love", 1), ("hate", -1)])
 async def test_a_listenbrainz_target_writes_the_relay_direction(monkeypatch, relay, score):
-    async def credentials(_db):
+    async def credentials(_db, _service="listenbrainz"):
         return None
 
     monkeypatch.setattr(factory, "listenbrainz_credentials", credentials)

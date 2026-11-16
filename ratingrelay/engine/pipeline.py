@@ -6,6 +6,8 @@ The pipeline owns four decisions so that nothing above it has to repeat them:
   store records the intent, not just the key),
 * whether a plan gets committed (``dry_run`` is the only difference),
 * whether a recorded write has been withdrawn at the source and must be undone,
+* whether a target has dropped a write it once held, which only a relay that
+  asked for it (``reapply_target_drift``) puts back,
 * what an outcome is worth reporting (typed, never a string to be re-parsed).
 
 Everything service-specific lives behind the :class:`Source` and :class:`Target`
@@ -89,6 +91,7 @@ async def _apply(
     sync_store: SyncStore,
     source_service: str,
     dry_run: bool,
+    reapply_drift: bool,
 ) -> TrackOutcome:
     """Decide and (unless dry run) perform the write for one track on one target."""
     record = synced.get(track.key)
@@ -108,11 +111,12 @@ async def _apply(
     # now: a changed rating or a withdrawn love is a different intent, and gets
     # written again. So does one a user's mapping has moved to another target key.
     repoint = _repoints(plan, record, target)
-    settled = _settled(plan, record, repoint, target)
+    drift = _drifted(plan, record, repoint)
+    settled = _settled(plan, record, repoint, target, reapply_drift=reapply_drift, drift=drift)
     if settled is not None:
         return settled
 
-    outcome = plan.to_outcome()
+    outcome = plan.to_outcome(reason=Reason.TARGET_DRIFT if drift else None)
     if dry_run:
         return outcome
 
@@ -152,8 +156,39 @@ async def _apply(
     return outcome
 
 
-def _settled(
-    plan: WritePlan, record: Optional[SyncedTrack], repoint: bool, target: Target
+def _drifted(plan: WritePlan, record: Optional[SyncedTrack], repoint: bool) -> bool:
+    """Whether the target has dropped a write this record says we made.
+
+    A dropped write is the only thing a relay with ``reapply_target_drift`` puts
+    back. A target that still holds *something* for the track was changed by a
+    person, and is left alone — the counterpart of :meth:`Target.undo` refusing
+    to clear a rating somebody re-set after us. The record's intent has to match
+    the plan's: a changed or withdrawn source intent is a rewrite or an undo, not
+    drift.
+
+    The target keys are deliberately not compared. Where the target's own copies
+    moved (a Plex match that now covers a different subset), re-writing is still
+    the right answer and the record follows the write, exactly as it does on any
+    other rewrite; the check that stops a *mapping* from moving a write is
+    ``_repoints``, which needs ``plan.mapped``.
+    """
+    if repoint or record is None or plan.intent is None:
+        return False
+    if record.intent != plan.intent.key or plan.status is not OutcomeStatus.WRITTEN:
+        return False
+    # ``occupied is False``, not ``not occupied``: a target that did not report
+    # its state is not evidence that it holds nothing.
+    return plan.existing.occupied is False and not plan.existing.holds
+
+
+def _settled(  # pylint: disable=too-many-arguments
+    plan: WritePlan,
+    record: Optional[SyncedTrack],
+    repoint: bool,
+    target: Target,
+    *,
+    reapply_drift: bool,
+    drift: bool,
 ) -> Optional[TrackOutcome]:
     """The outcome of a plan that needs no write, or ``None`` if it does."""
     if (
@@ -161,6 +196,7 @@ def _settled(
         and record is not None
         and plan.intent is not None
         and record.intent == plan.intent.key
+        and not (reapply_drift and drift)
     ):
         return plan.to_outcome(OutcomeStatus.SKIPPED, Reason.ALREADY_SYNCED, None)
     if plan.status is not OutcomeStatus.WRITTEN:
@@ -301,7 +337,7 @@ async def _reconcile(  # pylint: disable=too-many-arguments
     return outcomes
 
 
-async def run_tracks(
+async def run_tracks(  # pylint: disable=too-many-arguments
     tracks: Sequence[Track],
     targets: Sequence[Target],
     *,
@@ -310,12 +346,17 @@ async def run_tracks(
     progress: ProgressSink = NO_PROGRESS,
     dry_run: bool = False,
     allow_mass_undo: bool = False,
+    reapply_drift: bool = False,
 ) -> RunReport:
     """Relay an already-fetched track list to every target, then reconcile.
 
     *source_service* is required and keyword-only: it is half of the key the
     sync store is written under, so a run that guessed it ("unknown") would
     write records it could never reconcile against.
+
+    *reapply_drift* makes this relay's target non-authoritative: a write the
+    record says we made, which the target has since dropped, is written again.
+    Off by default — see ``_drifted`` for what is not drift.
     """
     outcomes: list[TrackOutcome] = []
     seen = {track.key for track in tracks}
@@ -330,6 +371,7 @@ async def run_tracks(
                 sync_store=sync_store,
                 source_service=source_service,
                 dry_run=dry_run,
+                reapply_drift=reapply_drift,
             )
             outcomes.append(outcome)
             await progress.outcome(outcome)
@@ -366,6 +408,7 @@ async def run(
     progress: ProgressSink = NO_PROGRESS,
     dry_run: bool = False,
     allow_mass_undo: bool = False,
+    reapply_drift: bool = False,
 ) -> RunReport:
     """Fetch from *source*, then relay to every target."""
     tracks = await attempt(
@@ -381,4 +424,5 @@ async def run(
         progress=progress,
         dry_run=dry_run,
         allow_mass_undo=allow_mass_undo,
+        reapply_drift=reapply_drift,
     )

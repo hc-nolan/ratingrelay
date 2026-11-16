@@ -149,6 +149,33 @@ def test_a_config_file_cannot_switch_the_mass_undo_guard_off(tmp_path):
         load_relays(path)
 
 
+def test_the_drift_option_comes_from_the_file_or_the_flag(tmp_path):
+    on = load_relays(_write(tmp_path, '[[relay]]\nreapply_target_drift = true\n'))
+    assert [spec.reapply_target_drift for spec in on] == [True]
+
+    flag = cli.build_parser().parse_args(["relay", "--reapply-target-drift"])
+    assert cli.spec_from_args(flag).reapply_target_drift is True
+    assert cli.spec_from_args(cli.build_parser().parse_args(["relay"])).reapply_target_drift is False
+
+
+def test_the_flag_turns_the_option_on_for_every_relay_in_a_run(tmp_path):
+    path = _write(
+        tmp_path,
+        '[[relay]]\nname = "one"\n\n[[relay]]\nname = "two"\nsource = "lastfm"\ntargets = ["plex"]\n',
+    )
+    specs = load_relays(path)
+
+    assert [s.reapply_target_drift for s in cli._select(specs, [], False)] == [False, False]  # pylint: disable=protected-access
+    assert [s.reapply_target_drift for s in cli._select(specs, [], False, reapply_target_drift=True)] == [True, True]  # pylint: disable=protected-access
+
+
+def test_a_non_boolean_drift_option_is_an_error(tmp_path):
+    path = _write(tmp_path, '[[relay]]\nreapply_target_drift = "yes"\n')
+
+    with pytest.raises(ConfigError, match="must be true or false"):
+        load_relays(path)
+
+
 def test_the_direction_reaches_the_spec():
     args = cli.build_parser().parse_args(
         ["relay", "--feedback-type", "hate", "--target", "listenbrainz"]
@@ -174,6 +201,64 @@ def test_an_unknown_service_is_a_parser_error():
 def test_a_relay_cannot_write_back_to_its_source():
     with pytest.raises(ConfigError, match="both the source and a target"):
         RelaySpec(source="lastfm", targets=("lastfm",))
+
+
+# ---------------------------------------------------------------------------
+# A second account of a service
+# ---------------------------------------------------------------------------
+
+
+def test_a_relay_can_name_a_second_account():
+    spec = RelaySpec(source="lastfm", targets=("lastfm:new",))
+    assert spec.targets == ("lastfm:new",)
+    assert spec.summary == "lastfm → lastfm:new"
+    # The source reads the same direction either way; the pair of refs keeps the
+    # two accounts' records apart.
+    assert spec.relay == "love"
+
+
+def test_the_same_account_cannot_be_both_ends():
+    """``lastfm`` -> ``lastfm:new`` is a migration; ``lastfm`` -> ``lastfm`` is not."""
+    with pytest.raises(ConfigError, match="both the source and a target"):
+        RelaySpec(source="lastfm:old", targets=("lastfm:old",))
+    with pytest.raises(ConfigError, match="both the source and a target"):
+        RelaySpec(source="plex", targets=("plex",))
+
+
+def test_a_plex_relay_between_two_servers_is_allowed():
+    spec = RelaySpec(source="plex", targets=("plex:attic",))
+    assert spec.targets == ("plex:attic",)
+
+
+def test_a_hate_relay_cannot_target_a_second_lastfm_account():
+    with pytest.raises(ConfigError, match="no hate"):
+        RelaySpec(source="plex", targets=("lastfm:new",), feedback_type="hate")
+
+
+def test_an_unreadable_account_name_says_what_is_allowed():
+    with pytest.raises(ConfigError, match="lastfm:new"):
+        RelaySpec(source="plex", targets=("lastfm:New Account",))
+
+
+def test_the_flags_take_a_service_and_an_account():
+    args = cli.build_parser().parse_args(
+        ["relay", "--source", "lastfm", "--target", "lastfm:new"]
+    )
+    assert (args.source, args.targets) == ("lastfm", ["lastfm:new"])
+
+
+def test_a_flag_with_an_unreadable_ref_is_a_parser_error():
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(["relay", "--target", "lastfm:"])
+
+
+def test_the_config_file_takes_a_second_account(tmp_path):
+    path = tmp_path / "relays.toml"
+    path.write_text(
+        '[[relay]]\nname = "move"\nsource = "lastfm"\ntargets = ["lastfm:new"]\n'
+    )
+    (spec,) = load_relays(path)
+    assert (spec.source, spec.targets) == ("lastfm", ("lastfm:new",))
 
 
 def test_a_relay_needs_a_target():

@@ -13,6 +13,7 @@ from ratingrelay.core.factory import (
     source_for_service,
     target_for_service,
 )
+from ratingrelay.engine.refs import account_ref
 from ratingrelay.engine.services import Source, Target
 from ratingrelay.engine.types import Track
 from ratingrelay.schemas.relay import (
@@ -40,33 +41,45 @@ def track_to_dict(track: Track) -> dict:
 async def source_for(db: AsyncSession, config: object) -> Source:
     """Build the source described by a request config."""
     if isinstance(config, PlexFromConfig):
-        return await source_for_service(db, "plex", feedback_type=config.feedback_type)
+        return await source_for_service(
+            db, ref_for(config), feedback_type=config.feedback_type
+        )
     if isinstance(config, LastFMFromConfig):
-        return await source_for_service(db, "lastfm")
+        return await source_for_service(db, ref_for(config))
     if isinstance(config, ListenBrainzFromConfig):
         return await source_for_service(
-            db, "listenbrainz", feedback_type=config.feedback_type
+            db, ref_for(config), feedback_type=config.feedback_type
         )
     raise ValueError(f"Unknown source service: {config}")
+
+
+def ref_for(config: object) -> str:
+    """The account ref a request config names.
+
+    A config with no ``account`` names the account that already exists — the ref
+    that is just its kind — which is why a job stored before accounts existed
+    still means what it meant.
+    """
+    return account_ref(str(getattr(config, "service")), getattr(config, "account", None))
 
 
 def relay_for(config: object) -> str:
     """The relay identity of a request's source config (see ``relay_identity``)."""
     if isinstance(config, PlexFromConfig):
-        return relay_identity("plex", feedback_type=config.feedback_type)
+        return relay_identity(ref_for(config), feedback_type=config.feedback_type)
     if isinstance(config, LastFMFromConfig):
-        return relay_identity("lastfm")
+        return relay_identity(ref_for(config))
     if isinstance(config, ListenBrainzFromConfig):
-        return relay_identity("listenbrainz", feedback_type=config.feedback_type)
+        return relay_identity(ref_for(config), feedback_type=config.feedback_type)
     raise ValueError(f"Unknown source service: {config}")
 
 
 async def target_for(db: AsyncSession, config: object, relay: str = "love") -> Target:
     """Build the target described by a request config, for a run of *relay*."""
     if isinstance(config, PlexToConfig):
-        return await target_for_service(db, "plex", relay=relay)
+        return await target_for_service(db, ref_for(config), relay=relay)
     if isinstance(config, LastFMToConfig):
-        return await target_for_service(db, "lastfm", relay=relay)
+        return await target_for_service(db, ref_for(config), relay=relay)
     if isinstance(config, ListenBrainzToConfig):
-        return await target_for_service(db, "listenbrainz", relay=relay)
+        return await target_for_service(db, ref_for(config), relay=relay)
     raise ValueError(f"Unknown target service: {config}")

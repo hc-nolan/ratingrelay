@@ -9,11 +9,12 @@
 		SetupStep
 	} from '$lib/types/auth';
 	import type { JobData } from '$lib/types/jobs';
+	import { accountOf, accountPayload, kindOf } from '$lib/types/services';
+	import type { ServiceAccountItem, ServiceKind } from '$lib/types/services';
 	import type {
 		ListenBrainzSourceConfig,
 		PlexSourceConfig,
 		PlexThresholds,
-		SourceId,
 		SourceOption,
 		TargetOption
 	} from '$lib/types/relay';
@@ -222,56 +223,76 @@
 
 	// ── Relay home state ──────────────────────────────────────────────────────
 
-	let selectedSource = $state<SourceId>('plex');
-	let resetTargetService = $state<SourceId>('plex');
+	let selectedSource = $state<string>('plex');
+	let resetTargetService = $state<string>('plex');
+
+	/** Every connected account, so a second one can be picked like the first. */
+	let accounts = $state<ServiceAccountItem[]>(untrack(() => [...data.accounts]));
 
 	let plexSourceConfig = $state<PlexSourceConfig>({ feedbackType: 'love' });
 	let lbzSourceConfig = $state<ListenBrainzSourceConfig>({ feedbackType: 'love' });
 
-	let plexTargetEnabled = $state(false);
-	let lastfmTargetEnabled = $state(false);
-	let lbzTargetEnabled = $state(false);
+	/** Which target accounts are switched on, by ref. */
+	let allocated = $state<string[]>([]);
 
 	/** Whether the ghost list under the last node is showing. */
 
 	let relaying = $state(false);
 	let relayError = $state('');
 
-	/** The nodes above the rail: one per connected service, plus the reset. */
-	const sourceOptions = $derived<SourceOption[]>([
-		...(plex.status === 'connected' && plex.server_name
-			? [{ id: 'plex' as const, name: 'Plex' }]
-			: []),
-		...(lastfm.status === 'connected' ? [{ id: 'lastfm' as const, name: 'Last.fm' }] : []),
-		...(listenbrainz.status === 'connected'
-			? [{ id: 'listenbrainz' as const, name: 'ListenBrainz' }]
-			: []),
-		{ id: 'reset' as const, name: 'Reset' }
-	]);
+	/** What a destination card says under the account name. */
+	const TARGET_HINTS: Record<ServiceKind, string> = {
+		plex: 'rate the library',
+		lastfm: 'love the track',
+		listenbrainz: 'love or hate, per the rating'
+	};
 
-	const targetCatalog: TargetOption[] = [
-		{ id: 'plex', name: 'Plex', hint: 'rate the library' },
-		{ id: 'lastfm', name: 'Last.fm', hint: 'love the track' },
-		{ id: 'listenbrainz', name: 'ListenBrainz', hint: 'love or hate, per the rating' }
-	];
-
-	function isAllocated(id: string): boolean {
-		if (id === 'plex') return plexTargetEnabled;
-		if (id === 'lastfm') return lastfmTargetEnabled;
-		return lbzTargetEnabled;
+	/**
+	 * Whether an account can be used here.
+	 *
+	 * The first account of a service is checked live, through that service's own
+	 * status endpoint — that is what the setup wizard waits for. A second one is
+	 * `configured`: its values are complete in the database, which `/api/services`
+	 * reports without calling anybody.
+	 */
+	function usable(ref: string): boolean {
+		const account = accounts.find((a) => a.id === ref);
+		const kind = kindOf(ref);
+		if (kind === 'plex') {
+			const server = account?.server_name;
+			return plex.status === 'connected' && !!server;
+		}
+		if (kind === 'lastfm') {
+			return ref === 'lastfm' ? lastfm.status === 'connected' : !!account?.configured;
+		}
+		return ref === 'listenbrainz' ? listenbrainz.status === 'connected' : !!account?.configured;
 	}
 
-	function setAllocated(id: string, on: boolean) {
-		if (id === 'plex') plexTargetEnabled = on;
-		else if (id === 'lastfm') lastfmTargetEnabled = on;
-		else lbzTargetEnabled = on;
+	/** The nodes above the rail: one per usable account, plus the reset. */
+	const sourceOptions = $derived<SourceOption[]>([
+		...accounts.filter((a) => usable(a.id)).map((a) => ({ id: a.id, name: a.label })),
+		{ id: 'reset', name: 'Reset' }
+	]);
+
+	const targetCatalog = $derived<TargetOption[]>(
+		accounts
+			.filter((a) => usable(a.id))
+			.map((a) => ({ id: a.id, name: a.label, hint: TARGET_HINTS[a.service] }))
+	);
+
+	function isAllocated(ref: string): boolean {
+		return allocated.includes(ref);
+	}
+
+	function setAllocated(ref: string, on: boolean) {
+		allocated = on ? [...allocated, ref] : allocated.filter((r) => r !== ref);
 	}
 
 	/** Loves or hates: what the source reads, so what a Plex target writes. Mirrors relay_identity. */
 	let relayDirection = $derived<'love' | 'hate'>(
-		selectedSource === 'plex'
+		kindOf(selectedSource) === 'plex'
 			? plexSourceConfig.feedbackType
-			: selectedSource === 'listenbrainz'
+			: kindOf(selectedSource) === 'listenbrainz'
 				? lbzSourceConfig.feedbackType
 				: 'love'
 	);
@@ -284,23 +305,17 @@
 	const availableTargets = $derived(
 		targetCatalog.filter((t) => {
 			if (t.id === selectedSource) return false;
-			if (t.id === 'lastfm' && relayDirection === 'hate') return false;
-			if (t.id === 'plex') return plex.status === 'connected' && !!plex.server_name;
-			if (t.id === 'lastfm') return lastfm.status === 'connected';
-			return listenbrainz.status === 'connected';
+			if (kindOf(t.id) === 'lastfm' && relayDirection === 'hate') return false;
+			return true;
 		})
 	);
 
 	const allocatedTargets = $derived(availableTargets.filter((t) => isAllocated(t.id)));
 
 	/** Services a reset can clear: the ones we hold credentials for. */
-	const resetOptions = $derived<SourceOption[]>([
-		...(plex.status === 'connected' ? [{ id: 'plex' as const, name: 'Plex' }] : []),
-		...(lastfm.status === 'connected' ? [{ id: 'lastfm' as const, name: 'Last.fm' }] : []),
-		...(listenbrainz.status === 'connected'
-			? [{ id: 'listenbrainz' as const, name: 'ListenBrainz' }]
-			: [])
-	]);
+	const resetOptions = $derived<SourceOption[]>(
+		accounts.filter((a) => usable(a.id)).map((a) => ({ id: a.id, name: a.label }))
+	);
 
 	// Keep the selection legal when a service disconnects or the source changes.
 	$effect(() => {
@@ -310,10 +325,8 @@
 		if (!resetOptions.some((o) => o.id === resetTargetService) && resetOptions.length > 0) {
 			resetTargetService = resetOptions[0].id;
 		}
-		for (const id of ['plex', 'lastfm', 'listenbrainz']) {
-			if (isAllocated(id) && !availableTargets.some((t) => t.id === id)) {
-				setAllocated(id, false);
-			}
+		for (const ref of allocated) {
+			if (!availableTargets.some((t) => t.id === ref)) setAllocated(ref, false);
 		}
 	});
 
@@ -330,9 +343,9 @@
 
 	/** The direction toggle belongs to the source; Last.fm has only loves. */
 	let directionConfig = $derived(
-		selectedSource === 'plex'
+		kindOf(selectedSource) === 'plex'
 			? plexSourceConfig
-			: selectedSource === 'listenbrainz'
+			: kindOf(selectedSource) === 'listenbrainz'
 				? lbzSourceConfig
 				: null
 	);
@@ -343,33 +356,30 @@
 	);
 
 	function buildRelayPayload() {
-		let source: object;
-		if (selectedSource === 'plex') {
-			source = { service: 'plex', feedback_type: plexSourceConfig.feedbackType };
-		} else if (selectedSource === 'lastfm') {
-			source = { service: 'lastfm' };
-		} else if (selectedSource === 'listenbrainz') {
-			source = { service: 'listenbrainz', feedback_type: lbzSourceConfig.feedbackType };
-		} else {
-			source = { service: 'reset', target_service: resetTargetService };
-		}
-
 		if (selectedSource === 'reset') {
-			return { source, targets: [] };
+			const account = accountOf(resetTargetService);
+			return {
+				source: {
+					service: 'reset',
+					target_service: kindOf(resetTargetService),
+					...(account ? { target_account: account } : {})
+				},
+				targets: []
+			};
 		}
 
-		const targets: object[] = [];
-		if (plexTargetEnabled && plex.status === 'connected' && plex.server_name) {
-			targets.push({ service: 'plex' });
-		}
-		if (lastfmTargetEnabled && lastfm.status === 'connected') {
-			targets.push({ service: 'lastfm' });
-		}
-		if (lbzTargetEnabled && listenbrainz.status === 'connected') {
-			targets.push({ service: 'listenbrainz' });
-		}
+		const kind = kindOf(selectedSource);
+		const source =
+			kind === 'plex'
+				? { ...accountPayload(selectedSource), feedback_type: plexSourceConfig.feedbackType }
+				: kind === 'listenbrainz'
+					? {
+							...accountPayload(selectedSource),
+							feedback_type: lbzSourceConfig.feedbackType
+						}
+					: { ...accountPayload(selectedSource) };
 
-		return { source, targets };
+		return { source, targets: allocatedTargets.map((t) => accountPayload(t.id)) };
 	}
 
 	// ── Job queue state ───────────────────────────────────────────────────────
@@ -377,6 +387,8 @@
 	/** Minutes between runs; 0 means a one-off. */
 	let repeat = $state(0);
 	let dryRun = $state(false);
+	/** Write again what the targets have since dropped, for this relay. */
+	let reapplyDrift = $state(false);
 
 	$effect(() => {
 		if (repeat > 0) dryRun = false;
@@ -395,7 +407,8 @@
 				...buildRelayPayload(),
 				recurring: repeat > 0,
 				interval_minutes: repeat > 0 ? repeat : undefined,
-				dry_run: dryRun
+				dry_run: dryRun,
+				reapply_target_drift: reapplyDrift
 			};
 			const res = await fetch('/api/relay/jobs', {
 				method: 'POST',
@@ -512,7 +525,8 @@
 						<RatingNode
 							config={directionConfig}
 							bind:thresholds
-							plexInvolved={selectedSource === 'plex' || isAllocated('plex')}
+							plexInvolved={kindOf(selectedSource) === 'plex' ||
+								allocated.some((ref) => kindOf(ref) === 'plex')}
 						/>
 
 						<FlowLink />
@@ -536,7 +550,7 @@
 										allocated={isAllocated(target.id)}
 										onadd={() => setAllocated(target.id, true)}
 										onremove={() => setAllocated(target.id, false)}
-										plexWrite={target.id === 'plex' ? plexWrite : undefined}
+										plexWrite={kindOf(target.id) === 'plex' ? plexWrite : undefined}
 										direction={relayDirection}
 									/>
 								{/each}
@@ -549,6 +563,7 @@
 					<RunDock
 						bind:repeat
 						bind:dryRun
+						bind:reapplyDrift
 						mode={selectedSource === 'reset' ? 'reset' : 'run'}
 						busy={relaying}
 						canRun={canQueue}

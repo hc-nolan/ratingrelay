@@ -4,10 +4,15 @@
 
 	let {
 		onsubmitted,
-		submitLabel = 'Connect Last.fm'
+		submitLabel = 'Connect Last.fm',
+		account = undefined,
+		label = undefined
 	}: {
 		onsubmitted: (username: string) => void;
 		submitLabel?: string;
+		/** Adding a second account: its slug, and the name to show for it. */
+		account?: string;
+		label?: string;
 	} = $props();
 
 	// The four fields Last.fm needs, in one place: the setup wizard and the
@@ -21,14 +26,15 @@
 	);
 
 	async function submit() {
-		if (!complete || pending) return;
+		// A second account needs its short name before it can be stored.
+		if (!complete || pending || (account !== undefined && !account)) return;
 		pending = true;
 		error = '';
 		try {
 			const res = await fetch('/api/lastfm/auth', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(form)
+				body: JSON.stringify(account ? { ...form, account, label } : form)
 			});
 			if (!res.ok) {
 				const body = await res.json().catch(() => ({ detail: 'Authentication failed' }));

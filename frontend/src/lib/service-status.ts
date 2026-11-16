@@ -1,4 +1,5 @@
 import type { AuthCheckResult, ServiceStatus } from '$lib/types/auth';
+import type { ServiceAccountItem, ServicesResponse } from '$lib/types/services';
 
 /** The three services this relay can hold credentials for, in display order. */
 export const SERVICE_ORDER = ['plex', 'lastfm', 'listenbrainz'] as const;
@@ -31,4 +32,22 @@ export async function loadServiceStatus(fetch: typeof globalThis.fetch): Promise
 	]);
 
 	return { plex, lastfm, listenbrainz } as AuthCheckResult;
+}
+
+/**
+ * Every connected account, for the services page and the flow builder.
+ *
+ * One request, not four: this is the list of what exists, including a second
+ * account of a service. Each account's *live* status still comes from its own
+ * service's `/auth/status`, which is what `loadServiceStatus` asks for.
+ */
+export async function loadAccounts(fetch: typeof globalThis.fetch): Promise<ServiceAccountItem[]> {
+	try {
+		const res = await fetch('/api/services');
+		if (!res.ok) return [];
+		const body: ServicesResponse = await res.json();
+		return body.accounts;
+	} catch {
+		return [];
+	}
 }

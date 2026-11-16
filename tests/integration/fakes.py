@@ -411,7 +411,13 @@ class World:
     brainz: FakeMusicBrainz
 
     async def relay(
-        self, source, targets, *, dry_run: bool = False, allow_mass_undo: bool = False
+        self,
+        source,
+        targets,
+        *,
+        dry_run: bool = False,
+        allow_mass_undo: bool = False,
+        reapply_target_drift: bool = False,
     ) -> RelayRun:
         """Relay through the worker's entry point, collecting typed outcomes."""
         outcomes: list[TrackOutcome] = []
@@ -429,6 +435,7 @@ class World:
             on_track=on_track,
             dry_run=dry_run,
             allow_mass_undo=allow_mass_undo,
+            reapply_drift=reapply_target_drift,
         )
         return RelayRun(response=response, outcomes=outcomes)
 

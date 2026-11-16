@@ -27,10 +27,9 @@ from ratingrelay.cli.config import (
     ConfigError,
     DEFAULT_CONFIG,
     RelaySpec,
-    SOURCE_SERVICES,
-    TARGET_SERVICES,
     load_relays,
 )
+from ratingrelay.engine.refs import KNOWN_SERVICES, parse_ref
 
 EXIT_OK = 0
 EXIT_PARTIAL = 1
@@ -78,20 +77,32 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _account_ref(value: str) -> str:
+    """argparse type for a source or target: ``service`` or ``service:account``."""
+    try:
+        return parse_ref(value).ref
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"{exc} — use one of {', '.join(KNOWN_SERVICES)}, or one of those "
+            "followed by ':account' (e.g. lastfm:new)"
+        ) from exc
+
+
 def _add_relay_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--source",
         default="plex",
-        choices=SOURCE_SERVICES,
+        type=_account_ref,
+        metavar="SERVICE[:ACCOUNT]",
         help="where the ratings come from (default: plex)",
     )
     parser.add_argument(
         "--target",
         dest="targets",
         action="append",
-        choices=TARGET_SERVICES,
+        type=_account_ref,
         default=[],
-        metavar="SERVICE",
+        metavar="SERVICE[:ACCOUNT]",
         help="where they go; repeat for more than one (default: lastfm)",
     )
     parser.add_argument(
@@ -117,6 +128,12 @@ def _add_run_flags(parser: argparse.ArgumentParser) -> None:
         "(refused by default: that is usually a source that answered short)",
     )
     parser.add_argument(
+        "--reapply-target-drift",
+        action="store_true",
+        help="write again what the target has since dropped, for every relay in "
+        "this run (a target's own edits are otherwise left alone)",
+    )
+    parser.add_argument(
         "--json", action="store_true", help="print a machine-readable report"
     )
     parser.add_argument(
@@ -132,6 +149,7 @@ def spec_from_args(args: argparse.Namespace) -> RelaySpec:
         source=args.source,
         targets=tuple(args.targets) or ("lastfm",),
         dry_run=getattr(args, "dry_run", False),
+        reapply_target_drift=getattr(args, "reapply_target_drift", False),
         allow_mass_undo=args.allow_mass_undo,
         feedback_type=args.feedback_type,
     )
@@ -175,6 +193,7 @@ async def run_relay(
             progress=progress if progress is not None else pipeline.NO_PROGRESS,
             dry_run=spec.dry_run,
             allow_mass_undo=spec.allow_mass_undo,
+            reapply_drift=spec.reapply_target_drift,
         )
         logger.info("Relay %s finished: %s", spec.name, report.status)
         return report
@@ -293,7 +312,11 @@ def main(
             specs = (spec_from_args(args),)
         else:
             specs = _select(
-                load_relays(args.config), args.only, args.dry_run, args.allow_mass_undo
+                load_relays(args.config),
+                args.only,
+                args.dry_run,
+                args.allow_mass_undo,
+                args.reapply_target_drift,
             )
     except ConfigError as exc:
         print(f"{PROGRAM}: {exc}", file=err)
@@ -320,8 +343,9 @@ def _select(
     only: Sequence[str],
     dry_run: bool,
     allow_mass_undo: bool = False,
+    reapply_target_drift: bool = False,
 ) -> tuple[RelaySpec, ...]:
-    """The relays to run, with ``--only``, ``--dry-run`` and ``--allow-mass-undo`` applied."""
+    """The relays to run, with ``--only`` and the run-wide flags applied."""
     chosen = tuple(specs)
     if only:
         known = {spec.name for spec in specs}
@@ -336,6 +360,8 @@ def _select(
         chosen = tuple(replace(spec, dry_run=True) for spec in chosen)
     if allow_mass_undo:
         chosen = tuple(replace(spec, allow_mass_undo=True) for spec in chosen)
+    if reapply_target_drift:
+        chosen = tuple(replace(spec, reapply_target_drift=True) for spec in chosen)
     return chosen
 
 

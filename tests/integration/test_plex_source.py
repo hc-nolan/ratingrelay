@@ -103,11 +103,12 @@ async def test_withdrawing_the_hate_clears_listenbrainz(world):
 async def test_target_drift_is_not_reapplied_while_the_record_stands(world):
     """RR-12 asks that a track unloved on ListenBrainz be re-loved next sync.
 
-    The engine does not do that, and this pins the difference: once a record
+    A relay that did not ask is left alone, and this pins that: once a record
     exists, an unchanged intent is ``already_synced``, so target state decides
     whether a *new* write is needed, never whether a past one survived. See
-    ``docs/plans/2026-11-16-013-integration-tests.md`` for why, and 010 for the
-    decision it rests on. Change either side and this test fails on purpose.
+    ``docs/plans/2026-11-16-013-integration-tests.md`` and 010 for why, and 014
+    for the opt-in (``reapply_target_drift``) that re-loves it deliberately.
+    Change either side and this test fails on purpose.
     """
     blue_monday(world)
     source = PlexFromConfig(service="plex")
@@ -163,6 +164,48 @@ async def test_a_drifted_lastfm_love_is_not_reapplied(world):
     assert world.lastfm.loves == [("New Order", "Blue Monday")]
 
 
+async def test_a_dropped_love_is_written_again_when_the_relay_asks(world):
+    """The same run as above, with ``reapply_target_drift``: the love comes back."""
+    blue_monday(world)
+    source = PlexFromConfig(service="plex")
+    targets = [LastFMToConfig(service="lastfm")]
+    await world.relay(source, targets)
+
+    world.lastfm.loved.clear()  # un-loved by hand on Last.fm
+    run = await world.relay(source, targets, reapply_target_drift=True)
+
+    assert world.lastfm.is_loved("New Order", "Blue Monday")
+    assert run.decisions() == [(OutcomeStatus.WRITTEN, Reason.TARGET_DRIFT)]
+
+
+async def test_a_dropped_love_is_written_again_on_listenbrainz(world):
+    """Plex→ListenBrainz, dropped rather than replaced: the score goes back to 1."""
+    blue_monday(world)
+    source = PlexFromConfig(service="plex")
+    targets = [ListenBrainzToConfig(service="listenbrainz")]
+    await world.relay(source, targets)
+
+    world.listenbrainz.scores.pop(RECORDING)  # un-loved by hand on ListenBrainz
+    run = await world.relay(source, targets, reapply_target_drift=True)
+
+    assert world.listenbrainz.score(RECORDING) == 1
+    assert run.decisions() == [(OutcomeStatus.WRITTEN, Reason.TARGET_DRIFT)]
+
+
+async def test_a_love_replaced_by_a_hate_on_listenbrainz_is_left_alone(world):
+    """A replacement is a person's edit: re-applying over it would fight them."""
+    blue_monday(world)
+    source = PlexFromConfig(service="plex")
+    targets = [ListenBrainzToConfig(service="listenbrainz")]
+    await world.relay(source, targets)
+
+    world.listenbrainz.hate(RECORDING, "New Order", "Blue Monday")
+    run = await world.relay(source, targets, reapply_target_drift=True)
+
+    assert world.listenbrainz.score(RECORDING) == -1
+    assert run.decisions() == [(OutcomeStatus.SKIPPED, Reason.ALREADY_SYNCED)]
+
+
 async def test_a_love_the_user_made_is_left_alone(world):
     """Contract §3: a love we did not write is never recorded, so never undone."""
     blue_monday(world)
@@ -176,7 +219,6 @@ async def test_a_love_the_user_made_is_left_alone(world):
     assert await synced(world.session) == []
     # Nothing was written, so the user's own love is not ours to keep or drop.
     assert world.lastfm.loves == []
-
 
 async def test_a_round_trip_love_then_withdrawal_then_love_again(world):
     """Love, withdraw, love again — the target follows every time, from nothing."""

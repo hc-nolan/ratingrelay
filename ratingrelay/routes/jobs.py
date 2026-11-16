@@ -24,7 +24,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ratingrelay.core import adapters
-from ratingrelay.core.factory import unsupported_target
+from ratingrelay.core.factory import pairing_refusal
 from ratingrelay.db import get_async_session, session_maker
 from ratingrelay.models.jobs import Job, TrackEvent
 from ratingrelay.schemas.relay import FromConfig, ResetFromConfig, ToConfig, source_adapter as _source_adapter, targets_adapter as _targets_adapter
@@ -55,6 +55,9 @@ class JobCreateRequest(BaseModel):
     dry_run: bool = False
     # A one-off override of the mass-undo guard, for the run after a refusal.
     allow_mass_undo: bool = False
+    # This relay's target is not authoritative: a write the target has since
+    # dropped is written again. Survives into a recurring relay's next run.
+    reapply_target_drift: bool = False
 
 
 def _job_to_dict(job: Job) -> dict:
@@ -64,11 +67,13 @@ def _job_to_dict(job: Job) -> dict:
         # Through the adapter, not raw JSON, so a job stored in an older shape
         # (a Plex ``comparison``) reads back the way the worker will run it.
         "source_config": _source_adapter.dump_python(
-            _source_adapter.validate_json(job.source_config), mode="json"
+            _source_adapter.validate_json(job.source_config), mode="json", exclude_none=True
         ),
         # Same for targets: an older ListenBrainz target's own direction is gone.
         "targets_config": _targets_adapter.dump_python(
-            _targets_adapter.validate_json(job.targets_config), mode="json"
+            _targets_adapter.validate_json(job.targets_config),
+            mode="json",
+            exclude_none=True,
         ),
         "recurring": job.recurring,
         "interval_minutes": job.interval_minutes,
@@ -82,6 +87,7 @@ def _job_to_dict(job: Job) -> dict:
         "tracks_skipped": job.tracks_skipped,
         "dry_run": job.dry_run,
         "allow_mass_undo": job.allow_mass_undo,
+        "reapply_target_drift": job.reapply_target_drift,
         "cancel_requested": job.cancel_requested,
     }
 
@@ -128,12 +134,17 @@ async def create_job(
     if not isinstance(body.source, ResetFromConfig):
         relay = adapters.relay_for(body.source)
         for target in body.targets:
-            refusal = unsupported_target(relay, target.service)
+            refusal = pairing_refusal(
+                adapters.ref_for(body.source), adapters.ref_for(target), relay=relay
+            )
             if refusal:
                 raise HTTPException(status_code=422, detail=refusal)
 
-    source_json = _source_adapter.dump_json(body.source).decode()
-    targets_json = _targets_adapter.dump_json(body.targets).decode()
+    # ``exclude_none`` keeps a config that names no account byte-identical to
+    # what older builds stored, so a queued job is still recognised as the same
+    # relay and an old row still validates.
+    source_json = _source_adapter.dump_json(body.source, exclude_none=True).decode()
+    targets_json = _targets_adapter.dump_json(body.targets, exclude_none=True).decode()
     new_key = _canonical_key(source_json, targets_json)
 
     # Duplicate check — skip entirely if either side is a dry-run job
@@ -174,6 +185,7 @@ async def create_job(
         interval_minutes=body.interval_minutes,
         dry_run=body.dry_run,
         allow_mass_undo=body.allow_mass_undo,
+        reapply_target_drift=body.reapply_target_drift,
     )
     db.add(job)
     await db.commit()

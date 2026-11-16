@@ -58,6 +58,14 @@
 					Dry
 				</span>
 			{/if}
+			{#if job.reapply_target_drift && !compact}
+				<span
+					class="rounded border border-border px-1 py-px font-medium tracking-wide uppercase"
+					title="A write a target has since dropped is written again"
+				>
+					Re-apply
+				</span>
+			{/if}
 			{#if job.status === 'running'}
 				<span class="text-info">
 					{#if job.cancel_requested}

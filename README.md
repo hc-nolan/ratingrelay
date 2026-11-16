@@ -254,6 +254,29 @@ loves and Plex hates, both to ListenBrainz). Two that read the same direction, s
 as two Plex love relays into one target, are refused: each run would undo what only
 the other one passes. Merge them into one relay.
 
+### A second account of a service
+
+A source or target is a service, optionally followed by `:account`. The account
+already connected keeps the bare name, and a second one is named when you add it
+on **Services** in the web app:
+
+```toml
+[[relay]]
+name = "move-to-new-account"
+source = "lastfm"            # the account that was already connected
+targets = ["lastfm:new"]     # the second one, named "new" on the Services page
+```
+
+The same syntax works for a second Plex server (`targets = ["plex:attic"]`) and
+for ListenBrainz. The flags take it too: `ratingrelay relay --source lastfm
+--target lastfm:new`.
+
+One thing a relay cannot do is name the *same* account as both ends: `lastfm` →
+`lastfm:new` is a migration, `lastfm` → `lastfm` is an account relaying into
+itself. A second account is optional and lives in the database, so environment
+variables (`LASTFM_TOKEN` and friends) still describe the first account of each
+service only.
+
 ### When a run refuses to undo
 
 If a run would take back more than half of what RatingRelay has written to a
@@ -265,6 +288,41 @@ of your library overnight.
 If you really did, run once with `--allow-mass-undo`, or use **Run once and allow
 the undo** on that run's page in the web app. There is no config key for it, so a
 scheduled run never switches the guard off.
+
+### When you edit a target by hand
+
+By default a target is left alone: if you un-love a track on Last.fm after
+RatingRelay loved it there, the next run says it is already synced and your edit
+stands. Normal runs compare what the source wants to what RatingRelay last wrote,
+not to what the target holds now.
+
+`reapply_target_drift = true` turns that around for one relay — its targets stop
+being authoritative, so a write they have since dropped is written again:
+
+```toml
+[[relay]]
+name = "nightly"
+source = "plex"
+targets = ["lastfm", "listenbrainz"]
+reapply_target_drift = true
+```
+
+The web app has the same switch next to **Dry run** when you queue a run, and a
+scheduled relay keeps it. On the command line, `ratingrelay relay
+--reapply-target-drift` asks for it for that one run, and `ratingrelay run
+--reapply-target-drift` for every relay in the file. What it re-applies is
+deliberately narrow:
+
+| the target now | the run |
+| -------------- | ------- |
+| still holds what RatingRelay wrote | does nothing |
+| holds nothing (you un-loved it, or cleared the rating) | writes it again |
+| holds something else (you replaced a love with a hate, or re-rated the Plex copy) | does nothing: that is your choice |
+
+The last row is the same rule as an undo, which never clears a rating you changed
+after RatingRelay wrote it. Re-applying a value over one you chose would fight
+you every run; re-writing a love you removed only puts back what the relay was
+already told to keep.
 
 ### cron
 

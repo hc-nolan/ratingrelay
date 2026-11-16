@@ -2,6 +2,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel
 
+from ratingrelay.schemas.services import AccountFields
+
 
 class PlexAuthInitResponse(BaseModel):
     """Returned by POST /api/plex/auth/init."""
@@ -22,8 +24,13 @@ class PlexServersResponse(BaseModel):
     servers: list[PlexServerItem]
 
 
-class PlexSelectServerRequest(BaseModel):
-    """Body for POST /api/plex/server."""
+class PlexSelectServerRequest(AccountFields):
+    """Body for POST /api/plex/server.
+
+    ``account`` names a second server of the same Plex account (``plex:attic``);
+    leaving it out switches the primary one. A second *Plex account* would be a
+    second identity, which this app does not have.
+    """
 
     name: str
 

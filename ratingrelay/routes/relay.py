@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ratingrelay.core import adapters
-from ratingrelay.core.factory import unsupported_target
+from ratingrelay.core.factory import pairing_refusal
 from ratingrelay.core.relay import execute_relay
 from ratingrelay.core.thresholds import Thresholds, effective_thresholds
 from ratingrelay.db import get_async_session
@@ -95,13 +95,19 @@ async def run_relay(
         raise HTTPException(status_code=400, detail="Unknown source service")
     relay = adapters.relay_for(source)
     for target in body.targets:
-        refusal = unsupported_target(relay, target.service)
+        refusal = pairing_refusal(
+            adapters.ref_for(source), adapters.ref_for(target), relay=relay
+        )
         if refusal:
             raise HTTPException(status_code=422, detail=refusal)
 
     try:
         result = await execute_relay(
-            db, source, list(body.targets), dry_run=body.dry_run
+            db,
+            source,
+            list(body.targets),
+            dry_run=body.dry_run,
+            reapply_drift=body.reapply_target_drift,
         )
     except ValueError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc

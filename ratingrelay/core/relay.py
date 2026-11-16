@@ -26,6 +26,7 @@ from ratingrelay.core.factory import stores
 from ratingrelay.db.store import SqlSyncStore
 from ratingrelay.engine import pipeline
 from ratingrelay.engine.normalize import track_key
+from ratingrelay.engine.refs import account_ref, parse_ref, service_kind
 from ratingrelay.engine.retry import attempt
 from ratingrelay.engine.services.lastfm import LastFmClient
 from ratingrelay.engine.services.listenbrainz import ListenBrainzClient
@@ -100,9 +101,13 @@ class CallbackProgress:
         )
 
 
-def target_service(config: object) -> str:
-    """The service name a request config names, without touching credentials."""
-    return str(getattr(config, "service", "unknown"))
+def target_ref(config: object) -> str:
+    """The account ref a request config names, without touching credentials.
+
+    A ref, not a kind: two accounts of one service are two results rows, two
+    history entries and two resets.
+    """
+    return adapters.ref_for(config)
 
 
 # ---------------------------------------------------------------------------
@@ -119,11 +124,21 @@ def target_service(config: object) -> str:
 # ---------------------------------------------------------------------------
 
 
-_RESET_TARGET_CONFIGS = {
-    "plex": PlexToConfig(service="plex"),
-    "lastfm": LastFMToConfig(service="lastfm"),
-    "listenbrainz": ListenBrainzToConfig(service="listenbrainz"),
-}
+def _reset_target_config(ref: str) -> object:
+    """The target config for one account, for the reset's own target lookup.
+
+    A ref rather than a kind: a reset clears the writes recorded against one
+    account, and the other account of the same service is not its business.
+    """
+    parsed = parse_ref(ref)
+    if parsed.kind == "plex":
+        return PlexToConfig(service="plex", account=parsed.account)
+    if parsed.kind == "lastfm":
+        return LastFMToConfig(service="lastfm", account=parsed.account)
+    if parsed.kind == "listenbrainz":
+        return ListenBrainzToConfig(service="listenbrainz", account=parsed.account)
+    # Never fall through to a target of some other service.
+    raise ValueError(f"Unknown service to reset: {ref}")
 
 
 def _reset_result(service: str, ok: int, err: int) -> dict:
@@ -149,7 +164,7 @@ async def _reset_recorded(
         await on_fetch_complete(len(records))
 
     try:
-        target = await adapters.target_for(db, _RESET_TARGET_CONFIGS[target_svc])
+        target = await adapters.target_for(db, _reset_target_config(target_svc))
     except ValueError as exc:
         for _, _, record in records:
             await on_track(
@@ -227,14 +242,24 @@ async def _reset_service(
     """
     ledger = await _WipeLedger.load(SqlSyncStore(db), target_svc)
     on_cleared = None if dry_run else ledger.cleared
-    if target_svc == "plex":
+    kind = service_kind(target_svc)
+    if kind == "plex":
         reset = reset_plex
-    elif target_svc == "lastfm":
+    elif kind == "lastfm":
         reset = reset_lastfm
-    else:
+    elif kind == "listenbrainz":
         reset = reset_listenbrainz
+    else:
+        # Never fall through to a wipe of some other service: this is the most
+        # destructive call the tool makes, and a ref it does not know is a bug.
+        raise ValueError(f"Unknown service to reset: {target_svc}")
     ok, err = await reset(
-        db, on_fetch_complete, on_track, dry_run=dry_run, on_cleared=on_cleared
+        db,
+        on_fetch_complete,
+        on_track,
+        ref=target_svc,
+        dry_run=dry_run,
+        on_cleared=on_cleared,
     )
 
     # Only a wipe that cleared everything may drop the records it could not
@@ -322,10 +347,11 @@ async def reset_plex(
     on_fetch_complete: Optional[Callable[[int], Awaitable[None]]] = None,
     on_track: TrackCallback = _noop_track,
     *,
+    ref: str = "plex",
     dry_run: bool = False,
     on_cleared: Optional[Callable[[str], Awaitable[None]]] = None,
 ) -> tuple[int, int]:
-    library = PlexLibrary(await plex_credentials(db))
+    library = PlexLibrary(await plex_credentials(db, ref))
     rated = await library.rated(0.0001, "gte")
 
     if on_fetch_complete is not None:
@@ -339,12 +365,12 @@ async def reset_plex(
                 await library.rate(str(plex_track.ratingKey), None)
             if on_cleared is not None:
                 await on_cleared(str(plex_track.ratingKey))
-            await on_track(track, "plex", True, None, False)
+            await on_track(track, ref, True, None, False)
             ok += 1
         # Reported per track.
         except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
             logger.error("Plex reset failed for '%s': %s", plex_track.title, exc)
-            await on_track(track, "plex", False, str(exc), False)
+            await on_track(track, ref, False, str(exc), False)
             err += 1
     return ok, err
 
@@ -354,10 +380,11 @@ async def reset_lastfm(
     on_fetch_complete: Optional[Callable[[int], Awaitable[None]]] = None,
     on_track: TrackCallback = _noop_track,
     *,
+    ref: str = "lastfm",
     dry_run: bool = False,
     on_cleared: Optional[Callable[[str], Awaitable[None]]] = None,
 ) -> tuple[int, int]:
-    client = LastFmClient(await lastfm_credentials(db))
+    client = LastFmClient(await lastfm_credentials(db, ref))
     tracks = await client.loved()
 
     if on_fetch_complete is not None:
@@ -371,12 +398,12 @@ async def reset_lastfm(
                 await client.unlove(track.artist, track.title)
             if on_cleared is not None:
                 await on_cleared(track_key(track.artist, track.title))
-            await on_track(data, "lastfm", True, None, False)
+            await on_track(data, ref, True, None, False)
             ok += 1
         # Reported per track.
         except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
             logger.error("LFM unlove failed '%s – %s': %s", track.artist, track.title, exc)
-            await on_track(data, "lastfm", False, str(exc), False)
+            await on_track(data, ref, False, str(exc), False)
             err += 1
     return ok, err
 
@@ -386,10 +413,11 @@ async def reset_listenbrainz(
     on_fetch_complete: Optional[Callable[[int], Awaitable[None]]] = None,
     on_track: TrackCallback = _noop_track,
     *,
+    ref: str = "listenbrainz",
     dry_run: bool = False,
     on_cleared: Optional[Callable[[str], Awaitable[None]]] = None,
 ) -> tuple[int, int]:
-    client = ListenBrainzClient(await listenbrainz_credentials(db))
+    client = ListenBrainzClient(await listenbrainz_credentials(db, ref))
     feedback = [track for score in (1, -1) for track in await client.feedback(score)]
 
     if on_fetch_complete is not None:
@@ -399,7 +427,7 @@ async def reset_listenbrainz(
     for track in feedback:
         data = adapters.track_to_dict(track)
         if not track.recording_mbid:
-            await on_track(data, "listenbrainz", False, "No recording MBID", False)
+            await on_track(data, ref, False, "No recording MBID", False)
             err += 1
             continue
         try:
@@ -407,12 +435,12 @@ async def reset_listenbrainz(
                 await client.submit(0, track.recording_mbid)
             if on_cleared is not None:
                 await on_cleared(track.recording_mbid)
-            await on_track(data, "listenbrainz", True, None, False)
+            await on_track(data, ref, True, None, False)
             ok += 1
         # Reported per track.
         except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
             logger.error("LBZ reset failed for %s: %s", track.recording_mbid, exc)
-            await on_track(data, "listenbrainz", False, str(exc), False)
+            await on_track(data, ref, False, str(exc), False)
             err += 1
     return ok, err
 
@@ -422,7 +450,7 @@ async def reset_listenbrainz(
 # ---------------------------------------------------------------------------
 
 
-async def execute_relay(
+async def execute_relay(  # pylint: disable=too-many-arguments
     db: AsyncSession,
     source: object,
     targets: list,
@@ -431,6 +459,7 @@ async def execute_relay(
     dry_run: bool = False,
     *,
     allow_mass_undo: bool = False,
+    reapply_drift: bool = False,
 ) -> dict:
     """
     Fetch tracks from source and relay to all targets.
@@ -459,6 +488,7 @@ async def execute_relay(
         progress=progress,
         dry_run=dry_run,
         allow_mass_undo=allow_mass_undo,
+        reapply_drift=reapply_drift,
     )
 
     return {
@@ -478,7 +508,7 @@ async def _results(
     counts = {result.target: result for result in report.targets}
     results = []
     for config in targets:
-        service = target_service(config)
+        service = target_ref(config)
         if service in counts:
             result = counts[service]
             results.append(
@@ -504,7 +534,7 @@ async def _build_targets(
         try:
             ready.append(await adapters.target_for(db, config, relay))
         except ValueError as exc:
-            unconfigured[target_service(config)] = str(exc)
+            unconfigured[target_ref(config)] = str(exc)
     return ready, unconfigured
 
 
@@ -527,7 +557,7 @@ async def _execute_reset(
     on_track: TrackCallback,
     dry_run: bool = False,
 ) -> dict:
-    target_svc = source.target_service
+    target_svc = account_ref(source.target_service, source.target_account)
     mode = "wipe" if source.all else "undo"
     logger.info("Relay: reset (%s) for %s", mode, target_svc)
 

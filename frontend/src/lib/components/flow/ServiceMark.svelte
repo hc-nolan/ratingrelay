@@ -1,7 +1,7 @@
 <script lang="ts">
-	import type { SourceId } from '$lib/types/relay';
+	import type { ServiceMarkId } from '$lib/types/relay';
 
-	type MarkId = SourceId;
+	type MarkId = ServiceMarkId;
 
 	let { service, size = 16 }: { service: MarkId; size?: number } = $props();
 </script>

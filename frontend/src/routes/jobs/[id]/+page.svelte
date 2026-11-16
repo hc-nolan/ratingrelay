@@ -98,7 +98,8 @@
 		not_configured: 'service not configured',
 		write_failed: 'write failed',
 		unrecorded_target: 'no recorded write',
-		mass_undo_refused: 'mass undo refused'
+		mass_undo_refused: 'mass undo refused',
+		target_drift: 'written again — the target had dropped it'
 	};
 
 	function describe(evt: TrackEvent): string {
@@ -181,6 +182,14 @@
 										class="rounded border border-border px-1.5 py-px text-xs font-medium tracking-wide text-muted-foreground uppercase"
 									>
 										Dry run
+									</span>
+								{/if}
+								{#if job.reapply_target_drift}
+									<span
+										class="rounded border border-border px-1.5 py-px text-xs font-medium tracking-wide text-muted-foreground uppercase"
+										title="A write a target has since dropped is written again"
+									>
+										Re-applies drift
 									</span>
 								{/if}
 								{#if job.recurring && job.interval_minutes}

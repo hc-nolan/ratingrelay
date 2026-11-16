@@ -106,6 +106,9 @@ async def _schedule_next(db: AsyncSession, job: Job) -> None:
             recurring=True,
             interval_minutes=job.interval_minutes,
             run_at=next_run,
+            # The drift policy belongs to the relay, so it survives the night;
+            # the mass-undo override does not, by design.
+            reapply_target_drift=job.reapply_target_drift,
         )
     )
     await db.commit()
@@ -252,6 +255,7 @@ async def run_job(job_id: str) -> None:
                 on_track,
                 job.dry_run,
                 allow_mass_undo=job.allow_mass_undo,
+                reapply_drift=job.reapply_target_drift,
             )
 
             # 6. Final status from the counters, which on a resumed attempt

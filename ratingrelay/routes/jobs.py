@@ -24,7 +24,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ratingrelay.core import adapters
-from ratingrelay.core.factory import unsupported_target
+from ratingrelay.core.factory import pairing_refusal
 from ratingrelay.db import get_async_session, session_maker
 from ratingrelay.models.jobs import Job, TrackEvent
 from ratingrelay.schemas.relay import FromConfig, ResetFromConfig, ToConfig, source_adapter as _source_adapter, targets_adapter as _targets_adapter
@@ -132,7 +132,7 @@ async def create_job(
     if not isinstance(body.source, ResetFromConfig):
         relay = adapters.relay_for(body.source)
         for target in body.targets:
-            refusal = unsupported_target(relay, target.service)
+            refusal = pairing_refusal(body.source.service, target.service, relay=relay)
             if refusal:
                 raise HTTPException(status_code=422, detail=refusal)
 

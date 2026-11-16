@@ -36,6 +36,15 @@ from ratingrelay.engine.normalize import (
 )
 from ratingrelay.engine.pipeline import run, run_tracks
 from ratingrelay.engine.plan import WritePlan
+from ratingrelay.engine.refs import (
+    KNOWN_SERVICES,
+    ServiceRef,
+    account_ref,
+    is_primary,
+    mapping_scopes,
+    parse_ref,
+    service_kind,
+)
 from ratingrelay.engine.store import (
     MemoryMappingStore,
     MemorySyncStore,
@@ -62,6 +71,7 @@ __all__ = [
     "Candidate",
     "Intent",
     "IntentKind",
+    "KNOWN_SERVICES",
     "LastFmCredentials",
     "ListenBrainzCredentials",
     "MappingStore",
@@ -76,6 +86,7 @@ __all__ = [
     "ProgressSink",
     "Reason",
     "RunReport",
+    "ServiceRef",
     "SyncStore",
     "SyncedTrack",
     "TargetReport",
@@ -83,11 +94,16 @@ __all__ = [
     "TrackMapping",
     "TrackOutcome",
     "WritePlan",
+    "account_ref",
     "comparison_form",
+    "is_primary",
+    "mapping_scopes",
     "match_track",
     "normalize",
+    "parse_ref",
     "run",
     "run_tracks",
+    "service_kind",
     "track_key",
     "variant_form",
     "variant_key",

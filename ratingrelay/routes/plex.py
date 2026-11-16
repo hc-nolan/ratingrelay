@@ -26,7 +26,6 @@ from ratingrelay.core.session import (
 from ratingrelay.core.thread import run_sync
 from ratingrelay.db import get_async_session
 from ratingrelay.db.credentials import delete_credential, get_credential, upsert_credential
-from ratingrelay.models.services import ServiceName
 from ratingrelay.schemas.plex import (
     PlexAuthInitResponse,
     PlexSelectServerRequest,
@@ -100,7 +99,7 @@ disconnect Plex in RatingRelay first.</p>
 
 async def _get_token(db: AsyncSession) -> str | None:
     """Return the active Plex token: settings override first, then DB."""
-    cred = await get_credential(db, ServiceName.plex)
+    cred = await get_credential(db, "plex")
     return settings.plex_token or (cred.token if cred else None)
 
 
@@ -118,7 +117,7 @@ async def plex_auth_status(
 
     Settings token takes precedence over DB (dev override).
     """
-    cred = await get_credential(db, ServiceName.plex)
+    cred = await get_credential(db, "plex")
     token = settings.plex_token or (cred.token if cred else None)
 
     if not token:
@@ -148,7 +147,7 @@ async def plex_disconnect(
     token there is nothing to verify it against: the app returns to the open
     state a fresh install starts in. The UI warns before calling this.
     """
-    if await delete_credential(db, ServiceName.plex):
+    if await delete_credential(db, "plex"):
         logger.info("Plex credentials removed")
     response.delete_cookie(SESSION_COOKIE)
     return await plex_auth_status(db)
@@ -238,7 +237,7 @@ async def plex_auth_callback(
             return refused
         await upsert_credential(
             db,
-            ServiceName.plex,
+            "plex",
             token=confirmed_token,
             username=account.username,
         )
@@ -298,7 +297,7 @@ async def plex_select_server(
     db: AsyncSession = Depends(get_async_session),
 ) -> PlexStatusResponse:
     """Connect to the named Plex server and store its URL."""
-    cred = await get_credential(db, ServiceName.plex)
+    cred = await get_credential(db, "plex")
     token = settings.plex_token or (cred.token if cred else None)
 
     if not token:
@@ -318,7 +317,7 @@ async def plex_select_server(
 
     cred = await upsert_credential(
         db,
-        ServiceName.plex,
+        "plex",
         token=token,
         username=cred.username if cred else None,
         plex_server_url=server._baseurl,

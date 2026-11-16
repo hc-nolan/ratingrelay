@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ratingrelay.db import get_async_session
 from ratingrelay.db.store import SqlSyncStore
 from ratingrelay.engine.normalize import track_key
+from ratingrelay.engine.refs import service_kind
 from ratingrelay.engine.services.registry import UNDO_PRECONDITIONS
 from ratingrelay.engine.types import Reason
 from ratingrelay.models.jobs import TrackEvent
@@ -144,7 +145,12 @@ async def list_unrevertable(
     """
     refusals: list[UnrevertableRecord] = []
     for target_service, record in await SqlSyncStore(db).all_records():
-        precondition = UNDO_PRECONDITIONS.get(target_service)
+        try:
+            # Records name an account (``lastfm:old``); the rule that decides
+            # whether one can be undone belongs to the service kind.
+            precondition = UNDO_PRECONDITIONS.get(service_kind(target_service))
+        except ValueError:
+            precondition = None
         if precondition is None:
             continue  # a target we no longer write to has nothing to refuse
         try:

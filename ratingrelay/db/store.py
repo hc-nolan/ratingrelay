@@ -11,7 +11,9 @@ from typing import Optional
 
 from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import col
 
+from ratingrelay.engine.refs import mapping_scopes
 from ratingrelay.engine.store import SyncedTrack, TrackMapping
 from ratingrelay.models.mappings import TrackMapping as TrackMappingRow
 from ratingrelay.models.mbids import TrackMbid
@@ -212,23 +214,32 @@ class SqlMbidCache:
 
 
 class SqlMappingStore:
-    """User overrides from the ``track_mapping`` table."""
+    """User overrides from the ``trackmapping`` table."""
 
     def __init__(self, db: AsyncSession):
         self._db = db
 
     async def load(self, target_service: str) -> dict[str, TrackMapping]:
+        """Mappings for a target *ref*: the account's, then its kind's, then ``all``.
+
+        A kind-wide row predates a second account of that service, and applying it
+        to one is what makes moving to a new account work without re-creating the
+        mappings. The most specific scope wins on a track-by-track basis.
+        """
+        scopes = mapping_scopes(target_service)
+        rank = {scope: position for position, scope in enumerate(scopes)}
         result = await self._db.execute(
-            select(TrackMappingRow).where(
-                (TrackMappingRow.target_service == target_service)
-                | (TrackMappingRow.target_service == "all")
-            )
+            select(TrackMappingRow).where(col(TrackMappingRow.target_service).in_(scopes))
         )
-        mappings: dict[str, TrackMapping] = {}
+        best: dict[str, tuple[int, TrackMappingRow]] = {}
         for row in result.scalars().all():
-            # A service-specific mapping wins over an "all" one.
-            if row.source_normalized_key not in mappings or row.target_service == target_service:
-                mappings[row.source_normalized_key] = TrackMapping(
-                    row.mapped_artist, row.mapped_title, row.recording_mbid
-                )
-        return mappings
+            position = rank.get(row.target_service)
+            if position is None:
+                continue
+            current = best.get(row.source_normalized_key)
+            if current is None or position < current[0]:
+                best[row.source_normalized_key] = (position, row)
+        return {
+            key: TrackMapping(row.mapped_artist, row.mapped_title, row.recording_mbid)
+            for key, (_, row) in best.items()
+        }

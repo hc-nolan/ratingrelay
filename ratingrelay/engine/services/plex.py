@@ -7,7 +7,7 @@ used for identity here; the matching ladder decides.
 """
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 from plexapi.exceptions import BadRequest, NotFound
@@ -173,12 +173,17 @@ class PlexLibrary:
 
 @dataclass
 class PlexSource:
-    """Rated tracks from a Plex library."""
+    """Rated tracks from a Plex library.
+
+    ``service`` is the account's ref (``plex``, ``plex:attic``), not just the
+    kind: it is half of the key the sync store is written under, so two Plex
+    servers never reconcile against each other's writes.
+    """
 
     library: PlexLibrary
     threshold: float = DEFAULT_LOVE_RATING
     comparison: str = "gte"
-    service: str = field(default="plex", init=False)
+    service: str = "plex"
 
     async def fetch(self) -> list[Track]:
         rated = await self.library.rated(self.threshold, self.comparison)
@@ -200,7 +205,8 @@ class PlexTarget(MappedTarget):
     writing 8 must not lower a 5-star one.
     """
 
-    service = "plex"
+    # The service this class speaks to, whatever account it is pointed at.
+    KIND = "plex"
 
     def __init__(
         self,
@@ -208,8 +214,10 @@ class PlexTarget(MappedTarget):
         mappings: MappingStore,
         rating: float = DEFAULT_LOVE_RATING,
         direction: str = "love",
+        service: str = KIND,
     ):
         super().__init__(mappings)
+        self.service = service
         self._library = library
         self._rating = rating
         self._direction = direction

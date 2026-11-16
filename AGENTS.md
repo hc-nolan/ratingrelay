@@ -140,8 +140,12 @@ These are the point of the tool. v1 got them right; keep them that way.
   prints, so a clean run prints a short block, `--verbose` adds per-track lines on
   stderr, `--json` prints one document. Never exit 0 on a partial run — 0/1/2 are
   the only signal a scheduler reads.
-- **Credentials**: one `ServiceCredential` row per service, read through
-  `ratingrelay.db.credentials`. Settings take precedence over the DB row.
+- **Credentials**: one `ServiceAccount` row per connected account, addressed by
+  its **ref** (`lastfm`, `lastfm:old` — see `engine/refs.py`) and read through
+  `ratingrelay.db.credentials`. Settings take precedence over the DB row, and only
+  for the account whose ref is the bare kind: an env var cannot name a second
+  account. The ref is what sync records, mappings and job configs key on, so it is
+  immutable and a removed account is soft-deleted rather than losing its row.
 - **Auth is the Plex account, not a password store**: the API needs a session
   (`core/session.py`, signed with `settings.secret` + the Plex token) once a Plex
   credential exists. Sign with the **stored** token (`owner_token(db)`), never the

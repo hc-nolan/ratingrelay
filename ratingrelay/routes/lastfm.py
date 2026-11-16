@@ -7,7 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ratingrelay.core.thread import run_sync
 from ratingrelay.db import get_async_session
 from ratingrelay.db.credentials import delete_credential, get_credential, upsert_credential
-from ratingrelay.models.services import ServiceName
 from ratingrelay.schemas.lastfm import LastFMAuthRequest, LastFMStatusResponse
 from ratingrelay.settings import get_settings, logger
 
@@ -20,7 +19,7 @@ router = APIRouter(prefix="/api/lastfm", tags=["lastfm"])
 async def lastfm_auth_status(
     db: AsyncSession = Depends(get_async_session),
 ) -> LastFMStatusResponse:
-    cred = await get_credential(db, ServiceName.lastfm)
+    cred = await get_credential(db, "lastfm")
     # Settings values take precedence (dev override); fall back to DB
     api_key = settings.lastfm_token or (cred.token if cred else None)
     api_secret = settings.lastfm_secret or (cred.secret if cred else None)
@@ -86,7 +85,7 @@ async def lastfm_auth(
 
     await upsert_credential(
         db,
-        ServiceName.lastfm,
+        "lastfm",
         token=body.api_key,
         secret=body.api_secret,
         username=username,
@@ -106,6 +105,6 @@ async def lastfm_disconnect(
     reconnected account has to be able to undo those rather than rediscover
     them as if they were the user's own.
     """
-    if await delete_credential(db, ServiceName.lastfm):
+    if await delete_credential(db, "lastfm"):
         logger.info("Last.fm credentials removed")
     return await lastfm_auth_status(db)

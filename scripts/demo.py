@@ -51,7 +51,7 @@ from sqlmodel import Session, create_engine
 import ratingrelay.main as app_module
 import ratingrelay.routes.plex as plex_routes
 from ratingrelay.models.jobs import Job, TrackEvent
-from ratingrelay.models.services import ServiceCredential, ServiceName
+from ratingrelay.models.services import ServiceAccount, ServiceName
 
 
 class _FakeLastFM:
@@ -135,11 +135,11 @@ def _job(engine, *, ago, status, targets, dry_run=False, ok=0, err=0, skipped=0,
 def seed() -> None:
     engine = create_engine(f"sqlite:///{DB_PATH}")
     with Session(engine) as db:
-        db.add(ServiceCredential(service=ServiceName.plex, token="demo", username="demo-listener",
+        db.add(ServiceAccount(id="plex", service=ServiceName.plex, label="Plex", token="demo", username="demo-listener",
                                  plex_server_url="http://plex.demo:32400", plex_server_name="Living room"))
-        db.add(ServiceCredential(service=ServiceName.lastfm, token="demo", secret="demo",
+        db.add(ServiceAccount(id="lastfm", service=ServiceName.lastfm, label="Last.fm", token="demo", secret="demo",
                                  username="demo-listener", password_hash="demo"))
-        db.add(ServiceCredential(service=ServiceName.listenbrainz, token="demo", username="demo-listener"))
+        db.add(ServiceAccount(id="listenbrainz", service=ServiceName.listenbrainz, label="ListenBrainz", token="demo", username="demo-listener"))
         db.commit()
 
     targets = ["lastfm", "listenbrainz"]

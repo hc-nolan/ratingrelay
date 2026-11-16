@@ -10,6 +10,7 @@ database.
 from dataclasses import dataclass, field
 from typing import Optional, Protocol
 
+from ratingrelay.engine.refs import mapping_scopes
 from ratingrelay.engine.types import Track, TrackOutcome
 
 
@@ -71,10 +72,14 @@ class SyncStore(Protocol):
 
 
 class MappingStore(Protocol):
-    """User overrides, resolved for one target service."""
+    """User overrides, resolved for one target account."""
 
     async def load(self, target_service: str) -> dict[str, TrackMapping]:
-        """Return ``{normalized_key: mapping}`` with ``all`` overridden by the service."""
+        """Return ``{normalized_key: mapping}`` for a target *ref*.
+
+        The account's own mappings win over its kind's, which win over ``all``
+        (:func:`ratingrelay.engine.refs.mapping_scopes`).
+        """
 
 
 class MbidCache(Protocol):
@@ -161,4 +166,8 @@ class MemoryMappingStore:
     mappings: dict[str, dict[str, TrackMapping]] = field(default_factory=dict)
 
     async def load(self, target_service: str) -> dict[str, TrackMapping]:
-        return dict(self.mappings.get(target_service, {}))
+        merged: dict[str, TrackMapping] = {}
+        # Least specific first, so the most specific scope is what survives.
+        for scope in reversed(mapping_scopes(target_service)):
+            merged.update(self.mappings.get(scope, {}))
+        return merged

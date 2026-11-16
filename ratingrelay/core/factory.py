@@ -29,10 +29,13 @@ from ratingrelay.engine.services.listenbrainz import (
 from ratingrelay.engine.services.musicbrainz import resolve_recording_mbid
 from ratingrelay.engine.services.plex import PlexLibrary, PlexSource, PlexTarget
 from ratingrelay.core.thresholds import effective_thresholds
+from ratingrelay.engine.refs import KNOWN_SERVICES, parse_ref, service_kind
 from ratingrelay.settings import get_settings
 
-SOURCE_SERVICES = ("plex", "lastfm", "listenbrainz")
-TARGET_SERVICES = ("plex", "lastfm", "listenbrainz")
+# Kept as the names the CLI and the request schemas import. A *ref* is one of
+# these kinds, optionally followed by ``:account`` (see ``engine.refs``).
+SOURCE_SERVICES = KNOWN_SERVICES
+TARGET_SERVICES = KNOWN_SERVICES
 
 
 def relay_identity(service: str, *, feedback_type: str = "love") -> str:
@@ -42,10 +45,15 @@ def relay_identity(service: str, *, feedback_type: str = "love") -> str:
     nothing finer. Two relays on one pair that read opposite directions must not
     reconcile against each other's writes; one relay whose threshold moved must,
     because a track that no longer passes is a withdrawal to undo.
+
+    The account is deliberately not part of it: a sync record is keyed by the
+    pair of refs as well, so two accounts of one kind are already told apart,
+    and folding a ref in here would orphan records the day a label changed.
     """
-    if service == "lastfm":
+    kind = service_kind(service)
+    if kind == "lastfm":
         return "love"
-    if service in ("plex", "listenbrainz"):
+    if kind in ("plex", "listenbrainz"):
         return "love" if feedback_type == "love" else "hate"
     raise ValueError(f"Unknown source service: {service}")
 
@@ -56,10 +64,27 @@ LOVE_ONLY_TARGETS = ("lastfm",)
 
 
 def unsupported_target(relay: str, target: str) -> Optional[str]:
-    """Why *target* cannot receive a run of *relay*, or ``None`` if it can."""
-    if relay == "hate" and target in LOVE_ONLY_TARGETS:
+    """Why *target* (a ref) cannot receive a run of *relay*, or ``None`` if it can.
+
+    Compared by kind: a hate relay cannot reach any Last.fm account, however the
+    account is named.
+    """
+    if relay == "hate" and service_kind(target) in LOVE_ONLY_TARGETS:
         return f"{target} has no hate to write; a hate relay cannot target it"
     return None
+
+
+def pairing_refusal(source: str, target: str, *, relay: str) -> Optional[str]:
+    """Why *source* → *target* cannot be a run of *relay*, or ``None`` if it can.
+
+    The one place a pairing is judged, so the API, the queue and the CLI cannot
+    disagree. Read from *refs*, not kinds: ``plex`` → ``plex:attic`` is the whole
+    point of a second account, while ``plex`` → ``plex`` is that account
+    relaying into itself and is refused.
+    """
+    if parse_ref(source).ref == parse_ref(target).ref:
+        return f"{source} is both the source and a target"
+    return unsupported_target(relay, target)
 
 
 async def plex_threshold(db: AsyncSession, relay: str) -> float:
@@ -110,22 +135,27 @@ async def source_for_service(
     *,
     feedback_type: str = "love",
 ) -> Source:
-    """Build a source by name.
+    """Build a source from a ref (``plex``, ``listenbrainz:old``).
 
     *feedback_type* is the direction to read, for every source that has one:
     Plex loves are rated at least the love threshold, hates at most the hate
     threshold (:func:`plex_threshold`).
     """
-    if service == "plex":
-        library = PlexLibrary(await plex_credentials(db))
-        relay = relay_identity("plex", feedback_type=feedback_type)
+    kind = service_kind(service)
+    if kind == "plex":
+        library = PlexLibrary(await plex_credentials(db, service))
+        relay = relay_identity(service, feedback_type=feedback_type)
         comparison = "gte" if relay == "love" else "lte"
-        return PlexSource(library, await plex_threshold(db, relay), comparison)
-    if service == "lastfm":
-        return LastFmSource(LastFmClient(await lastfm_credentials(db)))
-    if service == "listenbrainz":
-        client = ListenBrainzClient(await listenbrainz_credentials(db))
-        return ListenBrainzSource(client, _score(feedback_type))
+        return PlexSource(
+            library, await plex_threshold(db, relay), comparison, service=service
+        )
+    if kind == "lastfm":
+        return LastFmSource(
+            LastFmClient(await lastfm_credentials(db, service)), service=service
+        )
+    if kind == "listenbrainz":
+        client = ListenBrainzClient(await listenbrainz_credentials(db, service))
+        return ListenBrainzSource(client, _score(feedback_type), service=service)
     raise ValueError(f"Unknown source service: {service}")
 
 
@@ -136,33 +166,44 @@ async def target_for_service(
     plex_library: Optional[PlexLibrary] = None,
     relay: str = "love",
 ) -> Target:
-    """Build a target by name, wired to the mappings store and MBID cache.
+    """Build a target from a ref, wired to the mappings store and MBID cache.
 
     *relay* is the run's :func:`relay_identity`. A Plex target writes that
     direction's threshold (:func:`plex_threshold`), and needs the direction to
     know whether a copy already rated above (love) or below (hate) it holds it.
     A ListenBrainz target writes that direction's feedback: there is no separate
     target direction, so a target can never write the opposite of its source.
+
+    *service* is a ref, so ``plex`` → ``plex:attic`` is built from the attic's
+    own credentials and gets its own Plex library and mapping records.
     """
     refusal = unsupported_target(relay, service)
     if refusal:
         # Also here, not only where configs are accepted: a job stored before
         # the pairing was refused must fail, not love what the user hates.
         raise ValueError(refusal)
+    kind = service_kind(service)
     _, mappings = stores(db)
-    if service == "plex":
-        library = plex_library or PlexLibrary(await plex_credentials(db))
-        return PlexTarget(library, mappings, await plex_threshold(db, relay), relay)
-    if service == "lastfm":
-        client = LastFmClient(await lastfm_credentials(db))
-        return LastFmTarget(client, mappings)
-    if service == "listenbrainz":
-        client = ListenBrainzClient(await listenbrainz_credentials(db))
+    if kind == "plex":
+        library = plex_library or PlexLibrary(await plex_credentials(db, service))
+        return PlexTarget(
+            library,
+            mappings,
+            await plex_threshold(db, relay),
+            relay,
+            service=service,
+        )
+    if kind == "lastfm":
+        client = LastFmClient(await lastfm_credentials(db, service))
+        return LastFmTarget(client, mappings, service=service)
+    if kind == "listenbrainz":
+        client = ListenBrainzClient(await listenbrainz_credentials(db, service))
         return ListenBrainzTarget(
             client,
             mappings,
             resolve_recording_mbid,
             _score(relay),
             cache=mbid_cache(db),
+            service=service,
         )
     raise ValueError(f"Unknown target service: {service}")

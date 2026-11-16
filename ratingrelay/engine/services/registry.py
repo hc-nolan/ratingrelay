@@ -17,10 +17,12 @@ from ratingrelay.engine.services.plex import PlexTarget
 from ratingrelay.engine.store import SyncedTrack
 
 # Raises ValueError exactly when the target's undo would refuse the record.
+# Keyed by *kind*: a record names an account (``lastfm:old``), and the rule that
+# decides whether it can be undone belongs to the service.
 UndoPrecondition = Callable[[SyncedTrack], None]
 
 UNDO_PRECONDITIONS: dict[str, UndoPrecondition] = {
-    PlexTarget.service: PlexTarget.undoable,
-    LastFmTarget.service: LastFmTarget.undoable,
-    ListenBrainzTarget.service: ListenBrainzTarget.undoable,
+    PlexTarget.KIND: PlexTarget.undoable,
+    LastFmTarget.KIND: LastFmTarget.undoable,
+    ListenBrainzTarget.KIND: ListenBrainzTarget.undoable,
 }

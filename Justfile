@@ -21,15 +21,17 @@ api:
 
 # Run the SvelteKit dev server on :5173, proxying /api to the API.
 web:
-    cd frontend && BACKEND_URL="http://localhost:$({{port_cmd}})" pnpm dev
+    port="$({{port_cmd}})" && cd frontend && BACKEND_URL="http://localhost:$port" pnpm dev
 
 # Run the API and the dev server together. Ctrl-C stops both.
 dev:
     #!/usr/bin/env bash
     set -euo pipefail
     trap 'kill 0' EXIT INT TERM
+    # Before the cd: settings read .config from the working directory.
+    port="$({{port_cmd}})"
     uv run app.py &
-    (cd frontend && BACKEND_URL="http://localhost:$({{port_cmd}})" pnpm dev) &
+    (cd frontend && BACKEND_URL="http://localhost:$port" pnpm dev) &
     wait
 
 # Backend tests.

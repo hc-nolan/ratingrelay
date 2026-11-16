@@ -58,6 +58,8 @@ relay-check *args:
 check:
     cd frontend && pnpm check
     cd frontend && pnpm lint
+    cd frontend && pnpm exec prettier --check ../scripts/screenshots.mjs
+    node --check scripts/screenshots.mjs
 
 # Build the frontend bundle that FastAPI serves.
 build:
@@ -69,33 +71,11 @@ migrate:
 
 # Demo: API on :8199 with a seeded throwaway database, Vite on :5174. No real services are called.
 demo:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    trap 'kill 0' EXIT INT TERM
-    uv run python scripts/demo.py &
-    (cd frontend && BACKEND_URL="http://localhost:8199" pnpm exec vite dev --port 5174 --strictPort) &
-    wait
+    bash scripts/demo-stack.sh
 
 # Re-shoot docs/screenshots from a seeded demo stack this recipe starts and stops.
 screenshots:
-    #!/usr/bin/env bash
-    set -euo pipefail
     # Any Chrome or Chromium works: CHROMIUM=/path/to/chrome just screenshots.
-    # Each server starts in its own session (setsid) and is stopped by killing that
-    # session: `kill 0`, as `just dev` does, would take the caller's shell with it.
-    setsid uv run python scripts/demo.py >/dev/null 2>&1 &
-    api_pid=$!
-    setsid bash -c 'cd frontend && BACKEND_URL="http://localhost:8199" pnpm exec vite dev --port 5174 --strictPort' >/dev/null 2>&1 &
-    web_pid=$!
-    cleanup() {
-        kill -- "-$api_pid" "-$web_pid" 2>/dev/null || true
-    }
-    trap cleanup EXIT INT TERM
-    for _ in $(seq 1 60); do
-        curl -fsS http://localhost:8199/api/auth/status >/dev/null 2>&1 &&
-            curl -fsS http://localhost:5174/ >/dev/null 2>&1 && break
-        sleep 1
-    done
-    node scripts/screenshots.mjs
+    bash scripts/demo-stack.sh --wait-ready node scripts/screenshots.mjs
     git status --short docs/screenshots
 

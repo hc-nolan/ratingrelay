@@ -1,13 +1,15 @@
 /**
  * Refresh the README screenshots from the demo database.
  *
- *     just screenshots          # starts `just demo`, captures, tears it down
+ *     just screenshots          # serves the demo stack, captures, tears it down
  *     node scripts/screenshots.mjs   # against a demo already running on :5174
  *
  * Playwright drives a real Chromium so the pages are captured as a person sees
  * them: a target has to be picked on the relay page, the partial run opened, and
  * the ambiguous track expanded, none of which is in the URL. Every value shown
- * comes from `scripts/demo.py`, so nothing here talks to a real service.
+ * comes from `scripts/demo.py`, so nothing here talks to a real service. Each
+ * page is asserted on before it is captured: a screenshot of an empty state is a
+ * silent failure, not a smaller one.
  *
  * `playwright-core` is a frontend dev dependency; it is resolved from there
  * because the repo has no root package.json. Any Chrome or Chromium works —
@@ -32,17 +34,24 @@ async function launch() {
   if (executablePath) return chromium.launch({ executablePath });
   // A stock Chrome is the likeliest thing on a machine that already runs this;
   // /usr/bin/chromium covers the distributions that ship one.
+  const failures = [];
   for (const options of [
     { channel: "chrome" },
     { executablePath: "/usr/bin/chromium" },
   ]) {
     try {
       return await chromium.launch(options);
-    } catch {
-      // try the next one
+    } catch (error) {
+      // "Chrome is installed but will not start" (a missing shared library, a
+      // refused sandbox) must not be reported as "no browser here".
+      failures.push(
+        `${JSON.stringify(options)}: ${error.message.split("\n")[0]}`,
+      );
     }
   }
-  throw new Error("No Chromium found. Set CHROMIUM=/path/to/chrome.");
+  throw new Error(
+    `Could not launch a browser; set CHROMIUM=/path/to/chrome:\n${failures.join("\n")}`,
+  );
 }
 
 /** The demo run that shows all three outcomes, which is what the run page is for. */
@@ -53,7 +62,13 @@ async function interestingJob() {
   const jobs = await res.json();
   const runs = (
     Array.isArray(jobs) ? jobs : (jobs.items ?? jobs.jobs ?? [])
-  ).filter((job) => !job.dry_run && job.tracks_fetched > 0);
+  ).filter(
+    (job) =>
+      // A running job opens an SSE stream, so `networkidle` would never settle.
+      ["completed", "partial"].includes(job.status) &&
+      !job.dry_run &&
+      job.tracks_fetched > 0,
+  );
   runs.sort((a, b) => (b.tracks_err ?? 0) - (a.tracks_err ?? 0));
   if (!runs.length)
     throw new Error("No completed run in the demo database to screenshot.");
@@ -90,6 +105,15 @@ async function open(route) {
   await settle();
 }
 
+/** Something an empty or stale instance would not have on the page. */
+async function expectVisible(locator, what) {
+  try {
+    await locator.first().waitFor({ state: "visible", timeout: 10_000 });
+  } catch {
+    throw new Error(`${what} is not on the page at ${page.url()}`);
+  }
+}
+
 try {
   // The relay page: a target has to be switched on for the flow to read as a
   // relay rather than as a menu of empty slots.
@@ -101,30 +125,46 @@ try {
     if (!(await add.count()))
       throw new Error(`No "${name}" target card on the relay page`);
     await add.first().click();
+    await expectVisible(
+      page.getByRole("button", { name: `Remove ${name}` }),
+      `the picked ${name} destination`,
+    );
   }
   await shot("relay");
 
   await open("/history");
+  await expectVisible(
+    page.locator('a[href*="/jobs/"]'),
+    "a run in the history",
+  );
   await shot("history");
 
   await open(`/jobs/${await interestingJob()}`);
+  await expectVisible(page.getByText("Track log"), "the track log of the run");
   await shot("run");
 
   // The unmatched page: open the track that has candidates, because picking one
   // is the only thing that page does.
   await open("/unmatched");
-  const ambiguous = page
+  const row = page
     .locator("button[aria-expanded]", { hasText: "candidates" })
     .first();
-  const row = (await ambiguous.count())
-    ? ambiguous
-    : page.locator('button[aria-expanded="false"]').first();
-  if (!(await row.count())) throw new Error("No unmatched track to expand");
+  if (!(await row.count()))
+    throw new Error("No unmatched track with candidates to expand");
   await row.click();
-  await page.waitForTimeout(250);
+  await expectVisible(
+    page.getByText("Did you mean"),
+    "the candidates of the opened track",
+  );
   await shot("unmatched");
 
   await open("/services");
+  for (const name of ["Plex", "Last.fm", "ListenBrainz"]) {
+    await expectVisible(
+      page.getByText(name, { exact: true }),
+      `the ${name} service`,
+    );
+  }
   await shot("services");
 } finally {
   await browser.close();

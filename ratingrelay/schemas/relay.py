@@ -2,10 +2,12 @@ from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, Field, TypeAdapter
 
+from ratingrelay.engine.types import DEFAULT_LOVE_RATING
+
 
 class PlexFromConfig(BaseModel):
     service: Literal["plex"]
-    rating_threshold: float = Field(default=8.0, ge=1.0, le=10.0)
+    rating_threshold: float = Field(default=DEFAULT_LOVE_RATING, ge=1.0, le=10.0)
     comparison: Literal["gte", "lte"] = "gte"
 
 
@@ -39,7 +41,7 @@ FromConfig = Annotated[
 
 class PlexToConfig(BaseModel):
     service: Literal["plex"]
-    rating: float = Field(default=10.0, ge=1.0, le=10.0)
+    rating: float = Field(default=DEFAULT_LOVE_RATING, ge=1.0, le=10.0)
 
 
 class LastFMToConfig(BaseModel):

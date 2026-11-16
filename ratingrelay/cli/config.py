@@ -18,6 +18,8 @@ from pathlib import Path
 import tomllib
 from typing import Any
 
+from ratingrelay.engine.types import DEFAULT_LOVE_RATING
+
 DEFAULT_CONFIG = "relays.toml"
 
 SOURCE_SERVICES = ("plex", "lastfm", "listenbrainz")
@@ -55,12 +57,12 @@ class RelaySpec:  # pylint: disable=too-many-instance-attributes
     targets: tuple[str, ...] = ("lastfm",)
     dry_run: bool = False
     # Plex as a source.
-    rating_threshold: float = 8.0
+    rating_threshold: float = DEFAULT_LOVE_RATING
     comparison: str = "gte"
     # Last.fm / ListenBrainz feedback, as a source or a target.
     feedback_type: str = "love"
     # Plex as a target.
-    plex_rating: float = 10.0
+    plex_rating: float = DEFAULT_LOVE_RATING
     # Only ever set from the command line, never from relays.toml: a file key
     # would switch the guard off for every unattended run after this one.
     allow_mass_undo: bool = False

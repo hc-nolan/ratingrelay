@@ -29,6 +29,7 @@ def _synced(row: SyncRecord) -> SyncedTrack:
         intent=row.intent,
         rating=row.rating,
         target_key=row.target_key,
+        prior=row.prior,
     )
 
 
@@ -110,6 +111,7 @@ class SqlSyncStore:
                 intent=synced.intent,
                 rating=synced.rating,
                 target_key=synced.target_key,
+                prior=synced.prior,
             )
         )
         await self._db.commit()

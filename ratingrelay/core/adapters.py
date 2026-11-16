@@ -66,10 +66,10 @@ def relay_for(config: object) -> str:
     raise ValueError(f"Unknown source service: {config}")
 
 
-async def target_for(db: AsyncSession, config: object) -> Target:
-    """Build the target described by a request config."""
+async def target_for(db: AsyncSession, config: object, relay: str = "love") -> Target:
+    """Build the target described by a request config, for a run of *relay*."""
     if isinstance(config, PlexToConfig):
-        return await target_for_service(db, "plex", plex_rating=config.rating)
+        return await target_for_service(db, "plex", plex_rating=config.rating, relay=relay)
     if isinstance(config, LastFMToConfig):
         return await target_for_service(db, "lastfm")
     if isinstance(config, ListenBrainzToConfig):

@@ -449,7 +449,7 @@ async def execute_relay(
     progress: ProgressSink = CallbackProgress(on_fetch_complete, on_track)
     await progress.fetch_complete(len(tracks))
 
-    ready, unconfigured = await _build_targets(db, targets)
+    ready, unconfigured = await _build_targets(db, targets, adapters.relay_for(source))
 
     report = await pipeline.run_tracks(
         tracks,
@@ -495,12 +495,14 @@ async def _results(
     return results
 
 
-async def _build_targets(db: AsyncSession, targets: list) -> tuple[list, dict[str, str]]:
+async def _build_targets(
+    db: AsyncSession, targets: list, relay: str
+) -> tuple[list, dict[str, str]]:
     """The targets that could be built, and why each of the others could not."""
     ready, unconfigured = [], {}
     for config in targets:
         try:
-            ready.append(await adapters.target_for(db, config))
+            ready.append(await adapters.target_for(db, config, relay))
         except ValueError as exc:
             unconfigured[target_service(config)] = str(exc)
     return ready, unconfigured

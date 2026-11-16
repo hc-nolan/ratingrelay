@@ -26,6 +26,18 @@ Commit = Callable[[], Awaitable[None]]
 
 
 @dataclass(frozen=True, slots=True)
+class Existing:
+    """What the target held for this track before the plan was made."""
+
+    # The target already holds this intent (or better). Without a record of our
+    # own it is the user's state: the pipeline skips it and records nothing.
+    holds: bool = False
+    # What a write would replace, opaque per target like ``target_key``; undo
+    # restores it rather than clearing.
+    prior: Optional[str] = None
+
+
+@dataclass(frozen=True, slots=True)
 class WritePlan:
     """One target's decision about one track."""
 
@@ -42,6 +54,7 @@ class WritePlan:
     # pipeline move an existing write to a new target_key: a human correction
     # re-points, a matcher's change of mind never does.
     mapped: bool = False
+    existing: Existing = Existing()
     commit: Optional[Commit] = field(default=None, repr=False, compare=False)
 
     @property

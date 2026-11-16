@@ -38,6 +38,9 @@ class FakeListenBrainzClient:
             raise RuntimeError(self._fail_with)
         self.submissions.append((score, mbid))
 
+    async def feedback(self, score: int) -> list:
+        return []
+
 
 class CountingResolver:
     def __init__(self, mbid: str = "looked-up"):

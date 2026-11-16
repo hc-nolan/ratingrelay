@@ -11,7 +11,7 @@ from typing import Callable, Awaitable, Optional
 from liblistenbrainz import ListenBrainz
 
 from ratingrelay.engine.credentials import ListenBrainzCredentials
-from ratingrelay.engine.plan import WritePlan
+from ratingrelay.engine.plan import Existing, WritePlan
 from ratingrelay.engine.services import MappedTarget
 from ratingrelay.engine.services.musicbrainz import Resolution
 from ratingrelay.engine.store import MappingStore, MbidCache, NullMbidCache, SyncedTrack
@@ -107,6 +107,18 @@ class ListenBrainzTarget(MappedTarget):
         self._resolve = resolve
         self._score = score
         self._cache = cache or NullMbidCache()
+        self._feedback: Optional[dict[str, int]] = None
+
+    async def feedback(self) -> dict[str, int]:
+        """``{recording_mbid: score}`` for the account's loves and hates, once per run."""
+        if self._feedback is None:
+            feedback: dict[str, int] = {}
+            for score in (1, -1):
+                for item in await self._client.feedback(score):
+                    if item.recording_mbid:
+                        feedback[item.recording_mbid] = score
+            self._feedback = feedback
+        return self._feedback
 
     async def resolution(self, track: Track) -> Resolution:
         """The recording this track is, or the ones it was nearly.
@@ -155,6 +167,7 @@ class ListenBrainzTarget(MappedTarget):
             await cache.put(track.key, track.artist, track.title, mbid)
 
         kind = IntentKind.LOVE if score > 0 else IntentKind.HATE
+        held = (await self.feedback()).get(mbid)
         return WritePlan(
             track,
             self.service,
@@ -162,6 +175,11 @@ class ListenBrainzTarget(MappedTarget):
             intent=Intent(kind),
             target_key=mbid,
             mapped=await self.has_mapping(track),
+            # Loving over the user's hate (or the reverse) must hand it back on undo.
+            existing=Existing(
+                holds=held == score,
+                prior=str(held) if held is not None else None,
+            ),
             commit=commit,
         )
 
@@ -187,5 +205,7 @@ class ListenBrainzTarget(MappedTarget):
         ListenBrainzTarget._recorded_mbid(record)
 
     async def undo(self, record: SyncedTrack) -> None:
-        """Submit a neutral score for the recording we gave feedback on."""
-        await self._client.submit(0, self._recorded_mbid(record))
+        """Put back the score the recording held before us: neutral, unless the
+        user had the opposite feedback there."""
+        prior = int(record.prior) if record.prior else 0
+        await self._client.submit(prior, self._recorded_mbid(record))

@@ -89,6 +89,7 @@
 
 	const REASON_LABEL: Record<string, string> = {
 		already_synced: 'already in sync',
+		already_on_target: 'already on target, left as is',
 		withdrawn: 'rating withdrawn',
 		no_match: 'no match found',
 		ambiguous_match: 'ambiguous match',

@@ -36,4 +36,5 @@ class SyncRecord(SQLModel, table=True):
     intent: Optional[str] = Field(default=None)
     rating: Optional[float] = Field(default=None)
     target_key: Optional[str] = Field(default=None)   # opaque per target
+    prior: Optional[str] = Field(default=None)        # what we replaced; opaque per target
     synced_at: datetime = Field(default_factory=_utcnow)

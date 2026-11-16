@@ -14,7 +14,8 @@ from typing import Optional
 import pylast
 
 from ratingrelay.engine.credentials import LastFmCredentials
-from ratingrelay.engine.plan import WritePlan
+from ratingrelay.engine.normalize import track_key
+from ratingrelay.engine.plan import Existing, WritePlan
 from ratingrelay.engine.services import MappedTarget
 from ratingrelay.engine.store import MappingStore, SyncedTrack
 from ratingrelay.engine.thread import run_sync
@@ -110,6 +111,13 @@ class LastFmTarget(MappedTarget):
     def __init__(self, client: LastFmClient, mappings: MappingStore):
         super().__init__(mappings)
         self._client = client
+        self._loved: Optional[set[str]] = None
+
+    async def loved_keys(self) -> set[str]:
+        """The account's loves as normalized keys, fetched once per run."""
+        if self._loved is None:
+            self._loved = {loved.key for loved in await self._client.loved()}
+        return self._loved
 
     async def plan(self, track: Track) -> WritePlan:
         artist, title, _ = await self.mapped(track)
@@ -131,6 +139,7 @@ class LastFmTarget(MappedTarget):
             intent=Intent(IntentKind.LOVE),
             target_key=json.dumps([artist, title]),
             mapped=await self.has_mapping(track),
+            existing=Existing(holds=track_key(artist, title) in await self.loved_keys()),
             commit=commit,
         )
 

@@ -15,11 +15,12 @@ from plexapi.server import PlexServer
 
 from ratingrelay.engine.credentials import PlexCredentials
 from ratingrelay.engine.matching import MatchStatus, match_track
-from ratingrelay.engine.plan import WritePlan
+from ratingrelay.engine.plan import Existing, WritePlan
 from ratingrelay.engine.services import MappedTarget
 from ratingrelay.engine.store import MappingStore, SyncedTrack
 from ratingrelay.engine.thread import run_sync
 from ratingrelay.engine.types import (
+    DEFAULT_LOVE_RATING,
     Candidate,
     Intent,
     IntentKind,
@@ -159,13 +160,18 @@ class PlexLibrary:
             raise KeyError(f"Plex track {external_id} is not in the library")
         await run_sync(lambda: plex_track.rate(rating))
 
+    async def current_rating(self, external_id: str) -> Optional[float]:
+        """A track's rating as of this run's listing, or ``None`` if unrated or gone."""
+        plex_track = (await self.index()).get(external_id)
+        return getattr(plex_track, "userRating", None) if plex_track is not None else None
+
 
 @dataclass
 class PlexSource:
     """Rated tracks from a Plex library."""
 
     library: PlexLibrary
-    threshold: float = 8.0
+    threshold: float = DEFAULT_LOVE_RATING
     comparison: str = "gte"
     service: str = field(default="plex", init=False)
 
@@ -174,15 +180,40 @@ class PlexSource:
         return [_to_track(track) for track in rated]
 
 
+def _same_rating(a: Optional[float], b: Optional[float]) -> bool:
+    """Equal ratings, with unrated as 0 and room for float noise from the server."""
+    return abs((a or 0) - (b or 0)) < 0.01
+
+
 class PlexTarget(MappedTarget):
-    """Writes a rating to every copy of a track in the library."""
+    """Writes a rating to every copy of a track that does not already hold it.
+
+    "Holds it" depends on the relay's direction: a love relay wants a copy rated
+    *at least* the rating, a hate relay *at most* (and rated at all). A copy
+    already on the right side is the user's and is left untouched — a love
+    relay writing 10 must not bump a 4-star track the user chose, and one
+    writing 8 must not lower a 5-star one.
+    """
 
     service = "plex"
 
-    def __init__(self, library: PlexLibrary, mappings: MappingStore, rating: float = 10.0):
+    def __init__(
+        self,
+        library: PlexLibrary,
+        mappings: MappingStore,
+        rating: float = DEFAULT_LOVE_RATING,
+        direction: str = "love",
+    ):
         super().__init__(mappings)
         self._library = library
         self._rating = rating
+        self._direction = direction
+
+    def holds(self, current: Optional[float]) -> bool:
+        """Whether a copy rated *current* already holds this target's intent."""
+        if self._direction == "hate":
+            return current is not None and 0 < current <= self._rating
+        return current is not None and current >= self._rating
 
     async def plan(self, track: Track) -> WritePlan:
         artist, title, _ = await self.mapped(track)
@@ -212,9 +243,11 @@ class PlexTarget(MappedTarget):
         rating = self._rating
         external_ids = [match.external_id for match in outcome.matches]
         target_key = json.dumps(external_ids)
+        prior = {match.external_id: match.rating for match in outcome.matches}
+        to_write = [key for key in external_ids if not self.holds(prior[key])]
 
         async def commit() -> None:
-            for external_id in external_ids:
+            for external_id in to_write:
                 await self._library.rate(external_id, rating)
 
         return WritePlan(
@@ -224,6 +257,7 @@ class PlexTarget(MappedTarget):
             intent=Intent(IntentKind.RATING, rating),
             target_key=target_key,
             mapped=await self.has_mapping(track),
+            existing=Existing(holds=not to_write, prior=json.dumps(prior)),
             commit=commit,
         )
 
@@ -244,9 +278,24 @@ class PlexTarget(MappedTarget):
         PlexTarget._rating_keys(record)
 
     async def undo(self, record: SyncedTrack) -> None:
-        """Clear the rating on every copy this tool rated, and only those.
+        """Put back what each copy held before we rated it.
 
-        A copy that has left the library is skipped by :meth:`PlexLibrary.rate`.
+        A copy whose rating is no longer the one we wrote was changed by the user
+        after us, so it is theirs and is left alone. A record without a prior
+        (written before priors were kept) clears, as it always did. A copy that
+        has left the library is skipped by :meth:`PlexLibrary.rate`.
         """
+        prior = json.loads(record.prior) if record.prior else {}
         for external_id in self._rating_keys(record):
-            await self._library.rate(external_id, None)
+            current = await self._library.current_rating(external_id)
+            if record.rating is not None and not _same_rating(current, record.rating):
+                if external_id in prior and _same_rating(current, prior[external_id]):
+                    continue  # never written (it already held it); nothing to undo
+                logger.info(
+                    "Plex track %s is rated %s, not the %s we wrote; leaving it",
+                    external_id,
+                    current,
+                    record.rating,
+                )
+                continue
+            await self._library.rate(external_id, prior.get(external_id))

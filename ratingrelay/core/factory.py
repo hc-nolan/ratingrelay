@@ -28,6 +28,7 @@ from ratingrelay.engine.services.listenbrainz import (
 )
 from ratingrelay.engine.services.musicbrainz import resolve_recording_mbid
 from ratingrelay.engine.services.plex import PlexLibrary, PlexSource, PlexTarget
+from ratingrelay.engine.types import DEFAULT_LOVE_RATING
 
 SOURCE_SERVICES = ("plex", "lastfm", "listenbrainz")
 TARGET_SERVICES = ("plex", "lastfm", "listenbrainz")
@@ -81,7 +82,7 @@ async def source_for_service(
     db: AsyncSession,
     service: str,
     *,
-    rating_threshold: float = 8.0,
+    rating_threshold: float = DEFAULT_LOVE_RATING,
     comparison: str = "gte",
     feedback_type: str = "love",
 ) -> Source:
@@ -101,15 +102,20 @@ async def target_for_service(
     db: AsyncSession,
     service: str,
     *,
-    plex_rating: float = 10.0,
+    plex_rating: float = DEFAULT_LOVE_RATING,
     feedback_type: str = "love",
     plex_library: Optional[PlexLibrary] = None,
+    relay: str = "love",
 ) -> Target:
-    """Build a target by name, wired to the mappings store and MBID cache."""
+    """Build a target by name, wired to the mappings store and MBID cache.
+
+    *relay* is the run's :func:`relay_identity`. Plex needs it to know whether a
+    copy already rated above (love) or below (hate) the rating already holds it.
+    """
     _, mappings = stores(db)
     if service == "plex":
         library = plex_library or PlexLibrary(await plex_credentials(db))
-        return PlexTarget(library, mappings, plex_rating)
+        return PlexTarget(library, mappings, plex_rating, relay)
     if service == "lastfm":
         client = LastFmClient(await lastfm_credentials(db))
         return LastFmTarget(client, mappings)

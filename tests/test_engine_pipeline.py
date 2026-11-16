@@ -44,6 +44,13 @@ class FakePlexLibrary:
             raise RuntimeError(self._fail_with)
         self.writes.append((external_id, rating))
 
+    async def current_rating(self, external_id: str) -> Optional[float]:
+        rating = next((c.rating for c in self._candidates if c.external_id == external_id), None)
+        for key, written in self.writes:
+            if key == external_id:
+                rating = written
+        return rating
+
 
 class FakeLastFmClient:
     def __init__(self):
@@ -52,6 +59,9 @@ class FakeLastFmClient:
     async def love(self, artist: str, title: str) -> None:
         self.loves.append((artist, title))
 
+    async def loved(self) -> list:
+        return []
+
 
 class FakeListenBrainzClient:
     def __init__(self):
@@ -59,6 +69,9 @@ class FakeListenBrainzClient:
 
     async def submit(self, score: int, mbid: str) -> None:
         self.submissions.append((score, mbid))
+
+    async def feedback(self, score: int) -> list:
+        return []
 
 
 class CollectingProgress:

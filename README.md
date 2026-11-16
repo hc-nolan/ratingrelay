@@ -197,7 +197,7 @@ writes, so its counts are what a real run would do.
 | `--rating-threshold N` | `relay` | Plex source: the rating a track needs, out of 10 (default `8`) |
 | `--comparison gte\|lte` | `relay` | Plex source: at least or at most the threshold |
 | `--feedback-type love\|hate` | `relay` | Last.fm/ListenBrainz: which feedback to relay |
-| `--plex-rating N` | `relay` | Plex target: the rating to write, out of 10 (default `10`) |
+| `--plex-rating N` | `relay` | Plex target: the rating to write, out of 10 (default `8`, the same as the love threshold) |
 | `--config PATH` | `run`, `list` | relay definitions to read (default `relays.toml`) |
 | `--only NAME` | `run` | run just the named relay; repeatable |
 | `--dry-run` | `relay`, `run` | fetch, match and reconcile for real; write nothing |
@@ -224,7 +224,7 @@ rating_threshold = 8.0
 name = "back-to-plex"
 source = "lastfm"
 targets = ["plex"]
-plex_rating = 10.0
+plex_rating = 8.0
 ```
 
 Unknown keys are an error, so a typo can't make a cron job silently do nothing.

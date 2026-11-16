@@ -228,7 +228,7 @@
 	let lbzSourceConfig = $state<ListenBrainzSourceConfig>({ feedbackType: 'love' });
 
 	let plexTargetEnabled = $state(false);
-	let plexTargetConfig = $state<PlexTargetConfig>({ rating: 10 });
+	let plexTargetConfig = $state<PlexTargetConfig>({ rating: 8 });
 	let lastfmTargetEnabled = $state(false);
 	let lbzTargetEnabled = $state(false);
 	let lbzTargetConfig = $state<ListenBrainzTargetConfig>({ feedbackType: 'love' });

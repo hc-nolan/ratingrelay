@@ -143,6 +143,10 @@ async def _apply(
             intent=_intent_key(plan),
             rating=plan.intent.rating if plan.intent else None,
             target_key=plan.target_key,
+            # The first write's prior is what the user had; a later re-write of
+            # our own state must not replace it with what we wrote. A re-point
+            # moves to another target key, whose prior is the plan's.
+            prior=plan.existing.prior if record is None or repoint else record.prior,
         ),
     )
     return outcome
@@ -161,6 +165,14 @@ def _settled(
         return plan.to_outcome(OutcomeStatus.SKIPPED, Reason.ALREADY_SYNCED, None)
     if plan.status is not OutcomeStatus.WRITTEN:
         return plan.to_outcome()
+    if record is None and plan.existing.holds:
+        # The user's own state, not ours: recording it would let a withdrawal
+        # undo it (contract §3). Same answer in a dry run.
+        return plan.to_outcome(
+            OutcomeStatus.SKIPPED,
+            Reason.ALREADY_ON_TARGET,
+            f"{target.service} already holds this",
+        )
     if not plan.actionable:
         return plan.to_outcome(
             OutcomeStatus.FAILED,

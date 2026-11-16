@@ -11,6 +11,12 @@ from typing import Optional
 
 from ratingrelay.engine.normalize import track_key
 
+# The Plex rating, out of 10, that counts as a love. It is both the default
+# threshold a Plex source reads and the default rating a Plex target writes, so
+# a two-way setup writes back exactly what it reads and never bumps a track the
+# user rated at the threshold up to 5 stars.
+DEFAULT_LOVE_RATING = 8.0
+
 
 @dataclass(frozen=True, slots=True)
 class Track:
@@ -102,6 +108,9 @@ class Reason(str, Enum):
     WRITE_FAILED = "write_failed"
     WITHDRAWN = "withdrawn"
     UNRECORDED_TARGET = "unrecorded_target"
+    # The target already held this before we wrote anything; it is the user's,
+    # so it is neither written nor recorded (and so never undone).
+    ALREADY_ON_TARGET = "already_on_target"
     MASS_UNDO_REFUSED = "mass_undo_refused"
 
 

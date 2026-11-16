@@ -31,6 +31,7 @@ from ratingrelay.cli.config import (
     TARGET_SERVICES,
     load_relays,
 )
+from ratingrelay.engine.types import DEFAULT_LOVE_RATING
 
 EXIT_OK = 0
 EXIT_PARTIAL = 1
@@ -97,7 +98,7 @@ def _add_relay_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--rating-threshold",
         type=float,
-        default=8.0,
+        default=DEFAULT_LOVE_RATING,
         help="Plex source: the rating a track needs (default: 8)",
     )
     parser.add_argument(
@@ -115,8 +116,8 @@ def _add_relay_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--plex-rating",
         type=float,
-        default=10.0,
-        help="Plex target: the rating to write (default: 10)",
+        default=DEFAULT_LOVE_RATING,
+        help="Plex target: the rating to write (default: 8, the love threshold)",
     )
     _add_run_flags(parser)
 
@@ -192,6 +193,7 @@ async def run_relay(
                 name,
                 plex_rating=spec.plex_rating,
                 feedback_type=spec.feedback_type,
+                relay=spec.relay,
             )
             for name in spec.targets
         ]

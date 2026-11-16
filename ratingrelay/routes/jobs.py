@@ -60,7 +60,11 @@ def _job_to_dict(job: Job) -> dict:
     return {
         "id": job.id,
         "status": job.status,
-        "source_config": json.loads(job.source_config),
+        # Through the adapter, not raw JSON, so a job stored in an older shape
+        # (a Plex ``comparison``) reads back the way the worker will run it.
+        "source_config": _source_adapter.dump_python(
+            _source_adapter.validate_json(job.source_config), mode="json"
+        ),
         "targets_config": json.loads(job.targets_config),
         "recurring": job.recurring,
         "interval_minutes": job.interval_minutes,

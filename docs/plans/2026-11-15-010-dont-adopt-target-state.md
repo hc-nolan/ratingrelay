@@ -58,9 +58,10 @@ dry-run parity, and a record we own still heals.
 
 ## Notes
 
-- The Plex rating a target writes now defaults to the love threshold (8, i.e.
-  `DEFAULT_LOVE_RATING`), not 10. With 10, a two-way setup raised every 4-star
-  track loved on Last.fm to 5 stars; now a track at the threshold already holds the
-  love and is left alone.
+- The Plex rating a target writes is the love threshold, not 10. With 10, a two-way
+  setup raised every 4-star track loved on Last.fm to 5 stars; now a track at the
+  threshold already holds the love and is left alone. Superseded in detail by
+  `2026-11-15-011-shared-plex-thresholds.md`: the threshold is the `LOVE_THRESHOLD`
+  setting, not a per-relay default.
 - A resumed job journals an `already_on_target` skip again, as it does `no_match`;
   only `already_synced` is treated as an echo of the first attempt.

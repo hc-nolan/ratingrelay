@@ -2,7 +2,7 @@ import sys
 from functools import lru_cache
 from typing import Optional
 import logging
-from pydantic import HttpUrl
+from pydantic import Field, HttpUrl, model_validator
 from pydantic_settings import SettingsConfigDict, BaseSettings
 from pydantic_core import ValidationError
 import musicbrainzngs as mbz
@@ -29,6 +29,11 @@ class Settings(BaseSettings):
         reload: Restart the API when its source changes. On for development,
             off in the container image.
         test_limit: Request limit used when running tests
+        love_threshold: The Plex rating (out of 10) that counts as a love. A Plex
+            source reads tracks rated at least this; a Plex target writes it.
+        hate_threshold: The Plex rating (out of 10) that counts as a hate. A Plex
+            source reads tracks rated at most this (and rated at all); a Plex
+            target writes it. Must be below ``love_threshold``.
     """
 
     version: str = "3.0.0"
@@ -45,6 +50,10 @@ class Settings(BaseSettings):
     auth: bool = True
     reload: bool = True
     test_limit: Optional[int] = 10
+    # Same values as engine.types.DEFAULT_LOVE_RATING / DEFAULT_HATE_RATING;
+    # not imported, because the engine imports this module for its logger.
+    love_threshold: float = Field(default=8.0, ge=1.0, le=10.0)
+    hate_threshold: float = Field(default=2.0, ge=1.0, le=10.0)
     # Below settings are all optional. If not found, you will be prompted
     # to enter them in the frontend.
     # Values here take precedence over values in the database.
@@ -57,6 +66,17 @@ class Settings(BaseSettings):
     lastfm_password: Optional[str] = None
     listenbrainz_token: Optional[str] = None
     listenbrainz_username: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _thresholds_apart(self) -> "Settings":
+        # A track can't be both: with overlapping thresholds the love and hate
+        # relays would each claim it, and a Plex target couldn't tell them apart.
+        if self.hate_threshold >= self.love_threshold:
+            raise ValueError(
+                f"hate_threshold ({self.hate_threshold}) must be below "
+                f"love_threshold ({self.love_threshold})"
+            )
+        return self
 
 
 @lru_cache()

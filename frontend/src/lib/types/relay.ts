@@ -24,16 +24,17 @@ export interface TargetOption {
 }
 
 export interface PlexSourceConfig {
-	ratingThreshold: number;
-	comparison: 'gte' | 'lte';
+	feedbackType: 'love' | 'hate';
 }
 
 export interface ListenBrainzSourceConfig {
 	feedbackType: 'love' | 'hate';
 }
 
-export interface PlexTargetConfig {
-	rating: number;
+/** The Plex ratings (0–10) that count as a love and a hate. Server settings, read-only here. */
+export interface PlexThresholds {
+	love_threshold: number;
+	hate_threshold: number;
 }
 
 export interface ListenBrainzTargetConfig {

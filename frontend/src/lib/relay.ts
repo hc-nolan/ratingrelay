@@ -1,3 +1,5 @@
+import type { PlexThresholds } from '$lib/types/relay';
+
 export const serviceLabels: Record<string, string> = {
 	plex: 'Plex',
 	lastfm: 'Last.fm',
@@ -6,11 +8,7 @@ export const serviceLabels: Record<string, string> = {
 
 export function summarizeSource(cfg: Record<string, unknown>): string {
 	const svc = cfg.service as string;
-	if (svc === 'plex') {
-		const cmp = cfg.comparison === 'gte' ? '≥' : '≤';
-		const rating = (cfg.rating_threshold as number) / 2;
-		return `Plex ${cmp} ${rating}★`;
-	}
+	if (svc === 'plex') return `Plex ${cfg.feedback_type}d`;
 	if (svc === 'lastfm') return 'Last.fm loved';
 	if (svc === 'listenbrainz') return `ListenBrainz ${cfg.feedback_type}d`;
 	if (svc === 'reset') {
@@ -68,15 +66,24 @@ export const frequencyOptions = [
 export const repeatOptions = [{ value: 0, label: 'Once' }, ...frequencyOptions];
 
 /** Plex stores ratings as 0–10; the UI says stars. */
-export const plexStarOptions = [
-	{ value: 1, label: '0.5 stars' },
-	{ value: 2, label: '1 star' },
-	{ value: 3, label: '1.5 stars' },
-	{ value: 4, label: '2 stars' },
-	{ value: 5, label: '2.5 stars' },
-	{ value: 6, label: '3 stars' },
-	{ value: 7, label: '3.5 stars' },
-	{ value: 8, label: '4 stars' },
-	{ value: 9, label: '4.5 stars' },
-	{ value: 10, label: '5 stars' }
-];
+export function starLabel(rating: number): string {
+	const stars = rating / 2;
+	return `${stars} ${stars === 1 ? 'star' : 'stars'}`;
+}
+
+/**
+ * The love/hate thresholds. They are server settings (LOVE_THRESHOLD /
+ * HATE_THRESHOLD), so the UI only shows them; null if the server didn't answer.
+ */
+export async function loadThresholds(fetchFn: typeof fetch): Promise<PlexThresholds | null> {
+	// Never let this fail the page: an older server answers with the SPA's HTML.
+	try {
+		const res = await fetchFn('/api/relay/thresholds');
+		return res.ok ? ((await res.json()) as PlexThresholds) : null;
+	} catch {
+		return null;
+	}
+}
+
+/** Where each threshold is set, for the hint next to it. */
+export const thresholdSetting = { love: 'LOVE_THRESHOLD', hate: 'HATE_THRESHOLD' } as const;

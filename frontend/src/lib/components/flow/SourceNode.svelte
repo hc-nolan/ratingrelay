@@ -1,12 +1,12 @@
 <script lang="ts">
 	import FlowNode from './FlowNode.svelte';
 	import ServiceMark from './ServiceMark.svelte';
-	import { plexStarOptions } from '$lib/relay';
-	import { Select } from '$lib/components/ui/select';
+	import { starLabel, thresholdSetting } from '$lib/relay';
 	import { cn } from '$lib/utils';
 	import type {
 		ListenBrainzSourceConfig,
 		PlexSourceConfig,
+		PlexThresholds,
 		SourceId,
 		SourceOption
 	} from '$lib/types/relay';
@@ -16,6 +16,7 @@
 		selected = $bindable(),
 		plexConfig,
 		lbzConfig,
+		thresholds,
 		resetService = $bindable(),
 		resetOptions
 	}: {
@@ -23,25 +24,39 @@
 		selected: SourceId;
 		plexConfig: PlexSourceConfig;
 		lbzConfig: ListenBrainzSourceConfig;
+		thresholds: PlexThresholds | null;
 		resetService: SourceId;
 		resetOptions: SourceOption[];
 	} = $props();
 </script>
 
-{#snippet feedbackToggle(value: 'love' | 'hate', text: string)}
+{#snippet feedbackToggle(
+	config: { feedbackType: 'love' | 'hate' },
+	value: 'love' | 'hate',
+	text: string
+)}
 	<button
 		type="button"
 		class={cn(
 			'rounded px-2.5 py-0.5 text-sm transition-colors',
-			lbzConfig.feedbackType === value
+			config.feedbackType === value
 				? 'bg-primary text-primary-foreground'
 				: 'text-muted-foreground hover:text-foreground'
 		)}
-		onclick={() => (lbzConfig.feedbackType = value)}
-		aria-pressed={lbzConfig.feedbackType === value}
+		onclick={() => (config.feedbackType = value)}
+		aria-pressed={config.feedbackType === value}
 	>
 		{text}
 	</button>
+{/snippet}
+
+{#snippet directionPicker(config: { feedbackType: 'love' | 'hate' }, noun: string)}
+	<span class="text-sm text-muted-foreground">Fetch</span>
+	<div class="inline-flex items-center gap-0.5 rounded-md border border-border bg-background p-0.5">
+		{@render feedbackToggle(config, 'love', 'loved')}
+		{@render feedbackToggle(config, 'hate', 'hated')}
+	</div>
+	<span class="text-sm text-muted-foreground">{noun}</span>
 {/snippet}
 
 <FlowNode label="From" tone={selected === 'reset' ? 'danger' : 'source'}>
@@ -73,32 +88,21 @@
 
 	<div class="mt-3 flex flex-wrap items-center gap-x-2 gap-y-2 border-t border-border/60 pt-3">
 		{#if selected === 'plex'}
-			<span class="text-sm text-muted-foreground">Rated</span>
-			<Select
-				bind:value={plexConfig.comparison}
-				label="Rating comparison"
-				options={[
-					{ value: 'gte', label: 'at least' },
-					{ value: 'lte', label: 'at most' }
-				]}
-			/>
-			<Select
-				bind:value={plexConfig.ratingThreshold}
-				label="Rating threshold"
-				class="min-w-40"
-				options={plexStarOptions}
-			/>
+			{@render directionPicker(plexConfig, 'tracks')}
+			<p class="w-full text-sm leading-snug text-muted-foreground">
+				{#if thresholds}
+					{plexConfig.feedbackType === 'love'
+						? `Rated ${starLabel(thresholds.love_threshold)} or more.`
+						: `Rated ${starLabel(thresholds.hate_threshold)} or less.`}
+				{/if}
+				Set by
+				<code class="font-mono text-xs">{thresholdSetting[plexConfig.feedbackType]}</code> in the server
+				settings.
+			</p>
 		{:else if selected === 'lastfm'}
 			<p class="text-sm text-muted-foreground">Every loved track on Last.fm.</p>
 		{:else if selected === 'listenbrainz'}
-			<span class="text-sm text-muted-foreground">Fetch</span>
-			<div
-				class="inline-flex items-center gap-0.5 rounded-md border border-border bg-background p-0.5"
-			>
-				{@render feedbackToggle('love', 'loved')}
-				{@render feedbackToggle('hate', 'hated')}
-			</div>
-			<span class="text-sm text-muted-foreground">recordings</span>
+			{@render directionPicker(lbzConfig, 'recordings')}
 		{:else}
 			<span class="text-sm text-muted-foreground">Clear</span>
 			<div class="flex flex-wrap items-center gap-1">

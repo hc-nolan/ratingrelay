@@ -15,7 +15,7 @@ from ratingrelay.db import get_async_session
 from ratingrelay.models.jobs import Job, TrackEvent
 from ratingrelay.routes import jobs as jobs_module
 
-SOURCE = json.dumps({"service": "plex", "rating_threshold": 8, "comparison": "gte"})
+SOURCE = json.dumps({"service": "plex", "feedback_type": "love"})
 TARGETS = json.dumps([{"service": "lastfm"}])
 
 

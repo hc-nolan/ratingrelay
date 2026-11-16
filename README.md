@@ -14,10 +14,11 @@ own machine or home server, and your credentials stay there.
 
 ## What it does
 
-- **Rated in Plex → loved elsewhere.** Pick a cutoff, for example "at least 4 stars",
-  and every track that meets it is loved on Last.fm and/or ListenBrainz.
+- **Rated in Plex → loved elsewhere.** Every track rated at or above your love cutoff
+  (4 stars unless you change it) is loved on Last.fm and/or ListenBrainz.
 - **Loved elsewhere → rated in Plex.** It works the other way too: your Last.fm or
-  ListenBrainz loves can become star ratings in Plex.
+  ListenBrainz loves become that same rating in Plex. See
+  [Rating thresholds](#rating-thresholds).
 - **Keeps up with you.** Each run compares your ratings with what it wrote last time.
   Lower a rating below the cutoff and the love is taken back.
 - **Leaves your other ratings alone.** RatingRelay only undoes changes it made
@@ -76,10 +77,10 @@ Press **Start relaying** when you're done.
 
 The main page reads from top to bottom:
 
-- **From**: where your ratings come from. For Plex, choose the cutoff ("at least 4
-  stars"). For ListenBrainz, choose loves or hates.
+- **From**: where your ratings come from. For Plex and ListenBrainz, choose loves or
+  hates.
 - **To**: switch on one or more destinations. ListenBrainz can receive a love or a
-  hate. Plex receives a star rating.
+  hate. Plex receives the love (or hate) rating.
 - **Trigger**: run it **once**, or repeat it every hour, every few hours, daily or
   weekly. Tick **Dry run** to preview the run without changing anything.
 
@@ -88,6 +89,26 @@ tracks are processed.
 
 **Reset** in the *From* row undoes what RatingRelay has written to a service. Only
 its own changes are removed, never ratings you made yourself.
+
+### Rating thresholds
+
+Two settings decide which Plex ratings count as a love and a hate. They apply to
+every relay, so a two-way setup writes back exactly what it reads:
+
+| setting | default | Plex as a source | Plex as a target |
+| ------- | ------- | ---------------- | ---------------- |
+| `LOVE_THRESHOLD` | `8` (4 stars) | loves are tracks rated at least this | a love is written as this rating |
+| `HATE_THRESHOLD` | `2` (1 star) | hates are tracks rated at most this | a hate is written as this rating |
+
+Ratings are out of 10, so each star is 2. Set them in `.env`
+(`RATINGRELAY_LOVE_THRESHOLD`, `RATINGRELAY_HATE_THRESHOLD`) and run
+`docker compose up -d` again. The hate threshold must be below the love one. The web
+app shows the current values but can't change them.
+
+A track already rated on the right side of the threshold is left alone: a love
+relay doesn't touch a track you rated 4 or 5 stars, and a hate relay doesn't touch
+one you rated 1 star. Raising the love threshold means some tracks no longer count,
+so the next run takes those loves back.
 
 ### History
 
@@ -194,10 +215,7 @@ writes, so its counts are what a real run would do.
 | ---- | ------- | ------------ |
 | `--source SERVICE` | `relay` | where ratings come from: `plex`, `lastfm`, `listenbrainz` (default `plex`) |
 | `--target SERVICE` | `relay` | where they go; repeat for more than one (default `lastfm`) |
-| `--rating-threshold N` | `relay` | Plex source: the rating a track needs, out of 10 (default `8`) |
-| `--comparison gte\|lte` | `relay` | Plex source: at least or at most the threshold |
-| `--feedback-type love\|hate` | `relay` | Last.fm/ListenBrainz: which feedback to relay |
-| `--plex-rating N` | `relay` | Plex target: the rating to write, out of 10 (default `8`, the same as the love threshold) |
+| `--feedback-type love\|hate` | `relay` | relay loves or hates (default `love`); for Plex, see [Rating thresholds](#rating-thresholds) |
 | `--config PATH` | `run`, `list` | relay definitions to read (default `relays.toml`) |
 | `--only NAME` | `run` | run just the named relay; repeatable |
 | `--dry-run` | `relay`, `run` | fetch, match and reconcile for real; write nothing |
@@ -218,20 +236,19 @@ first on a fresh checkout. The container does this when it starts.
 name = "nightly"
 source = "plex"
 targets = ["lastfm", "listenbrainz"]
-rating_threshold = 8.0
+feedback_type = "love"
 
 [[relay]]
 name = "back-to-plex"
 source = "lastfm"
 targets = ["plex"]
-plex_rating = 8.0
 ```
 
 Unknown keys are an error, so a typo can't make a cron job silently do nothing.
 
 Two relays may share a source and a target if they read opposite directions (Plex
 loves and Plex hates, both to ListenBrainz). Two that read the same direction, such
-as two Plex thresholds into one target, are refused: each run would undo what only
+as two Plex love relays into one target, are refused: each run would undo what only
 the other one passes. Merge them into one relay.
 
 ### When a run refuses to undo

@@ -40,12 +40,7 @@ def track_to_dict(track: Track) -> dict:
 async def source_for(db: AsyncSession, config: object) -> Source:
     """Build the source described by a request config."""
     if isinstance(config, PlexFromConfig):
-        return await source_for_service(
-            db,
-            "plex",
-            rating_threshold=config.rating_threshold,
-            comparison=config.comparison,
-        )
+        return await source_for_service(db, "plex", feedback_type=config.feedback_type)
     if isinstance(config, LastFMFromConfig):
         return await source_for_service(db, "lastfm")
     if isinstance(config, ListenBrainzFromConfig):
@@ -58,7 +53,7 @@ async def source_for(db: AsyncSession, config: object) -> Source:
 def relay_for(config: object) -> str:
     """The relay identity of a request's source config (see ``relay_identity``)."""
     if isinstance(config, PlexFromConfig):
-        return relay_identity("plex", comparison=config.comparison)
+        return relay_identity("plex", feedback_type=config.feedback_type)
     if isinstance(config, LastFMFromConfig):
         return relay_identity("lastfm")
     if isinstance(config, ListenBrainzFromConfig):
@@ -69,7 +64,7 @@ def relay_for(config: object) -> str:
 async def target_for(db: AsyncSession, config: object, relay: str = "love") -> Target:
     """Build the target described by a request config, for a run of *relay*."""
     if isinstance(config, PlexToConfig):
-        return await target_for_service(db, "plex", plex_rating=config.rating, relay=relay)
+        return await target_for_service(db, "plex", relay=relay)
     if isinstance(config, LastFMToConfig):
         return await target_for_service(db, "lastfm")
     if isinstance(config, ListenBrainzToConfig):

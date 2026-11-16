@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-PLEX_SOURCE = {"service": "plex", "rating_threshold": 6.0, "comparison": "gte"}
+PLEX_SOURCE = {"service": "plex", "feedback_type": "love"}
 LFM_TARGET = {"service": "lastfm"}
 
 PAYLOAD = {"source": PLEX_SOURCE, "targets": [LFM_TARGET]}
@@ -133,14 +133,13 @@ async def test_the_override_may_run_beside_its_recurring_relay(client):
 
 
 async def test_a_relay_that_would_fight_an_active_one_is_refused(client):
-    """Same source, target and direction, different threshold: each undoes the other."""
+    """Same source, target and direction in a different job: each undoes the other."""
     first = await client.post("/api/relay/jobs", json=PAYLOAD)
     assert first.status_code == 201
 
-    looser = {**PLEX_SOURCE, "rating_threshold": 4.0}
     resp = await client.post(
         "/api/relay/jobs",
-        json={"source": looser, "targets": [{"service": "listenbrainz"}, LFM_TARGET]},
+        json={"source": PLEX_SOURCE, "targets": [{"service": "listenbrainz"}, LFM_TARGET]},
     )
     assert resp.status_code == 409
     assert first.json()["id"] in resp.json()["detail"]
@@ -148,10 +147,20 @@ async def test_a_relay_that_would_fight_an_active_one_is_refused(client):
 
 async def test_opposite_directions_may_share_a_pair(client):
     loves = await client.post("/api/relay/jobs", json=PAYLOAD)
-    hates = {**PLEX_SOURCE, "rating_threshold": 2.0, "comparison": "lte"}
+    hates = {**PLEX_SOURCE, "feedback_type": "hate"}
     resp = await client.post("/api/relay/jobs", json={"source": hates, "targets": [LFM_TARGET]})
     assert loves.status_code == 201
     assert resp.status_code == 201
+
+
+async def test_a_plex_comparison_from_an_older_build_keeps_its_direction(client):
+    """``comparison: lte`` was a hate relay. Pydantic ignores unknown keys, so
+    without the legacy mapping it would come back as a love relay."""
+    legacy = {"service": "plex", "rating_threshold": 2.0, "comparison": "lte"}
+    resp = await client.post("/api/relay/jobs", json={"source": legacy, "targets": [LFM_TARGET]})
+
+    assert resp.status_code == 201
+    assert resp.json()["source_config"] == {"service": "plex", "feedback_type": "hate"}
 
 
 # ---------------------------------------------------------------------------

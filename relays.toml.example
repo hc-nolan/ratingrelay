@@ -8,9 +8,8 @@
 name = "nightly"
 source = "plex"
 targets = ["lastfm", "listenbrainz"]
-# Plex as a source: which rated tracks count.
-rating_threshold = 8.0
-comparison = "gte"          # gte: at least the threshold · lte: at most
-# Last.fm / ListenBrainz: which feedback to relay.
+# Loves or hates. The Plex ratings that count as each are the LOVE_THRESHOLD /
+# HATE_THRESHOLD settings, shared by every relay: a Plex source reads them and a
+# Plex target writes them.
 feedback_type = "love"      # love or hate
 # dry_run = true            # fetch, match and reconcile, but write nothing

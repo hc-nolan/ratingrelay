@@ -149,26 +149,19 @@ def test_a_config_file_cannot_switch_the_mass_undo_guard_off(tmp_path):
         load_relays(path)
 
 
-def test_plex_options_reach_the_spec():
-    args = cli.build_parser().parse_args(
-        [
-            "relay",
-            "--rating-threshold",
-            "9",
-            "--comparison",
-            "lte",
-            "--plex-rating",
-            "6",
-            "--feedback-type",
-            "hate",
-        ]
-    )
+def test_the_direction_reaches_the_spec():
+    args = cli.build_parser().parse_args(["relay", "--feedback-type", "hate"])
     spec = cli.spec_from_args(args)
 
-    assert spec.rating_threshold == 9.0
-    assert spec.comparison == "lte"
-    assert spec.plex_rating == 6.0
     assert spec.feedback_type == "hate"
+    assert spec.relay == "hate"
+
+
+@pytest.mark.parametrize("flag", ["--rating-threshold", "--comparison", "--plex-rating"])
+def test_the_per_relay_plex_ratings_are_gone(flag):
+    """The Plex ratings are the LOVE_THRESHOLD / HATE_THRESHOLD settings now."""
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(["relay", flag, "8"])
 
 
 def test_an_unknown_service_is_a_parser_error():
@@ -186,9 +179,9 @@ def test_a_relay_needs_a_target():
         RelaySpec(source="plex", targets=())
 
 
-def test_the_threshold_stays_in_range():
-    with pytest.raises(ConfigError, match="rating_threshold"):
-        RelaySpec(rating_threshold=11.0)
+def test_the_direction_is_love_or_hate():
+    with pytest.raises(ConfigError, match="feedback_type"):
+        RelaySpec(feedback_type="meh")
 
 
 # ---------------------------------------------------------------------------
@@ -210,7 +203,7 @@ def test_a_config_file_can_hold_several_relays(tmp_path):
 name = "nightly"
 source = "plex"
 targets = ["lastfm", "listenbrainz"]
-rating_threshold = 9.0
+feedback_type = "hate"
 
 [[relay]]
 name = "reverse"
@@ -224,7 +217,7 @@ dry_run = true
 
     assert [spec.name for spec in specs] == ["nightly", "reverse"]
     assert specs[0].targets == ("lastfm", "listenbrainz")
-    assert specs[0].rating_threshold == 9.0
+    assert specs[0].feedback_type == "hate"
     assert specs[1].dry_run is True
 
 
@@ -238,6 +231,21 @@ def test_targets_may_be_a_string(tmp_path):
     path = _write(tmp_path, '[[relay]]\nsource = "plex"\ntargets = "lastfm"\n')
 
     assert load_relays(path)[0].targets == ("lastfm",)
+
+
+@pytest.mark.parametrize(
+    "line, hint",
+    [
+        ("rating_threshold = 9.0", "LOVE_THRESHOLD"),
+        ("plex_rating = 8.0", "LOVE_THRESHOLD"),
+        ('comparison = "lte"', "feedback_type"),
+    ],
+)
+def test_a_removed_plex_key_says_where_it_went(tmp_path, line, hint):
+    path = _write(tmp_path, f'[[relay]]\nsource = "plex"\n{line}\n')
+
+    with pytest.raises(ConfigError, match=f"is gone.*{hint}"):
+        load_relays(path)
 
 
 def test_an_unknown_key_is_an_error(tmp_path):
@@ -256,11 +264,9 @@ def test_two_relays_writing_the_same_records_are_an_error(tmp_path):
         """
 [[relay]]
 name = "strict"
-rating_threshold = 9.0
 targets = ["lastfm"]
 [[relay]]
 name = "loose"
-rating_threshold = 6.0
 targets = ["listenbrainz", "lastfm"]
 """,
     )
@@ -278,8 +284,7 @@ name = "loves"
 targets = ["listenbrainz"]
 [[relay]]
 name = "hates"
-comparison = "lte"
-rating_threshold = 2.0
+feedback_type = "hate"
 targets = ["listenbrainz"]
 [[relay]]
 name = "preview"

@@ -7,7 +7,6 @@ or rating), and where it does overwrite something, undo must put it back rather
 than clear it. See docs/plans/2026-11-15-010-dont-adopt-target-state.md.
 """
 
-import inspect
 import json
 import os
 import pathlib
@@ -21,9 +20,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlmodel import SQLModel
 
 import ratingrelay.models.sync  # noqa: F401
-from ratingrelay.cli.config import RelaySpec
-from ratingrelay.cli.main import build_parser
-from ratingrelay.core.factory import source_for_service, target_for_service
 from ratingrelay.db.store import SqlSyncStore
 from ratingrelay.engine import Candidate, MemorySyncStore, OutcomeStatus, Track, pipeline
 from ratingrelay.engine.services.lastfm import LastFmTarget
@@ -32,7 +28,6 @@ from ratingrelay.engine.services.musicbrainz import Resolution
 from ratingrelay.engine.services.plex import PlexTarget
 from ratingrelay.engine.store import MemoryMappingStore, SyncedTrack
 from ratingrelay.engine.types import Reason
-from ratingrelay.schemas.relay import PlexFromConfig, PlexToConfig
 
 SONG = Track("Artist", "Song")
 
@@ -359,23 +354,3 @@ def test_the_prior_migration_adds_a_nullable_column_and_reverses(tmp_path):
 
     alembic("downgrade", "c4d5e6f7a8b9")
     assert "prior" not in columns()
-
-
-def test_a_plex_target_writes_the_love_threshold_by_default():
-    """With 10 by default, a two-way setup bumped every 4-star track to 5."""
-    spec = RelaySpec()
-    args = build_parser().parse_args(["relay", "--source", "lastfm", "--target", "plex"])
-    defaults = {
-        "spec threshold": spec.rating_threshold,
-        "spec rating": spec.plex_rating,
-        "cli threshold": args.rating_threshold,
-        "cli rating": args.plex_rating,
-        "api threshold": PlexFromConfig(service="plex").rating_threshold,
-        "api rating": PlexToConfig(service="plex").rating,
-        "factory threshold": inspect.signature(source_for_service)
-        .parameters["rating_threshold"]
-        .default,
-        "factory rating": inspect.signature(target_for_service).parameters["plex_rating"].default,
-        "engine rating": inspect.signature(PlexTarget).parameters["rating"].default,
-    }
-    assert set(defaults.values()) == {8.0}, defaults

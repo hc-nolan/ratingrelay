@@ -15,7 +15,7 @@ from sqlmodel import SQLModel
 from ratingrelay.core import worker
 from ratingrelay.models.jobs import Job, TrackEvent
 
-SOURCE = json.dumps({"service": "plex", "rating_threshold": 8, "comparison": "gte"})
+SOURCE = json.dumps({"service": "plex", "feedback_type": "love"})
 TARGETS = json.dumps([{"service": "lastfm"}])
 
 

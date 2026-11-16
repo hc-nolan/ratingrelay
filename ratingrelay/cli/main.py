@@ -31,7 +31,6 @@ from ratingrelay.cli.config import (
     TARGET_SERVICES,
     load_relays,
 )
-from ratingrelay.engine.types import DEFAULT_LOVE_RATING
 
 EXIT_OK = 0
 EXIT_PARTIAL = 1
@@ -96,28 +95,11 @@ def _add_relay_flags(parser: argparse.ArgumentParser) -> None:
         help="where they go; repeat for more than one (default: lastfm)",
     )
     parser.add_argument(
-        "--rating-threshold",
-        type=float,
-        default=DEFAULT_LOVE_RATING,
-        help="Plex source: the rating a track needs (default: 8)",
-    )
-    parser.add_argument(
-        "--comparison",
-        choices=("gte", "lte"),
-        default="gte",
-        help="Plex source: at least (gte) or at most (lte) the threshold",
-    )
-    parser.add_argument(
         "--feedback-type",
         choices=("love", "hate"),
         default="love",
-        help="Last.fm/ListenBrainz: which feedback to relay (default: love)",
-    )
-    parser.add_argument(
-        "--plex-rating",
-        type=float,
-        default=DEFAULT_LOVE_RATING,
-        help="Plex target: the rating to write (default: 8, the love threshold)",
+        help="relay loves or hates (default: love). Plex reads and writes the "
+        "LOVE_THRESHOLD / HATE_THRESHOLD settings",
     )
     _add_run_flags(parser)
 
@@ -151,10 +133,7 @@ def spec_from_args(args: argparse.Namespace) -> RelaySpec:
         targets=tuple(args.targets) or ("lastfm",),
         dry_run=getattr(args, "dry_run", False),
         allow_mass_undo=args.allow_mass_undo,
-        rating_threshold=args.rating_threshold,
-        comparison=args.comparison,
         feedback_type=args.feedback_type,
-        plex_rating=args.plex_rating,
     )
 
 
@@ -181,17 +160,12 @@ async def run_relay(
 
     async with session_factory() as db:
         source = await source_for_service(
-            db,
-            spec.source,
-            rating_threshold=spec.rating_threshold,
-            comparison=spec.comparison,
-            feedback_type=spec.feedback_type,
+            db, spec.source, feedback_type=spec.feedback_type
         )
         targets = [
             await target_for_service(
                 db,
                 name,
-                plex_rating=spec.plex_rating,
                 feedback_type=spec.feedback_type,
                 relay=spec.relay,
             )

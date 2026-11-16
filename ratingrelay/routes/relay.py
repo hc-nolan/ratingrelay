@@ -13,8 +13,9 @@ from ratingrelay.schemas.relay import (
     RelayRequest,
     RelayResponse,
     TargetResult,
+    ThresholdsResponse,
 )
-from ratingrelay.settings import logger
+from ratingrelay.settings import get_settings, logger
 
 router = APIRouter(prefix="/api/relay", tags=["relay"])
 
@@ -22,6 +23,19 @@ router = APIRouter(prefix="/api/relay", tags=["relay"])
 # ---------------------------------------------------------------------------
 # Relay endpoint — delegates to core/relay.py
 # ---------------------------------------------------------------------------
+
+
+@router.get("/thresholds", response_model=ThresholdsResponse)
+async def thresholds() -> ThresholdsResponse:
+    """The Plex ratings that count as a love and a hate.
+
+    They are settings (``LOVE_THRESHOLD`` / ``HATE_THRESHOLD``), shared by every
+    relay; the UI only shows them.
+    """
+    current = get_settings()
+    return ThresholdsResponse(
+        love_threshold=current.love_threshold, hate_threshold=current.hate_threshold
+    )
 
 
 @router.post("/run", response_model=RelayResponse)

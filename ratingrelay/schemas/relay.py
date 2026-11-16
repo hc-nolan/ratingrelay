@@ -1,14 +1,27 @@
 from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, Field, TypeAdapter
-
-from ratingrelay.engine.types import DEFAULT_LOVE_RATING
+from pydantic import BaseModel, Field, TypeAdapter, model_validator
 
 
 class PlexFromConfig(BaseModel):
+    """Plex as a source. The ratings that count as a love or a hate are the
+    ``love_threshold``/``hate_threshold`` settings, not per relay."""
+
     service: Literal["plex"]
-    rating_threshold: float = Field(default=DEFAULT_LOVE_RATING, ge=1.0, le=10.0)
-    comparison: Literal["gte", "lte"] = "gte"
+    feedback_type: Literal["love", "hate"] = "love"
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_comparison(cls, data: object) -> object:
+        # A job stored before the thresholds moved to settings carries
+        # ``comparison``. Extra keys are ignored, so without this an ``lte``
+        # (hate) job would quietly come back as a love relay.
+        if isinstance(data, dict) and "comparison" in data:
+            data = dict(data)
+            comparison = data.pop("comparison")
+            data.pop("rating_threshold", None)
+            data.setdefault("feedback_type", "hate" if comparison == "lte" else "love")
+        return data
 
 
 class LastFMFromConfig(BaseModel):
@@ -40,8 +53,9 @@ FromConfig = Annotated[
 
 
 class PlexToConfig(BaseModel):
+    """Plex as a target. It writes the threshold for the relay's direction."""
+
     service: Literal["plex"]
-    rating: float = Field(default=DEFAULT_LOVE_RATING, ge=1.0, le=10.0)
 
 
 class LastFMToConfig(BaseModel):
@@ -104,3 +118,10 @@ class UnrevertableRecord(BaseModel):
     intent: str | None = None
     reason: Literal["unrecorded_target"] = "unrecorded_target"
     error: str
+
+
+class ThresholdsResponse(BaseModel):
+    """Returned by GET /api/relay/thresholds. Read-only: set in settings."""
+
+    love_threshold: float
+    hate_threshold: float

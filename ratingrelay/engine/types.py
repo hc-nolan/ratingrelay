@@ -11,11 +11,14 @@ from typing import Optional
 
 from ratingrelay.engine.normalize import track_key
 
-# The Plex rating, out of 10, that counts as a love. It is both the default
-# threshold a Plex source reads and the default rating a Plex target writes, so
+# The Plex ratings, out of 10, that count as a love (at least) and a hate (at
+# most). The relay reads them from settings (``LOVE_THRESHOLD``/``HATE_THRESHOLD``,
+# whose defaults match these). One number serves both directions of a pair: a Plex
+# source reads loves at the threshold and a Plex target writes the threshold, so
 # a two-way setup writes back exactly what it reads and never bumps a track the
 # user rated at the threshold up to 5 stars.
 DEFAULT_LOVE_RATING = 8.0
+DEFAULT_HATE_RATING = 2.0
 
 
 @dataclass(frozen=True, slots=True)

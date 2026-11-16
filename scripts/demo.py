@@ -102,7 +102,7 @@ def _job(engine, *, ago, status, targets, dry_run=False, ok=0, err=0, skipped=0,
         started = NOW - ago
         job = Job(
             status=status,
-            source_config=json.dumps(source or {"service": "plex", "rating_threshold": 8.0, "comparison": "gte"}),
+            source_config=json.dumps(source or {"service": "plex", "feedback_type": "love"}),
             targets_config=json.dumps([{"service": t} for t in targets]),
             recurring=recurring,
             interval_minutes=1440 if recurring else None,

@@ -1,8 +1,7 @@
 <script lang="ts">
-	import { plexStarOptions } from '$lib/relay';
-	import type { ListenBrainzTargetConfig, PlexTargetConfig, TargetOption } from '$lib/types/relay';
+	import { starLabel } from '$lib/relay';
+	import type { ListenBrainzTargetConfig, TargetOption } from '$lib/types/relay';
 	import { cn } from '$lib/utils';
-	import { Select } from '$lib/components/ui/select';
 	import ServiceMark from './ServiceMark.svelte';
 
 	let {
@@ -10,7 +9,7 @@
 		allocated,
 		onadd,
 		onremove,
-		plexConfig,
+		plexWrite,
 		lbzConfig
 	}: {
 		option: TargetOption;
@@ -18,7 +17,8 @@
 		allocated: boolean;
 		onadd: () => void;
 		onremove: () => void;
-		plexConfig?: PlexTargetConfig;
+		/** What a Plex target writes: the threshold for the relay's direction (null: unknown). */
+		plexWrite?: { rating: number | null; setting: string };
 		lbzConfig?: ListenBrainzTargetConfig;
 	} = $props();
 
@@ -89,9 +89,16 @@
 
 	<div class="flex min-h-6 items-center pl-[34px]">
 		{#if allocated}
-			{#if option.id === 'plex' && plexConfig}
-				<span class="mr-1.5 text-sm text-muted-foreground">Rate as</span>
-				<Select bind:value={plexConfig.rating} label="Rating to write" options={plexStarOptions} />
+			{#if option.id === 'plex' && plexWrite}
+				<span class="text-sm text-muted-foreground">
+					{#if plexWrite.rating === null}
+						Rate at
+						<code class="font-mono text-xs">{plexWrite.setting}</code>
+					{:else}
+						Rate {starLabel(plexWrite.rating)}
+						<span class="text-xs">(<code class="font-mono">{plexWrite.setting}</code>)</span>
+					{/if}
+				</span>
 			{:else if option.id === 'lastfm'}
 				<span class="text-sm text-muted-foreground">Love every track</span>
 			{:else if lbzConfig}

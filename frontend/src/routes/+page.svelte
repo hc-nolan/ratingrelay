@@ -13,7 +13,6 @@
 		ListenBrainzSourceConfig,
 		ListenBrainzTargetConfig,
 		PlexSourceConfig,
-		PlexTargetConfig,
 		SourceId,
 		SourceOption,
 		TargetOption
@@ -32,6 +31,7 @@
 	import ListenBrainzForm from '$lib/components/services/ListenBrainzForm.svelte';
 	import { cn } from '$lib/utils';
 	import { TONE_CHIP, statusLabel, statusTone } from '$lib/format';
+	import { thresholdSetting } from '$lib/relay';
 
 	let { data }: { data: PageData } = $props();
 
@@ -224,11 +224,10 @@
 	let selectedSource = $state<SourceId>('plex');
 	let resetTargetService = $state<SourceId>('plex');
 
-	let plexSourceConfig = $state<PlexSourceConfig>({ ratingThreshold: 8, comparison: 'gte' });
+	let plexSourceConfig = $state<PlexSourceConfig>({ feedbackType: 'love' });
 	let lbzSourceConfig = $state<ListenBrainzSourceConfig>({ feedbackType: 'love' });
 
 	let plexTargetEnabled = $state(false);
-	let plexTargetConfig = $state<PlexTargetConfig>({ rating: 8 });
 	let lastfmTargetEnabled = $state(false);
 	let lbzTargetEnabled = $state(false);
 	let lbzTargetConfig = $state<ListenBrainzTargetConfig>({ feedbackType: 'love' });
@@ -302,6 +301,23 @@
 		}
 	});
 
+	/** Loves or hates: what the source reads, so what a Plex target writes. Mirrors relay_identity. */
+	let relayDirection = $derived<'love' | 'hate'>(
+		selectedSource === 'plex'
+			? plexSourceConfig.feedbackType
+			: selectedSource === 'listenbrainz'
+				? lbzSourceConfig.feedbackType
+				: 'love'
+	);
+	let plexWrite = $derived({
+		rating: data.thresholds
+			? relayDirection === 'love'
+				? data.thresholds.love_threshold
+				: data.thresholds.hate_threshold
+			: null,
+		setting: thresholdSetting[relayDirection]
+	});
+
 	let canRelay = $derived(
 		!relaying &&
 			(selectedSource === 'reset' ? resetOptions.length > 0 : allocatedTargets.length > 0)
@@ -310,11 +326,7 @@
 	function buildRelayPayload() {
 		let source: object;
 		if (selectedSource === 'plex') {
-			source = {
-				service: 'plex',
-				rating_threshold: plexSourceConfig.ratingThreshold,
-				comparison: plexSourceConfig.comparison
-			};
+			source = { service: 'plex', feedback_type: plexSourceConfig.feedbackType };
 		} else if (selectedSource === 'lastfm') {
 			source = { service: 'lastfm' };
 		} else if (selectedSource === 'listenbrainz') {
@@ -329,7 +341,7 @@
 
 		const targets: object[] = [];
 		if (plexTargetEnabled && plex.status === 'connected' && plex.server_name) {
-			targets.push({ service: 'plex', rating: plexTargetConfig.rating });
+			targets.push({ service: 'plex' });
 		}
 		if (lastfmTargetEnabled && lastfm.status === 'connected') {
 			targets.push({ service: 'lastfm' });
@@ -473,6 +485,7 @@
 						bind:selected={selectedSource}
 						plexConfig={plexSourceConfig}
 						lbzConfig={lbzSourceConfig}
+						thresholds={data.thresholds}
 						bind:resetService={resetTargetService}
 						{resetOptions}
 					/>
@@ -500,7 +513,7 @@
 									allocated={isAllocated(target.id)}
 									onadd={() => setAllocated(target.id, true)}
 									onremove={() => setAllocated(target.id, false)}
-									plexConfig={target.id === 'plex' ? plexTargetConfig : undefined}
+									plexWrite={target.id === 'plex' ? plexWrite : undefined}
 									lbzConfig={target.id === 'listenbrainz' ? lbzTargetConfig : undefined}
 								/>
 							{/each}

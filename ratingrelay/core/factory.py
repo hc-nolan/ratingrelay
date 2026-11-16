@@ -53,14 +53,16 @@ def relay_identity(
 
 
 def stores(
-    db: AsyncSession, relay: Optional[str] = None
+    db: AsyncSession, relay: Optional[str] = None, *, dry_run: bool = False
 ) -> tuple[SqlSyncStore, SqlMappingStore]:
     """The engine's two stores, backed by the current session.
 
     *relay* (from :func:`relay_identity`) scopes the sync store; a run must pass
-    it. Only readers that span relays — reset, the queue — leave it out.
+    it. Only readers that span relays — reset, the queue — leave it out. A dry
+    run gets a read-only sync store: a preview must not change what the real
+    run will reconcile against.
     """
-    return SqlSyncStore(db, relay), SqlMappingStore(db)
+    return SqlSyncStore(db, relay, read_only=dry_run), SqlMappingStore(db)
 
 
 def mbid_cache(db: AsyncSession) -> SqlMbidCache:

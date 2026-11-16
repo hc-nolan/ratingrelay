@@ -219,3 +219,50 @@ async def test_a_resumed_job_can_still_be_cancelled(monkeypatch, factory):
         assert job is not None
         assert job.status == "cancelled"
         assert (job.tracks_ok, job.tracks_skipped) == (3, 7)
+
+
+async def _new_job(factory, **fields) -> str:
+    async with factory() as db:
+        job = Job(source_config=SOURCE, targets_config=TARGETS, **fields)
+        db.add(job)
+        await db.commit()
+        return job.id
+
+
+async def test_a_failed_recurring_job_still_schedules_the_next_run(monkeypatch, factory):
+    """One bad night (Plex rebooting at 3am) must not end the series for good."""
+    job_id = await _new_job(factory, recurring=True, interval_minutes=60)
+
+    async def fake_execute(*_, **__):
+        raise ConnectionResetError("plex is restarting")
+
+    monkeypatch.setattr(worker, "session_maker", factory)
+    monkeypatch.setattr(worker, "execute_relay", fake_execute)
+
+    await worker.run_job(job_id)
+
+    async with factory() as db:
+        jobs = (await db.execute(select(Job).order_by(Job.created_at))).scalars().all()
+    assert [job.status for job in jobs] == ["failed", "scheduled"]
+    assert jobs[1].recurring and jobs[1].interval_minutes == 60
+
+
+async def test_one_failure_among_converged_tracks_is_partial(monkeypatch, factory):
+    """Skipped tracks are converged ones; a run that converged them did not fail."""
+    job_id = await _new_job(factory)
+
+    async def fake_execute(db, source, targets, on_fetch_complete, on_track, dry_run, **_):
+        await on_fetch_complete(2)
+        await on_track({"artist": "in sync", "title": "song"}, "lastfm", True, None, True,
+                       _converged("in sync"))
+        await on_track({"artist": "broken", "title": "song"}, "lastfm", False, "boom", False,
+                       _outcome("broken", OutcomeStatus.FAILED, Reason.WRITE_FAILED))
+        return {"results": []}
+
+    monkeypatch.setattr(worker, "session_maker", factory)
+    monkeypatch.setattr(worker, "execute_relay", fake_execute)
+
+    await worker.run_job(job_id)
+
+    async with factory() as db:
+        assert (await db.get(Job, job_id)).status == "partial"

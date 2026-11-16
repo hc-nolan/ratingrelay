@@ -11,6 +11,7 @@ from typing import Optional
 
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import col
 
 from ratingrelay.engine.store import SyncedTrack, TrackMapping
 from ratingrelay.models.mappings import TrackMapping as TrackMappingRow
@@ -41,9 +42,13 @@ class SqlSyncStore:
     (``relay=None``) is for the readers that span relays: reset and the queue.
     """
 
-    def __init__(self, db: AsyncSession, relay: Optional[str] = None):
+    def __init__(
+        self, db: AsyncSession, relay: Optional[str] = None, *, read_only: bool = False
+    ):
         self._db = db
         self._relay = relay
+        # A dry run's store: it sees what a real run would see, and changes nothing.
+        self._read_only = read_only
 
     @property
     def relay(self) -> str:
@@ -58,8 +63,22 @@ class SqlSyncStore:
         them, so the first relay to run on the pair adopts them. For the usual
         case — one relay per pair — that is exactly right. Where there were two,
         the mass-undo guard stands between the adoption and a large revert.
+
+        Adopting is a write, so a read-only (dry-run) store only *shows* the
+        adoption: unclaimed rows are returned as if claimed, and left unclaimed
+        for the real run to decide. Where a key has both, the claimed row wins,
+        as it would after the real run's UPDATE.
         """
         relay = self.relay
+        if self._read_only:
+            result = await self._db.execute(
+                select(SyncRecord)
+                .where(SyncRecord.source_service == source_service)
+                .where(SyncRecord.target_service == target_service)
+                .where(col(SyncRecord.relay).in_((relay, UNCLAIMED)))
+                .order_by(SyncRecord.relay == relay)
+            )
+            return {row.normalized_key: _synced(row) for row in result.scalars().all()}
         await self._db.execute(
             update(SyncRecord)
             .where(SyncRecord.source_service == source_service)

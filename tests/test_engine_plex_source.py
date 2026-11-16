@@ -5,12 +5,14 @@ large library it is the slowest part of a run. These tests pin the request that
 replaces it, and the guard that keeps a surprising server from widening it.
 """
 
+import json
 from dataclasses import dataclass, field
 
 import pytest
 
+from ratingrelay.engine import MemoryMappingStore, MemorySyncStore, OutcomeStatus, SyncedTrack, pipeline
 from ratingrelay.engine.credentials import PlexCredentials
-from ratingrelay.engine.services.plex import PlexLibrary, PlexSource
+from ratingrelay.engine.services.plex import PlexLibrary, PlexSource, PlexTarget
 
 CREDS = PlexCredentials(server_url="http://plex.invalid:32400", token="tok", library="Music")
 
@@ -143,3 +145,29 @@ async def test_plex_target_lists_the_library_once_per_run():
         await target.plan(Track(artist="Artist", title=f"Song {n}"))
 
     assert section.calls == [{}]
+
+
+async def test_un_rating_a_track_that_left_the_library_is_a_no_op():
+    """Its rating went with it; failing would keep the record, and every run
+    partial, forever."""
+    library = PlexLibrary(CREDS)
+    library._tracks = {}  # pylint: disable=protected-access
+
+    await library.rate("123", None)
+
+    with pytest.raises(KeyError):
+        await library.rate("123", 10.0)
+
+
+async def test_a_withdrawn_rating_on_a_vanished_track_is_forgotten():
+    library = PlexLibrary(CREDS)
+    library._tracks = {}  # pylint: disable=protected-access
+    record = SyncedTrack(key="a||b", intent="rating:10.0", target_key=json.dumps(["123"]))
+    store = MemorySyncStore({("lastfm", "plex"): {"a||b": record}})
+
+    report = await pipeline.run_tracks(
+        [], [PlexTarget(library, MemoryMappingStore())], source_service="lastfm", sync_store=store
+    )
+
+    assert report.outcomes[0].status is OutcomeStatus.REVERTED
+    assert not store.records[("lastfm", "plex")]

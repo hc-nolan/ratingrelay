@@ -5,7 +5,7 @@ frozen dataclasses and enums so that ``engine`` can stay headless and the
 adapters above it can translate them into their own representations.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
@@ -22,6 +22,10 @@ class Track:
     track_mbid: Optional[str] = None
     rating: Optional[float] = None
     external_id: Optional[str] = None
+    # The recording a previous run resolved this track to. A hint, not a fact:
+    # it ranks below what the source says and below a user's mapping, and it is
+    # not part of the track's identity.
+    known_recording_mbid: Optional[str] = field(default=None, compare=False, repr=False)
 
     @property
     def key(self) -> str:
@@ -176,7 +180,13 @@ class RunReport:
         """``completed``, ``partial`` or ``failed``, matching the job statuses."""
         if not self.targets:
             return "failed"
-        written = sum(report.written for report in self.targets)
-        if written == 0 and self.had_errors:
+        # Only a run that converged nothing failed outright. One that wrote,
+        # reverted or found tracks already in sync got through, and its errors
+        # make it partial: exit 2 means "could not complete", not "one write
+        # failed on a night with nothing new".
+        converged = sum(
+            report.written + report.reverted + report.skipped for report in self.targets
+        )
+        if converged == 0 and self.had_errors:
             return "failed"
         return "partial" if self.had_errors else "completed"

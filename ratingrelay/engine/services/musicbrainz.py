@@ -48,8 +48,9 @@ def _lookup(track_mbid: Optional[str], artist: str, title: str) -> Resolution:
     """Resolve a recording MBID from a track MBID, falling back to artist + title.
 
     A miss is an empty :class:`Resolution`: an unmatched track goes to the queue
-    rather than being guessed at, and a network error is the same as a miss
-    because the caller has nothing better to do with the distinction.
+    rather than being guessed at. A network failure is *not* a miss: it is raised
+    as ``ConnectionError`` so the engine retries it and, failing that, fails the
+    track — an outage must not fill the queue with tracks that have an MBID.
 
     The artist/title search only accepts the *exact* rung of the matching ladder.
     MusicBrainz already ranks its results fuzzily, so taking the first one would
@@ -80,7 +81,11 @@ def _lookup(track_mbid: Optional[str], artist: str, title: str) -> Resolution:
         if not outcome.matched:
             return Resolution(proposals=outcome.candidates)
         return Resolution(outcome.matches[0].recording_mbid)
-    except Exception:  # noqa: BLE001 - a lookup failure is a miss, not a crash
+    except mbz.NetworkError as exc:
+        # musicbrainzngs has already retried its own transient errors by now.
+        raise ConnectionError(f"MusicBrainz: {exc}") from exc
+    except mbz.MusicBrainzError:
+        # A refused query (400/404) or an unreadable answer: nothing to retry.
         return Resolution()
 
 

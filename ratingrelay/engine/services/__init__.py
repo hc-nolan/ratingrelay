@@ -67,6 +67,9 @@ class MappedTarget:
             self._mapping_cache = await self._mappings.load(self.service)
         return self._mapping_cache
 
+    async def has_mapping(self, track: Track) -> bool:
+        return track.key in await self.mappings()
+
     async def mapped(self, track: Track) -> tuple[str, str, Optional[str]]:
         """The artist, title and recording MBID to write, after any mapping."""
         mapping = (await self.mappings()).get(track.key)

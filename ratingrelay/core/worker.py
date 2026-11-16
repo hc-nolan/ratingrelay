@@ -91,6 +91,25 @@ async def _claim(db: AsyncSession, job: Job) -> bool:
     return result.rowcount == 1
 
 
+async def _schedule_next(db: AsyncSession, job: Job) -> None:
+    """Queue the next run of a recurring relay (never for a dry run)."""
+    if not (job.recurring and job.interval_minutes and not job.dry_run):
+        return
+    next_run = datetime.now(timezone.utc) + timedelta(minutes=job.interval_minutes)
+    db.add(
+        Job(
+            status="scheduled",
+            source_config=job.source_config,
+            targets_config=job.targets_config,
+            recurring=True,
+            interval_minutes=job.interval_minutes,
+            run_at=next_run,
+        )
+    )
+    await db.commit()
+    logger.info("Worker: scheduled next run for job %s at %s", job.id, next_run)
+
+
 async def run_job(job_id: str) -> None:
     async with session_maker() as db:
         # 1. Load job and mark as running
@@ -203,8 +222,10 @@ async def run_job(job_id: str) -> None:
             )
 
             # 6. Determine final status from the counters, which on a resumed
-            # attempt span both tries. Everything failed is a failed job.
-            if tracks_ok == 0 and tracks_err > 0:
+            # attempt span both tries. Nothing but failures is a failed job.
+            # A run that converged anything (wrote, reverted or found it already
+            # in sync) got through, so its errors make it partial.
+            if tracks_ok == 0 and tracks_skipped == 0 and tracks_err > 0:
                 final_status = "failed"
             elif tracks_err > 0:
                 final_status = "partial"
@@ -219,24 +240,7 @@ async def run_job(job_id: str) -> None:
             db.add(job)
             await db.commit()
 
-            # Schedule next run if recurring (never for dry-run jobs)
-            if job.recurring and job.interval_minutes and not job.dry_run:
-                next_run = datetime.now(timezone.utc) + timedelta(
-                    minutes=job.interval_minutes
-                )
-                next_job = Job(
-                    status="scheduled",
-                    source_config=job.source_config,
-                    targets_config=job.targets_config,
-                    recurring=True,
-                    interval_minutes=job.interval_minutes,
-                    run_at=next_run,
-                )
-                db.add(next_job)
-                await db.commit()
-                logger.info(
-                    "Worker: scheduled next run for job %s at %s", job_id, next_run
-                )
+            await _schedule_next(db, job)
 
         except RunCancelled:
             # The counters are the ones actually reached; the writes behind them
@@ -261,6 +265,10 @@ async def run_job(job_id: str) -> None:
             job.completed_at = datetime.now(timezone.utc)
             db.add(job)
             await db.commit()
+            # One bad night (a timeout, Plex restarting) must not end the
+            # series: the next run is as likely to work as this one was not.
+            # A cancel does end it — that is how a user stops a recurring relay.
+            await _schedule_next(db, job)
 
 
 # ---------------------------------------------------------------------------

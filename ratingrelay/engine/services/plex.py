@@ -144,8 +144,18 @@ class PlexLibrary:
         return self._candidates
 
     async def rate(self, external_id: str, rating: Optional[float]) -> None:
-        """Set a track's rating by its Plex rating key."""
-        plex_track = (await self.index())[external_id]
+        """Set a track's rating by its Plex rating key.
+
+        Clearing the rating of a track that has left the library is a no-op: its
+        rating went with it, and failing would keep the record — and every run
+        partial — forever. Setting one on a missing track is still an error.
+        """
+        plex_track = (await self.index()).get(external_id)
+        if plex_track is None:
+            if rating is None:
+                logger.info("Plex track %s is gone; nothing to un-rate", external_id)
+                return
+            raise KeyError(f"Plex track {external_id} is not in the library")
         await run_sync(lambda: plex_track.rate(rating))
 
 
@@ -212,6 +222,7 @@ class PlexTarget(MappedTarget):
             matches=outcome.matches,
             intent=Intent(IntentKind.RATING, rating),
             target_key=target_key,
+            mapped=await self.has_mapping(track),
             commit=commit,
         )
 
@@ -232,6 +243,9 @@ class PlexTarget(MappedTarget):
         PlexTarget._rating_keys(record)
 
     async def undo(self, record: SyncedTrack) -> None:
-        """Clear the rating on every copy this tool rated, and only those."""
+        """Clear the rating on every copy this tool rated, and only those.
+
+        A copy that has left the library is skipped by :meth:`PlexLibrary.rate`.
+        """
         for external_id in self._rating_keys(record):
             await self._library.rate(external_id, None)

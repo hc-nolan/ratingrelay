@@ -195,7 +195,7 @@ async def run_relay(
             )
             for name in spec.targets
         ]
-        sync_store, _ = stores(db, spec.relay)
+        sync_store, _ = stores(db, spec.relay, dry_run=spec.dry_run)
         logger.info("Starting relay %s: %s", spec.name, spec.summary)
         report = await pipeline.run(
             source,

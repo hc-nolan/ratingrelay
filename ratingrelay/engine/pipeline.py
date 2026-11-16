@@ -16,6 +16,7 @@ Every network call the pipeline makes — fetch, plan, commit, undo — goes thr
 bounded number of times (see that module for why only ``OSError`` is retried).
 """
 
+from dataclasses import replace
 from typing import Optional, Sequence
 
 from ratingrelay.engine.plan import WritePlan
@@ -51,17 +52,33 @@ def _intent_key(plan: WritePlan) -> Optional[str]:
 
 
 def _with_known_mbid(track: Track, record: Optional[SyncedTrack]) -> Track:
-    """Reuse the MBID we already resolved, so a rerun makes no lookup."""
+    """Offer the MBID we already resolved, so a rerun makes no lookup.
+
+    It goes in as a hint (``known_recording_mbid``), not as the track's own
+    MBID: a target ranks what the source said and what a user mapped above it,
+    so a mapping made after the first write still takes effect.
+    """
     if record is None or track.recording_mbid or not record.recording_mbid:
         return track
-    return Track(
-        artist=track.artist,
-        title=track.title,
-        recording_mbid=record.recording_mbid,
-        track_mbid=track.track_mbid,
-        rating=track.rating,
-        external_id=track.external_id,
-    )
+    return replace(track, known_recording_mbid=record.recording_mbid)
+
+
+def _repoints(plan: WritePlan, record: Optional[SyncedTrack], target: Target) -> bool:
+    """Whether *plan* moves a recorded write to somewhere else on the target.
+
+    Only a mapping may do that (see ``WritePlan.mapped``), and only when the old
+    write is one we can undo — otherwise the old one would stay behind as a
+    rating nobody owns.
+    """
+    if record is None or not plan.mapped or not record.target_key or not plan.target_key:
+        return False
+    if record.target_key == plan.target_key:
+        return False
+    try:
+        target.undoable(record)
+    except ValueError:
+        return False
+    return True
 
 
 async def _apply(
@@ -89,8 +106,14 @@ async def _apply(
 
     # The same intent this target already holds is what "already synced" means
     # now: a changed rating or a withdrawn love is a different intent, and gets
-    # written again.
-    if record is not None and plan.intent is not None and record.intent == plan.intent.key:
+    # written again. So does one a user's mapping has moved to another target key.
+    repoint = _repoints(plan, record, target)
+    if (
+        not repoint
+        and record is not None
+        and plan.intent is not None
+        and record.intent == plan.intent.key
+    ):
         return plan.to_outcome(OutcomeStatus.SKIPPED, Reason.ALREADY_SYNCED, None)
 
     if plan.status is not OutcomeStatus.WRITTEN:
@@ -107,6 +130,15 @@ async def _apply(
         return outcome
 
     try:
+        if repoint and record is not None:
+            # Undo first: the old and new keys can overlap (two Plex copies), and
+            # undoing after would clear what was just written. If the write then
+            # fails, the record still names the old key and the next run retries
+            # both — every undo and write is idempotent.
+            await attempt(
+                lambda: target.undo(record),
+                f"{target.service} undo of the old write for '{track.title}'",
+            )
         await attempt(
             plan.commit, f"{target.service} write for '{track.title}'"
         )

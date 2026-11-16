@@ -209,3 +209,31 @@ async def test_a_love_relay_and_a_hate_relay_do_not_revert_each_other(db):
         await pipeline.run(Source([track]), [target], sync_store=SqlSyncStore(db, relay))
 
     assert library.ratings == {"1": 10.0, "2": 2.0}
+
+
+async def test_a_dry_run_store_shows_the_adoption_without_making_it(db):
+    """A dry run must not claim legacy rows: that is a write, and a permanent one.
+
+    A dry run of a hate relay that adopted plex→lastfm's unclaimed rows would hand
+    the love relay's writes to the hate relay before either had really run.
+    """
+    db.add(SyncRecord(source_service="plex", target_service="lastfm", relay="",
+                      normalized_key=TRACK_KEY, intent="love", target_key="k"))
+    await db.commit()
+
+    preview = await SqlSyncStore(db, "hate", read_only=True).load("plex", "lastfm")
+
+    assert set(preview) == {TRACK_KEY}  # it sees what a real run would adopt
+    assert [row.relay for row in await _rows(db)] == [""]  # and claims none of it
+    assert set(await SqlSyncStore(db, "love").load("plex", "lastfm")) == {TRACK_KEY}
+
+
+async def test_a_dry_run_store_prefers_the_claimed_row(db):
+    for relay, intent in (("love", "love"), ("", "hate")):
+        db.add(SyncRecord(source_service="plex", target_service="lastfm", relay=relay,
+                          normalized_key=TRACK_KEY, intent=intent, target_key="k"))
+    await db.commit()
+
+    preview = await SqlSyncStore(db, "love", read_only=True).load("plex", "lastfm")
+
+    assert preview[TRACK_KEY].intent == "love"

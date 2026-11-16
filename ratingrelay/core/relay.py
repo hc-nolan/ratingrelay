@@ -70,19 +70,19 @@ async def _noop_track(
 class CallbackProgress:
     """Translate engine outcomes into the callback the worker and router use.
 
-    Skipped tracks are only reported in a dry run: a real run already reported
-    them the first time, and the worker treats every callback as a new event.
+    Every outcome is reported, skips included, in a real run as in a dry one:
+    "already synced" is what a fresh run did with most of the library, and an
+    ``unrecorded_target`` refusal is news. Telling a resumed attempt's echoes
+    apart is the worker's job (it knows whether it is resuming), not this one's.
     """
 
     def __init__(
         self,
         on_fetch_complete: Optional[Callable[[int], Awaitable[None]]],
         on_track: TrackCallback,
-        dry_run: bool,
     ):
         self._on_fetch_complete = on_fetch_complete
         self._on_track = on_track
-        self._dry_run = dry_run
 
     async def fetch_complete(self, count: int) -> None:
         if self._on_fetch_complete is not None:
@@ -90,8 +90,6 @@ class CallbackProgress:
 
     async def outcome(self, outcome: TrackOutcome) -> None:
         skipped = outcome.status is OutcomeStatus.SKIPPED
-        if skipped and not self._dry_run:
-            return
         # A revert is a write we made in the other direction: the target is now
         # in the state the source wants, which is what "ok" means here.
         written = outcome.status in (OutcomeStatus.WRITTEN, OutcomeStatus.REVERTED)
@@ -158,13 +156,15 @@ async def _write(
     # These helpers relay a pre-fetched list with no source config, so they
     # carry no direction; they write under the love relay, as every relay from
     # Last.fm and every default-config relay does.
-    sync_store, _ = adapters.stores(db, adapters.relay_identity(source_service))
+    sync_store, _ = adapters.stores(
+        db, adapters.relay_identity(source_service), dry_run=dry_run
+    )
     report = await pipeline.run_tracks(
         [adapters.track_from_dict(track) for track in tracks],
         [target],
         sync_store=sync_store,
         source_service=source_service,
-        progress=CallbackProgress(None, on_track, dry_run),
+        progress=CallbackProgress(None, on_track),
         dry_run=dry_run,
     )
     return _counts(report)
@@ -544,10 +544,10 @@ async def execute_relay(
 
     engine_source = await adapters.source_for(db, source)
     source_service: str = engine_source.service
-    tracks = await engine_source.fetch()
+    tracks = await attempt(engine_source.fetch, f"{source_service} fetch")
     logger.info("Relay: fetched %d tracks from %s", len(tracks), source_service)
 
-    progress: ProgressSink = CallbackProgress(on_fetch_complete, on_track, dry_run)
+    progress: ProgressSink = CallbackProgress(on_fetch_complete, on_track)
     await progress.fetch_complete(len(tracks))
 
     ready, unconfigured = [], []
@@ -557,7 +557,7 @@ async def execute_relay(
         except ValueError as exc:
             unconfigured.append((target_service(config), str(exc)))
 
-    sync_store, _ = adapters.stores(db, adapters.relay_for(source))
+    sync_store, _ = adapters.stores(db, adapters.relay_for(source), dry_run=dry_run)
     report = await pipeline.run_tracks(
         tracks,
         ready,

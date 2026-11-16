@@ -114,15 +114,21 @@ class ListenBrainzTarget(MappedTarget):
         """The recording this track is, or the ones it was nearly.
 
         Order is authority: what the source said, then what a human decided,
-        then what we resolved before, then the network. The cache sits *below*
-        the mapping on purpose — a cache that outranked a user's correction
-        would make the correction stop working the once.
+        then what we resolved before, then the network. What we resolved before
+        (the recorded MBID and the cache, both keyed by the *source* track) sits
+        below the mapping on purpose — it answered for the unmapped name, so
+        where a mapping exists it is not consulted at all; a cache that
+        outranked a user's correction would make the correction stop working.
         """
         artist, title, mapped_mbid = await self.mapped(track)
         if track.recording_mbid:
             return Resolution(track.recording_mbid)
         if mapped_mbid:
             return Resolution(mapped_mbid)
+        if await self.has_mapping(track):
+            return await self._resolve(track.track_mbid, artist, title)
+        if track.known_recording_mbid:
+            return Resolution(track.known_recording_mbid)
         cached = await self._cache.get(track.key)
         if cached:
             return Resolution(cached)
@@ -157,6 +163,7 @@ class ListenBrainzTarget(MappedTarget):
             recording_mbid=mbid,
             intent=Intent(kind),
             target_key=mbid,
+            mapped=await self.has_mapping(track),
             commit=commit,
         )
 

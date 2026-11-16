@@ -38,6 +38,10 @@ class WritePlan:
     recording_mbid: Optional[str] = None
     intent: Optional[Intent] = None
     target_key: Optional[str] = None
+    # Whether a user's mapping decided where this goes. Only then may the
+    # pipeline move an existing write to a new target_key: a human correction
+    # re-points, a matcher's change of mind never does.
+    mapped: bool = False
     commit: Optional[Commit] = field(default=None, repr=False, compare=False)
 
     @property

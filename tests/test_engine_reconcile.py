@@ -15,6 +15,7 @@ from ratingrelay.engine import (
     Reason,
     SyncedTrack,
     Track,
+    TrackMapping,
     pipeline,
 )
 from ratingrelay.engine.normalize import track_key
@@ -398,3 +399,52 @@ async def test_withdrawing_a_minority_is_an_ordinary_reconcile():
 def test_a_small_library_is_never_a_mass_undo():
     assert not pipeline.is_mass_undo(pipeline.MASS_UNDO_MIN - 1, pipeline.MASS_UNDO_MIN - 1)
     assert pipeline.is_mass_undo(pipeline.MASS_UNDO_MIN, pipeline.MASS_UNDO_MIN)
+
+
+# ---------------------------------------------------------------------------
+# A user's mapping outranks what an earlier run resolved
+# ---------------------------------------------------------------------------
+
+
+async def test_a_mapping_made_after_the_write_re_points_it():
+    """The recorded MBID is a hint; a correction made later must take effect.
+
+    The old feedback is withdrawn (it was ours) before the corrected one is given.
+    """
+    client = FakeListenBrainzClient()
+    track = Track("Artist", "Song")
+    mappings = MemoryMappingStore(
+        {"listenbrainz": {track.key: TrackMapping("Artist", "Song", "rec-right")}}
+    )
+    target = ListenBrainzTarget(client, mappings, CountingResolver("rec-wrong"))
+    store = MemorySyncStore()
+    await store.remember(
+        "plex",
+        "listenbrainz",
+        SyncedTrack(track.key, recording_mbid="rec-wrong", intent="love", target_key="rec-wrong"),
+    )
+
+    report = await pipeline.run_tracks([track], [target], source_service="plex", sync_store=store)
+
+    assert report.outcomes[0].status is OutcomeStatus.WRITTEN
+    assert client.submissions == [(0, "rec-wrong"), (1, "rec-right")]
+    assert store.records[("plex", "listenbrainz")][track.key].target_key == "rec-right"
+
+    # and once converged it is a no-op again
+    await pipeline.run_tracks([track], [target], source_service="plex", sync_store=store)
+    assert len(client.submissions) == 2
+
+
+async def test_a_matcher_change_of_mind_never_re_points_a_record():
+    """Without a mapping, a different match for a synced track is not a re-point."""
+    target, library = _plex_target([Candidate("Artist", "Song", external_id="2")])
+    store = MemorySyncStore()
+    track = Track("Artist", "Song")
+    await store.remember(
+        "plex", "plex", SyncedTrack(track.key, intent="rating:10.0", target_key='["1"]')
+    )
+
+    report = await pipeline.run_tracks([track], [target], source_service="plex", sync_store=store)
+
+    assert report.outcomes[0].reason is Reason.ALREADY_SYNCED
+    assert library.writes == []

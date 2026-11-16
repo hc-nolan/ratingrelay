@@ -10,10 +10,12 @@ from typing import Optional
 
 import musicbrainzngs as mbz
 
+from ratingrelay.engine import http_timeouts
 from ratingrelay.engine.matching import match_track
 from ratingrelay.engine.thread import run_sync
 from ratingrelay.engine.types import Candidate, Track
 
+http_timeouts.install()
 mbz.set_useragent("RatingRelay", "2.0", "https://github.com/hnolan/ratingrelay2")
 
 SEARCH_LIMIT = 10

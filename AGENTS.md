@@ -164,6 +164,11 @@ These are the point of the tool. v1 got them right; keep them that way.
   Retrying is safe because every call the engine makes is idempotent. A failed
   fetch or a target that cannot be planned fails the run or the track; it never
   silently becomes a skip.
+- **Every network call has a deadline.** plexapi and pylast set their own;
+  liblistenbrainz and musicbrainzngs set none and would wait on a silent server
+  forever (RR-11), so `engine/http_timeouts.install()` gives them one. A new
+  client needs a timeout before it is used, and a test against a silent socket
+  (`tests/test_http_timeouts.py`).
 - **Schemas**: request/response models live in `ratingrelay/schemas/`, one file per
   service. Never reuse SQLModel table classes as API schemas.
 - **Migrations**: Alembic, always autogenerate then review. Existing databases must

@@ -10,6 +10,7 @@ from typing import Callable, Awaitable, Optional
 
 from liblistenbrainz import ListenBrainz
 
+from ratingrelay.engine import http_timeouts
 from ratingrelay.engine.credentials import ListenBrainzCredentials
 from ratingrelay.engine.plan import Existing, WritePlan
 from ratingrelay.engine.services import MappedTarget
@@ -23,6 +24,8 @@ from ratingrelay.engine.types import (
     Reason,
     Track,
 )
+
+http_timeouts.install()
 
 PAGE_SIZE = 100
 

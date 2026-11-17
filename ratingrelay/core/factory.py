@@ -41,9 +41,9 @@ from ratingrelay.settings import get_settings
 # Kept as the names the CLI and the request schemas import. A *ref* is one of
 # these kinds, optionally followed by ``:account`` (see ``engine.refs``).
 #
-# Hyperfix is a source only: it already writes Plex ratings itself, so making it a
-# target would give two reconcilers one field, and pairing it with Plex as a target
-# would have them undo each other (HF-182).
+# Every kind is both. Hyperfix is a source and a target (HF-198); the one pairing it
+# cannot join is hyperfix -> plex, because hyperfix already writes its own ratings to
+# Plex and the two would undo each other (``pairing_refusal``).
 SOURCE_SERVICES = KNOWN_SERVICES
 TARGET_SERVICES = KNOWN_SERVICES
 

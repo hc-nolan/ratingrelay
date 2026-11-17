@@ -148,7 +148,8 @@ async def test_a_hyperfix_zero_counts_as_rated_not_as_missing():
 
     plan = await target.plan(Track("Wire", "Field Day"))
     assert plan.existing.holds is True
-    assert plan.existing.prior == "1"
+    # The raw zero, not the 0.1 this engine uses in place of it: undo must restore it.
+    assert plan.existing.prior == "0"
     assert plan.existing.occupied is True
 
 
@@ -306,3 +307,113 @@ async def test_a_rating_the_user_made_is_never_recorded_as_ours():
     assert not fake.writes()
     # Nothing recorded, so a withdrawn love later cannot clear the user's 95.
     assert store.records.get(("plex", "hyperfix"), {}) == {}
+
+
+@pytest.mark.anyio
+async def test_a_dry_run_writes_nothing():
+    from ratingrelay.engine import MemorySyncStore, pipeline  # pylint: disable=import-outside-toplevel
+
+    fake = FakeHyperfix()
+    target = _target(fake, resolve=_resolver("rec-1"))
+
+    report = await pipeline.run_tracks(
+        [Track("Wire", "Field Day")],
+        [target],
+        source_service="plex",
+        sync_store=MemorySyncStore(),
+        dry_run=True,
+    )
+    assert report.outcomes[0].status is OutcomeStatus.WRITTEN
+    assert report.outcomes[0].detail is None
+    assert not fake.writes()
+
+
+@pytest.mark.anyio
+async def test_the_feed_is_read_once_for_many_tracks():
+    """The cache is the point: a run of N tracks must not mean N feed walks."""
+    fake = FakeHyperfix({"rec-0": 50})
+    target = _target(fake, resolve=_resolver("rec-9"))
+    tracks = [Track(f"Artist {i}", "Song") for i in range(5)]
+
+    for track in tracks:
+        await target.plan(track)
+    feed_reads = [request for request in fake.requests if request[1] == "/api/music/ratings"]
+    assert len(feed_reads) == 1
+
+
+@pytest.mark.anyio
+async def test_the_written_rating_is_never_zero():
+    """hyperfix reads 0 as unrated, so a just-above-nothing rating cannot round to 0."""
+    fake = FakeHyperfix()
+    target = _target(fake, rating=0.04, direction="hate", resolve=_resolver("rec-1"))
+
+    plan = await target.plan(Track("Wire", "Field Day"))
+    await plan.commit()
+    assert fake.ratings == {"rec-1": 1}
+
+
+@pytest.mark.anyio
+async def test_undo_leaves_a_recording_hyperfix_no_longer_knows():
+    fake = FakeHyperfix()  # nothing here: the recording is gone
+    target = _target(fake)
+    record = SyncedTrack(key="wire||field day", rating=8.0, target_key="rec-1", prior="20")
+
+    await target.undo(record)
+    assert not fake.writes()
+
+
+@pytest.mark.anyio
+async def test_drift_reapplies_a_rating_the_target_dropped():
+    """A cleared rating is a write that was removed, so reapply_target_drift re-writes it."""
+    from ratingrelay.engine import MemorySyncStore, pipeline  # pylint: disable=import-outside-toplevel
+
+    fake = FakeHyperfix()
+    target = _target(fake, resolve=_resolver("rec-1"))
+    store = MemorySyncStore()
+    tracks = [Track("Wire", "Field Day")]
+
+    await pipeline.run_tracks(tracks, [target], source_service="plex", sync_store=store)
+    assert fake.ratings == {"rec-1": 80}
+
+    fake.ratings.clear()  # the target dropped it
+    # A run builds its own target, so the second run sees a fresh read of the feed.
+    report = await pipeline.run_tracks(
+        tracks,
+        [_target(fake, resolve=_resolver("rec-1"))],
+        source_service="plex",
+        sync_store=store,
+        reapply_drift=True,
+    )
+    assert fake.ratings == {"rec-1": 80}
+    assert report.outcomes[-1].status is OutcomeStatus.WRITTEN
+
+
+@pytest.mark.anyio
+async def test_drift_does_not_overwrite_a_rating_the_user_replaced():
+    from ratingrelay.engine import MemorySyncStore, pipeline  # pylint: disable=import-outside-toplevel
+
+    fake = FakeHyperfix()
+    target = _target(fake, resolve=_resolver("rec-1"))
+    store = MemorySyncStore()
+    tracks = [Track("Wire", "Field Day")]
+
+    await pipeline.run_tracks(tracks, [target], source_service="plex", sync_store=store)
+    fake.ratings["rec-1"] = 30  # the user replaced our 80 with their own 30
+
+    report = await pipeline.run_tracks(
+        tracks,
+        [_target(fake, resolve=_resolver("rec-1"))],
+        source_service="plex",
+        sync_store=store,
+        reapply_drift=True,
+    )
+    assert fake.ratings == {"rec-1": 30}
+    assert report.outcomes[-1].status is not OutcomeStatus.WRITTEN
+
+
+def test_a_reset_can_name_hyperfix():
+    """The recorded reset is the only way to undo a hyperfix write from the app."""
+    from ratingrelay.schemas.relay import ResetFromConfig  # pylint: disable=import-outside-toplevel
+
+    config = ResetFromConfig(target_service="hyperfix", target_account="attic")
+    assert (config.target_service, config.target_account) == ("hyperfix", "attic")

@@ -12,6 +12,7 @@
 	import { accountOf, accountPayload, kindOf } from '$lib/types/services';
 	import type { ServiceAccountItem, ServiceKind } from '$lib/types/services';
 	import type {
+		HyperfixSourceConfig,
 		ListenBrainzSourceConfig,
 		PlexSourceConfig,
 		PlexThresholds,
@@ -231,6 +232,7 @@
 
 	let plexSourceConfig = $state<PlexSourceConfig>({ feedbackType: 'love' });
 	let lbzSourceConfig = $state<ListenBrainzSourceConfig>({ feedbackType: 'love' });
+	let hfxSourceConfig = $state<HyperfixSourceConfig>({ feedbackType: 'love' });
 
 	/** Which target accounts are switched on, by ref. */
 	let allocated = $state<string[]>([]);
@@ -295,7 +297,9 @@
 			? plexSourceConfig.feedbackType
 			: kindOf(selectedSource) === 'listenbrainz'
 				? lbzSourceConfig.feedbackType
-				: 'love'
+				: kindOf(selectedSource) === 'hyperfix'
+					? hfxSourceConfig.feedbackType
+					: 'love'
 	);
 
 	/**
@@ -348,7 +352,9 @@
 			? plexSourceConfig
 			: kindOf(selectedSource) === 'listenbrainz'
 				? lbzSourceConfig
-				: null
+				: kindOf(selectedSource) === 'hyperfix'
+					? hfxSourceConfig
+					: null
 	);
 
 	let canRelay = $derived(
@@ -378,7 +384,12 @@
 							...accountPayload(selectedSource),
 							feedback_type: lbzSourceConfig.feedbackType
 						}
-					: { ...accountPayload(selectedSource) };
+					: kind === 'hyperfix'
+						? {
+								...accountPayload(selectedSource),
+								feedback_type: hfxSourceConfig.feedbackType
+							}
+						: { ...accountPayload(selectedSource) };
 
 		return { source, targets: allocatedTargets.map((t) => accountPayload(t.id)) };
 	}

@@ -23,7 +23,7 @@ still fail a love threshold and pass a hate one. Writing goes the other way and 
 0, for the same reason.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Optional
 from urllib.parse import quote
 
@@ -66,17 +66,22 @@ class HyperfixClient:
     credentials: HyperfixCredentials
     page_size: int = PAGE_SIZE
     http: Optional[httpx.AsyncClient] = None
-    _owned: list[httpx.AsyncClient] = field(default_factory=list, compare=False, repr=False)
 
     async def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
-        """One call to hyperfix, with the bearer key and a deadline on it."""
+        """One call to hyperfix, with the bearer key and a deadline on it.
+
+        A transport failure is a ``ConnectionError``, not a :class:`HyperfixError`:
+        the engine retries it as the outage it is, and fails one track rather than
+        the run. A refused or unreadable *answer* is not retried — it will not
+        improve by asking again.
+        """
         url = f"{self.credentials.base_url}{path}"
         headers = {"Authorization": f"Bearer {self.credentials.token}"}
         client = self.http or httpx.AsyncClient(timeout=REQUEST_TIMEOUT)
         try:
             return await client.request(method, url, headers=headers, **kwargs)
         except httpx.HTTPError as exc:
-            raise HyperfixError(f"hyperfix did not answer: {exc}") from exc
+            raise ConnectionError(f"hyperfix did not answer: {exc}") from exc
         finally:
             if self.http is None:
                 await client.aclose()
@@ -121,6 +126,35 @@ class HyperfixClient:
             raise HyperfixError("hyperfix answered with non-JSON") from exc
         rating = body.get("rating") if isinstance(body, dict) else None
         return None if rating is None else int(rating)
+
+    async def hundredths(self) -> dict[str, int]:
+        """``{recording_mbid: rating}`` exactly as the feed states it, 0 included.
+
+        The target needs the raw value, not the engine's scale: a recorded ``prior``
+        of ``0`` has to come back as ``0``, and the 0-to-0.1 raise on the way in
+        would turn the user's zero into a one.
+        """
+        ratings: dict[str, int] = {}
+        cursor: Optional[str] = None
+        seen: set[str] = set()
+        while True:
+            body = await self._get(cursor)
+            for item in body["items"]:
+                mbid = item.get("recording_mbid")
+                value = item.get("rating")
+                if not mbid or value is None:
+                    continue
+                try:
+                    ratings[str(mbid)] = int(value)
+                except (TypeError, ValueError) as exc:
+                    raise HyperfixError(f"rating {value!r} is not a number") from exc
+            next_cursor = body.get("next_cursor")
+            if not next_cursor:
+                return ratings
+            if str(next_cursor) in seen:
+                raise HyperfixError("hyperfix repeated a cursor; refusing to loop")
+            seen.add(str(next_cursor))
+            cursor = str(next_cursor)
 
     async def ratings(self) -> list[Track]:
         """Every rated recording hyperfix holds, walking the feed's pages."""
@@ -221,14 +255,11 @@ class HyperfixTarget(MbidTarget):
         """``{recording_mbid: rating}`` for everything hyperfix holds, once per run.
 
         One fetch of the whole feed, like the source uses: the alternative is a
-        request per track, and this run already has the answer in hand.
+        request per track, and this run already has the answer in hand. The values
+        are the feed's own 0-100, so a ``prior`` of 0 restores a 0.
         """
         if self._current is None:
-            self._current = {
-                str(track.recording_mbid): round(track.rating * 10)
-                for track in await self._client.ratings()
-                if track.recording_mbid and track.rating is not None
-            }
+            self._current = await self._client.hundredths()
         return self._current
 
     def holds(self, current: Optional[int]) -> bool:

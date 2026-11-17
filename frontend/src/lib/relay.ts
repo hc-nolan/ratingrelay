@@ -3,7 +3,8 @@ import type { Direction, PlexThresholds } from '$lib/types/relay';
 export const serviceLabels: Record<string, string> = {
 	plex: 'Plex',
 	lastfm: 'Last.fm',
-	listenbrainz: 'ListenBrainz'
+	listenbrainz: 'ListenBrainz',
+	hyperfix: 'Hyperfix'
 };
 
 export function summarizeSource(cfg: Record<string, unknown>): string {
@@ -11,6 +12,7 @@ export function summarizeSource(cfg: Record<string, unknown>): string {
 	if (svc === 'plex') return `Plex ${cfg.feedback_type}d`;
 	if (svc === 'lastfm') return 'Last.fm loved';
 	if (svc === 'listenbrainz') return `ListenBrainz ${cfg.feedback_type}d`;
+	if (svc === 'hyperfix') return `Hyperfix ${cfg.feedback_type}d`;
 	if (svc === 'reset') {
 		const target = cfg.target_service as string;
 		return `Reset · ${serviceLabels[target] ?? target}`;

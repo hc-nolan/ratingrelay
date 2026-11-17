@@ -54,7 +54,7 @@ class Target(Protocol):
 class MappedTarget:
     """A target that applies the user's mappings before it does anything else.
 
-    All three targets resolve mappings the same way and only differ in what they
+    All four targets resolve mappings the same way and only differ in what they
     do next, so the lookup is shared. The cache lasts one run, which is what the
     ``plan()``-per-track loop needs.
 

@@ -78,7 +78,7 @@ class ResetFromConfig(BaseModel):
     """
 
     service: Literal["reset"] = "reset"
-    target_service: Literal["plex", "lastfm", "listenbrainz"] = "plex"
+    target_service: Literal["plex", "lastfm", "listenbrainz", "hyperfix"] = "plex"
     target_account: Optional[str] = None
     all: bool = False
 

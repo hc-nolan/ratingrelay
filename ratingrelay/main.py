@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse
 from ratingrelay.core.session import session_guard
 from ratingrelay.routes.auth import router as auth_router
 from ratingrelay.routes.lastfm import router as lastfm_router
+from ratingrelay.routes.hyperfix import router as hyperfix_router
 from ratingrelay.routes.listenbrainz import router as listenbrainz_router
 from ratingrelay.routes.plex import router as plex_router
 from ratingrelay.routes.relay import router as relay_router
@@ -50,6 +51,7 @@ app.include_router(auth_router)
 app.include_router(plex_router)
 app.include_router(lastfm_router)
 app.include_router(listenbrainz_router)
+app.include_router(hyperfix_router)
 app.include_router(relay_router)
 app.include_router(jobs_router)
 app.include_router(unmatched_router)

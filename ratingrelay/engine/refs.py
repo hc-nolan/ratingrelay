@@ -19,7 +19,17 @@ from typing import Optional
 import re
 
 # The services a relay can name, as kinds. A ref adds an account to one of these.
-KNOWN_SERVICES = ("plex", "lastfm", "listenbrainz")
+KNOWN_SERVICES = ("plex", "lastfm", "listenbrainz", "hyperfix")
+
+# Kinds that hold the ratings rather than receive them. Hyperfix pushes its own album
+# and track ratings to Plex, so a relay writing back into it would fight that, and
+# pairing it with Plex as a target would leave two reconcilers on one field (HF-182).
+SOURCE_ONLY_SERVICES = ("hyperfix",)
+
+
+def is_target_kind(kind: str) -> bool:
+    """Whether an account of this kind can be a relay's destination."""
+    return kind in KNOWN_SERVICES and kind not in SOURCE_ONLY_SERVICES
 
 SEPARATOR = ":"
 
@@ -112,7 +122,12 @@ def is_primary(ref: str) -> bool:
 # The name the web app shows for an account that has not been given one. Shared
 # with the migration that creates the first accounts, so an upgraded database and
 # a fresh connect read the same.
-_DEFAULT_LABELS = {"plex": "Plex", "lastfm": "Last.fm", "listenbrainz": "ListenBrainz"}
+_DEFAULT_LABELS = {
+    "plex": "Plex",
+    "lastfm": "Last.fm",
+    "listenbrainz": "ListenBrainz",
+    "hyperfix": "Hyperfix",
+}
 
 
 def default_label(kind: str) -> str:

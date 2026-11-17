@@ -114,6 +114,7 @@ async def delete_credential(db: AsyncSession, ref: str) -> bool:
     account.secret = None
     account.password_hash = None
     account.username = None
+    account.base_url = None
     account.plex_server_url = None
     account.plex_server_name = None
     await db.commit()

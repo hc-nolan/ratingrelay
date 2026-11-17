@@ -14,12 +14,14 @@ from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ratingrelay.core.credentials import (
+    hyperfix_credentials,
     lastfm_credentials,
     listenbrainz_credentials,
     plex_credentials,
 )
 from ratingrelay.db.store import SqlMappingStore, SqlMbidCache, SqlSyncStore
 from ratingrelay.engine.services import Source, Target
+from ratingrelay.engine.services.hyperfix import HyperfixClient, HyperfixSource
 from ratingrelay.engine.services.lastfm import LastFmClient, LastFmSource, LastFmTarget
 from ratingrelay.engine.services.listenbrainz import (
     ListenBrainzClient,
@@ -29,13 +31,22 @@ from ratingrelay.engine.services.listenbrainz import (
 from ratingrelay.engine.services.musicbrainz import resolve_recording_mbid
 from ratingrelay.engine.services.plex import PlexLibrary, PlexSource, PlexTarget
 from ratingrelay.core.thresholds import effective_thresholds
-from ratingrelay.engine.refs import KNOWN_SERVICES, parse_ref, service_kind
+from ratingrelay.engine.refs import (
+    KNOWN_SERVICES,
+    is_target_kind,
+    parse_ref,
+    service_kind,
+)
 from ratingrelay.settings import get_settings
 
 # Kept as the names the CLI and the request schemas import. A *ref* is one of
 # these kinds, optionally followed by ``:account`` (see ``engine.refs``).
+#
+# Hyperfix is a source only: it already writes Plex ratings itself, so making it a
+# target would give two reconcilers one field, and pairing it with Plex as a target
+# would have them undo each other (HF-182).
 SOURCE_SERVICES = KNOWN_SERVICES
-TARGET_SERVICES = KNOWN_SERVICES
+TARGET_SERVICES = tuple(kind for kind in KNOWN_SERVICES if is_target_kind(kind))
 
 
 def relay_identity(service: str, *, feedback_type: str = "love") -> str:
@@ -53,7 +64,7 @@ def relay_identity(service: str, *, feedback_type: str = "love") -> str:
     kind = service_kind(service)
     if kind == "lastfm":
         return "love"
-    if kind in ("plex", "listenbrainz"):
+    if kind in ("plex", "listenbrainz", "hyperfix"):
         return "love" if feedback_type == "love" else "hate"
     raise ValueError(f"Unknown source service: {service}")
 
@@ -84,6 +95,13 @@ def pairing_refusal(source: str, target: str, *, relay: str) -> Optional[str]:
     """
     if parse_ref(source).ref == parse_ref(target).ref:
         return f"{source} is both the source and a target"
+    if service_kind(source) == "hyperfix" and service_kind(target) == "plex":
+        # Two reconcilers on one field: hyperfix pushes album and track ratings to Plex
+        # itself, and each side treats the other's write as the user's, so they stop
+        # converging. Moving Plex writes into the relay is a separate decision.
+        return (
+            f"{source} already writes Plex ratings; a relay from it cannot target {target}"
+        )
     return unsupported_target(relay, target)
 
 
@@ -156,6 +174,17 @@ async def source_for_service(
     if kind == "listenbrainz":
         client = ListenBrainzClient(await listenbrainz_credentials(db, service))
         return ListenBrainzSource(client, _score(feedback_type), service=service)
+    if kind == "hyperfix":
+        # Same shared thresholds as Plex: hyperfix's 80/20 love/hate *is* 8.0/2.0
+        # here, so a relay reads back what hyperfix holds.
+        relay = relay_identity(service, feedback_type=feedback_type)
+        comparison = "gte" if relay == "love" else "lte"
+        return HyperfixSource(
+            HyperfixClient(await hyperfix_credentials(db, service)),
+            await plex_threshold(db, relay),
+            comparison,
+            service=service,
+        )
     raise ValueError(f"Unknown source service: {service}")
 
 

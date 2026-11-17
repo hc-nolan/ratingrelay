@@ -71,6 +71,10 @@ class Settings(BaseSettings):
     lastfm_password: Optional[str] = None
     listenbrainz_token: Optional[str] = None
     listenbrainz_username: Optional[str] = None
+    # Hyperfix is a source only (HF-182): it holds the ratings, this tool mirrors them
+    # onto the services below. One account, one URL.
+    hyperfix_url: Optional[HttpUrl] = None
+    hyperfix_api_key: Optional[str] = None
 
     @model_validator(mode="after")
     def _thresholds_apart(self) -> "Settings":

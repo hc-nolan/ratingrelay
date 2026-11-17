@@ -29,6 +29,12 @@ export interface ListenBrainzAuthState {
 	username?: string;
 }
 
+export interface HyperfixAuthState {
+	status: ServiceStatus;
+	/** The instance's base URL, once connected. */
+	url?: string;
+}
+
 export interface PlexServerItem {
 	name: string;
 	product: string;
@@ -39,6 +45,7 @@ export interface AuthCheckResult {
 	plex: PlexAuthState;
 	lastfm: LastFMAuthState;
 	listenbrainz: ListenBrainzAuthState;
+	hyperfix: HyperfixAuthState;
 }
 
 /**

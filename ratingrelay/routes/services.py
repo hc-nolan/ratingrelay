@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ratingrelay.core.credentials import (
+    hyperfix_credentials,
     lastfm_credentials,
     listenbrainz_credentials,
     plex_credentials,
@@ -25,6 +26,7 @@ router = APIRouter(prefix="/api/services", tags=["services"])
 # read: a page load must not make four network calls to four services.
 _COMPLETE = {
     "plex": plex_credentials,
+    "hyperfix": hyperfix_credentials,
     "lastfm": lastfm_credentials,
     "listenbrainz": listenbrainz_credentials,
 }

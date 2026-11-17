@@ -11,7 +11,7 @@ from pydantic import BaseModel, field_validator
 
 from ratingrelay.engine.refs import check_account
 
-ServiceKind = Literal["plex", "lastfm", "listenbrainz"]
+ServiceKind = Literal["plex", "lastfm", "listenbrainz", "hyperfix"]
 
 
 class AccountFields(BaseModel):

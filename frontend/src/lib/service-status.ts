@@ -1,8 +1,8 @@
 import type { AuthCheckResult, ServiceStatus } from '$lib/types/auth';
 import type { ServiceAccountItem, ServicesResponse } from '$lib/types/services';
 
-/** The three services this relay can hold credentials for, in display order. */
-export const SERVICE_ORDER = ['plex', 'lastfm', 'listenbrainz'] as const;
+/** Every service this relay can hold credentials for, in display order. */
+export const SERVICE_ORDER = ['plex', 'lastfm', 'listenbrainz', 'hyperfix'] as const;
 
 async function fetchStatus(
 	fetch: typeof globalThis.fetch,
@@ -25,13 +25,14 @@ async function fetchStatus(
  * page. Both the setup wizard and the services page read the same shape.
  */
 export async function loadServiceStatus(fetch: typeof globalThis.fetch): Promise<AuthCheckResult> {
-	const [plex, lastfm, listenbrainz] = await Promise.all([
+	const [plex, lastfm, listenbrainz, hyperfix] = await Promise.all([
 		fetchStatus(fetch, '/api/plex/auth/status'),
 		fetchStatus(fetch, '/api/lastfm/auth/status'),
-		fetchStatus(fetch, '/api/listenbrainz/auth/status')
+		fetchStatus(fetch, '/api/listenbrainz/auth/status'),
+		fetchStatus(fetch, '/api/hyperfix/auth/status')
 	]);
 
-	return { plex, lastfm, listenbrainz } as AuthCheckResult;
+	return { plex, lastfm, listenbrainz, hyperfix } as AuthCheckResult;
 }
 
 /**

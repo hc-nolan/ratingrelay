@@ -6,6 +6,7 @@
 	import AccountRow from '$lib/components/services/AccountRow.svelte';
 	import ConnectionChip from '$lib/components/services/ConnectionChip.svelte';
 	import LastFmForm from '$lib/components/services/LastFmForm.svelte';
+	import HyperfixForm from '$lib/components/services/HyperfixForm.svelte';
 	import ListenBrainzForm from '$lib/components/services/ListenBrainzForm.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
@@ -20,6 +21,7 @@
 	let plex = $state(untrack(() => ({ ...data.authStatus.plex })));
 	let lastfm = $state(untrack(() => ({ ...data.authStatus.lastfm })));
 	let listenbrainz = $state(untrack(() => ({ ...data.authStatus.listenbrainz })));
+	let hyperfix = $state(untrack(() => ({ ...data.authStatus.hyperfix })));
 
 	/** Every connected account: the first of each service, plus any added. */
 	let accounts = $state<ServiceAccountItem[]>(untrack(() => [...data.accounts]));
@@ -46,7 +48,7 @@
 	let loadingServers = $state(false);
 
 	let rows = $derived.by(() => {
-		const grouped = { plex: [], lastfm: [], listenbrainz: [] } as Record<
+		const grouped = { plex: [], lastfm: [], listenbrainz: [], hyperfix: [] } as Record<
 			ServiceKind,
 			ServiceAccountItem[]
 		>;
@@ -54,16 +56,26 @@
 		return grouped;
 	});
 
+	const states = $derived<Record<ServiceKind, { status: ServiceStatus; [key: string]: unknown }>>({
+		plex,
+		lastfm,
+		listenbrainz,
+		hyperfix
+	});
+
 	let statuses = $derived<Record<ServiceKind, ServiceStatus>>({
 		plex: plex.status,
 		lastfm: lastfm.status,
-		listenbrainz: listenbrainz.status
+		listenbrainz: listenbrainz.status,
+		hyperfix: hyperfix.status
 	});
 
+	// What the chip shows beside "Connected": a username, or the instance for hyperfix.
 	let connectedNames = $derived<Record<ServiceKind, string | undefined>>({
 		plex: plex.username,
 		lastfm: lastfm.username,
-		listenbrainz: listenbrainz.username
+		listenbrainz: listenbrainz.username,
+		hyperfix: hyperfix.url
 	});
 
 	async function refresh() {
@@ -164,12 +176,12 @@
 				: `?account=${encodeURIComponent(account.id.split(':')[1])}`;
 			const res = await fetch(`/api/${account.service}/auth${query}`, { method: 'DELETE' });
 			if (!res.ok) throw new Error(await res.text());
-			const body: { status: ServiceStatus; username?: string } = await res.json();
-			const state =
-				account.service === 'plex' ? plex : account.service === 'lastfm' ? lastfm : listenbrainz;
+			const body: { status: ServiceStatus; username?: string; url?: string } = await res.json();
+			const state = states[account.service];
 			if (account.primary) {
 				state.status = body.status;
 				state.username = body.username;
+				state.url = body.url;
 				if (account.service === 'plex') {
 					plex.server_name = undefined;
 					plex.server_url = undefined;
@@ -200,6 +212,11 @@
 			service: 'listenbrainz',
 			name: 'ListenBrainz',
 			blurb: 'Love or hate every track at or above the cutoff'
+		},
+		{
+			service: 'hyperfix',
+			name: 'Hyperfix',
+			blurb: 'Source of ratings, instead of Plex (read-only)'
 		}
 	];
 </script>
@@ -257,9 +274,12 @@
 												{:else if account.service === 'lastfm'}
 													Forget the Last.fm API key, secret and password for this account. What was
 													already written stays written.
-												{:else}
+												{:else if account.service === 'listenbrainz'}
 													Forget this ListenBrainz token. Feedback already submitted stays
 													submitted.
+												{:else}
+													Forget this hyperfix address and key. What was already written to the
+													other services stays written.
 												{/if}
 											</p>
 											<div class="mt-2 flex gap-2">
@@ -299,6 +319,16 @@
 										onsubmitted={async (username) => {
 											listenbrainz.status = 'connected';
 											listenbrainz.username = username;
+											editing = null;
+											await refresh();
+										}}
+									/>
+								{:else if service.service === 'hyperfix'}
+									<HyperfixForm
+										submitLabel="Replace key"
+										onsubmitted={async (url) => {
+											hyperfix.status = 'connected';
+											hyperfix.url = url;
 											editing = null;
 											await refresh();
 										}}
@@ -360,6 +390,11 @@
 								{#if !newSlug}
 									<p class="text-xs text-muted-foreground">
 										Give it a short name above and the form appears.
+									</p>
+								{:else if service.service === 'hyperfix'}
+									<p class="text-sm text-muted-foreground">
+										One hyperfix instance is enough for one relay: it holds every rating, so a
+										second account would read the same feed.
 									</p>
 								{:else if service.service !== 'plex'}
 									{#if service.service === 'lastfm'}
@@ -437,11 +472,13 @@
 									class="h-8 px-3 text-sm"
 									onclick={() => (editing = service.service)}>Replace credentials</Button
 								>
-								<Button
-									variant="outline"
-									class="h-8 px-3 text-sm"
-									onclick={() => startAdding(service.service)}>Add another account</Button
-								>
+								{#if service.service !== 'hyperfix'}
+									<Button
+										variant="outline"
+										class="h-8 px-3 text-sm"
+										onclick={() => startAdding(service.service)}>Add another account</Button
+									>
+								{/if}
 							</div>
 						{:else}
 							<div class="mt-3 border-t border-border pt-3">
@@ -453,11 +490,19 @@
 											await refresh();
 										}}
 									/>
-								{:else}
+								{:else if service.service === 'listenbrainz'}
 									<ListenBrainzForm
 										onsubmitted={async (username) => {
 											listenbrainz.status = 'connected';
 											listenbrainz.username = username;
+											await refresh();
+										}}
+									/>
+								{:else}
+									<HyperfixForm
+										onsubmitted={async (url) => {
+											hyperfix.status = 'connected';
+											hyperfix.url = url;
 											await refresh();
 										}}
 									/>

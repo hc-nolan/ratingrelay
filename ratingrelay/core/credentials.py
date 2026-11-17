@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ratingrelay.db.credentials import get_credential
 from ratingrelay.engine.credentials import (
+    HyperfixCredentials,
     LastFmCredentials,
     ListenBrainzCredentials,
     PlexCredentials,
@@ -87,3 +88,28 @@ async def listenbrainz_credentials(
     if not token or not username:
         raise ValueError(f"ListenBrainz not configured ({service})")
     return ListenBrainzCredentials(token=token, username=username)
+
+
+async def hyperfix_credentials(
+    db: AsyncSession, service: str = "hyperfix"
+) -> HyperfixCredentials:
+    """A hyperfix instance and the key to its ratings feed.
+
+    Settings describe the first account only, as everywhere else; a second one is read
+    from its row. The URL lives on the row too, because a bridge instance is an address
+    rather than a well-known host.
+    """
+    settings = get_settings()
+    cred = await get_credential(db, service)
+    primary = is_primary(service)
+    token = (settings.hyperfix_api_key if primary else None) or (
+        cred.token if cred else None
+    )
+    base_url = (
+        str(settings.hyperfix_url).rstrip("/")
+        if primary and settings.hyperfix_url
+        else (cred.base_url if cred else None)
+    )
+    if not token or not base_url:
+        raise ValueError(f"Hyperfix not configured ({service})")
+    return HyperfixCredentials(base_url=base_url, token=token)

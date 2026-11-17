@@ -265,3 +265,44 @@ def test_reset_undoes_recorded_hyperfix_writes():
     config = _reset_target_config("hyperfix:attic")
     assert isinstance(config, HyperfixToConfig)
     assert (config.service, config.account) == ("hyperfix", "attic")
+
+
+@pytest.mark.anyio
+async def test_a_withdrawn_rating_is_cleared_on_the_next_run():
+    """The whole point of the sync store: absence at the source clears what we wrote."""
+    from ratingrelay.engine import MemorySyncStore, pipeline  # pylint: disable=import-outside-toplevel
+
+    fake = FakeHyperfix()
+    target = _target(fake, resolve=_resolver("rec-1"))
+    store = MemorySyncStore()
+
+    first = await pipeline.run_tracks(
+        [Track("Wire", "Field Day")], [target], source_service="plex", sync_store=store
+    )
+    assert first.outcomes[0].status is OutcomeStatus.WRITTEN
+    assert fake.ratings == {"rec-1": 80}
+
+    # Another run, this time from a source that no longer loves the track.
+    second = await pipeline.run_tracks(
+        [], [target], source_service="plex", sync_store=store
+    )
+    assert second.outcomes[0].status is OutcomeStatus.REVERTED
+    assert not fake.ratings
+
+
+@pytest.mark.anyio
+async def test_a_rating_the_user_made_is_never_recorded_as_ours():
+    """Holding the intent means no write and no record, so no later undo can clear it."""
+    from ratingrelay.engine import MemorySyncStore, pipeline  # pylint: disable=import-outside-toplevel
+
+    fake = FakeHyperfix({"rec-1": 95})
+    target = _target(fake, resolve=_resolver("rec-1"))
+    store = MemorySyncStore()
+
+    report = await pipeline.run_tracks(
+        [Track("Wire", "Field Day")], [target], source_service="plex", sync_store=store
+    )
+    assert report.outcomes[0].status is OutcomeStatus.SKIPPED
+    assert not fake.writes()
+    # Nothing recorded, so a withdrawn love later cannot clear the user's 95.
+    assert store.records.get(("plex", "hyperfix"), {}) == {}

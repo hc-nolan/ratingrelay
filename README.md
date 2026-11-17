@@ -150,6 +150,20 @@ what it wrote, so if you reconnect later it picks up where it left off.
 Disconnecting **Plex** also signs you out, because your Plex account is how you log
 in to RatingRelay. You'll be asked to confirm first.
 
+### Hyperfix as the source
+
+If you keep your track ratings in [Hyperfix](https://hyperfix.hnolan.ca), its music
+module can be the source of truth instead of Plex: connect it on the same page with
+the instance's address and an API key, then make a relay **from** it. Nothing is ever
+written back to it, and it cannot be a target — Hyperfix already pushes its own album
+and track ratings to Plex, so a relay writing to Plex as well would leave two
+reconcilers undoing each other.
+
+The scale lines up: Hyperfix's ratings are 0-100, and its 80/20 love and hate are the
+same 8.0/2.0 this tool reads from Plex, so the shared thresholds describe both. The
+key has no scopes — it can call the whole Hyperfix API — so make one for this tool
+and revoke it if you disconnect.
+
 ## Keeping it private
 
 RatingRelay is built for one person on a home network. Keep it off the open

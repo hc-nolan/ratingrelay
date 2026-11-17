@@ -28,6 +28,13 @@
 	</svg>
 {/snippet}
 
+{#snippet hyperfix(s: number)}
+	<svg viewBox="0 0 16 16" width={s} height={s} aria-hidden="true">
+		<rect width="16" height="16" rx="3" fill="#2b1c14" />
+		<circle cx="8" cy="8" r="3.2" fill="#eb743b" />
+	</svg>
+{/snippet}
+
 {#snippet reset(s: number)}
 	<svg
 		viewBox="0 0 16 16"
@@ -48,6 +55,8 @@
 	{@render lastfm(size)}
 {:else if service === 'listenbrainz'}
 	{@render listenbrainz(size)}
+{:else if service === 'hyperfix'}
+	{@render hyperfix(size)}
 {:else}
 	{@render reset(size)}
 {/if}

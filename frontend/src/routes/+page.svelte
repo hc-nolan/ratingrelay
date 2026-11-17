@@ -10,7 +10,11 @@
 	} from '$lib/types/auth';
 	import type { JobData } from '$lib/types/jobs';
 	import { accountOf, accountPayload, kindOf } from '$lib/types/services';
-	import type { ServiceAccountItem, ServiceKind } from '$lib/types/services';
+	import {
+		canBeTarget,
+		type ServiceAccountItem,
+		type TargetServiceKind
+	} from '$lib/types/services';
 	import type {
 		ListenBrainzSourceConfig,
 		PlexSourceConfig,
@@ -241,7 +245,7 @@
 	let relayError = $state('');
 
 	/** What a destination card says under the account name. */
-	const TARGET_HINTS: Record<ServiceKind, string> = {
+	const TARGET_HINTS: Record<TargetServiceKind, string> = {
 		plex: 'rate the library',
 		lastfm: 'love the track',
 		listenbrainz: 'love or hate, per the rating'
@@ -276,8 +280,12 @@
 
 	const targetCatalog = $derived<TargetOption[]>(
 		accounts
-			.filter((a) => usable(a.id))
-			.map((a) => ({ id: a.id, name: a.label, hint: TARGET_HINTS[a.service] }))
+			.filter((a) => usable(a.id) && canBeTarget(a.service))
+			.map((a) => ({
+				id: a.id,
+				name: a.label,
+				hint: TARGET_HINTS[a.service as TargetServiceKind]
+			}))
 	);
 
 	function isAllocated(ref: string): boolean {

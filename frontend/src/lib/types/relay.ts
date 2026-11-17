@@ -16,13 +16,15 @@ export type SourceRef = string;
  * The three services, plus the reset node: only what a *mark* is drawn for. It
  * says nothing about which account — that is the ref above.
  */
-export type ServiceMarkId = 'plex' | 'lastfm' | 'listenbrainz' | 'reset';
+export type ServiceMarkId = 'plex' | 'lastfm' | 'listenbrainz' | 'hyperfix' | 'reset';
 
 /** The mark to draw for an account ref; `reset` is the one non-service node. */
 export function markFor(ref: string): ServiceMarkId {
 	if (ref === 'reset') return 'reset';
 	const kind = ref.split(':')[0];
-	return (['plex', 'lastfm', 'listenbrainz'].includes(kind) ? kind : 'reset') as ServiceMarkId;
+	return (
+		['plex', 'lastfm', 'listenbrainz', 'hyperfix'].includes(kind) ? kind : 'reset'
+	) as ServiceMarkId;
 }
 
 export interface SourceOption {

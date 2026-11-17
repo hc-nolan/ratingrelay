@@ -33,3 +33,11 @@ class ListenBrainzCredentials:
 
     token: str
     username: str
+
+
+@dataclass(frozen=True, slots=True)
+class HyperfixCredentials:
+    """A hyperfix instance and an API key that may read its ratings feed."""
+
+    base_url: str
+    token: str

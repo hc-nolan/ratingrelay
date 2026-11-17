@@ -9,6 +9,7 @@ class ServiceName(str, Enum):
     plex = "plex"
     lastfm = "lastfm"
     listenbrainz = "listenbrainz"
+    hyperfix = "hyperfix"
 
 
 class ServiceAccount(SQLModel, table=True):
@@ -41,6 +42,10 @@ class ServiceAccount(SQLModel, table=True):
 
     # Stored as an MD5 hash for pylast authentication
     password_hash: Optional[str] = Field(default=None)
+
+    # The address of an account that is a URL rather than a well-known service
+    # (hyperfix); Plex keeps its own column because it also stores a library name.
+    base_url: Optional[str] = Field(default=None)
 
     # Plex-specific: populated after the user picks a server
     plex_server_url: Optional[str] = Field(default=None)

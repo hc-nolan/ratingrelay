@@ -48,6 +48,17 @@ class PlexFromConfig(_AccountScoped):
         return data
 
 
+class HyperfixFromConfig(_AccountScoped):
+    """Hyperfix as a source: the ratings feed, filtered to this relay's direction.
+
+    hyperfix's 0-100 ratings share the love/hate thresholds with Plex (80/20 is
+    8.0/2.0), so both ends of a pair read the same numbers.
+    """
+
+    service: Literal["hyperfix"]
+    feedback_type: Literal["love", "hate"] = "love"
+
+
 class LastFMFromConfig(_AccountScoped):
     service: Literal["lastfm"]
 
@@ -83,7 +94,13 @@ class ResetFromConfig(BaseModel):
 
 
 FromConfig = Annotated[
-    Union[PlexFromConfig, LastFMFromConfig, ListenBrainzFromConfig, ResetFromConfig],
+    Union[
+        PlexFromConfig,
+        LastFMFromConfig,
+        ListenBrainzFromConfig,
+        HyperfixFromConfig,
+        ResetFromConfig,
+    ],
     Field(discriminator="service"),
 ]
 

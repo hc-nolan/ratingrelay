@@ -21,7 +21,11 @@ from ratingrelay.core.credentials import (
 )
 from ratingrelay.db.store import SqlMappingStore, SqlMbidCache, SqlSyncStore
 from ratingrelay.engine.services import Source, Target
-from ratingrelay.engine.services.hyperfix import HyperfixClient, HyperfixSource
+from ratingrelay.engine.services.hyperfix import (
+    HyperfixClient,
+    HyperfixSource,
+    HyperfixTarget,
+)
 from ratingrelay.engine.services.lastfm import LastFmClient, LastFmSource, LastFmTarget
 from ratingrelay.engine.services.listenbrainz import (
     ListenBrainzClient,
@@ -31,12 +35,7 @@ from ratingrelay.engine.services.listenbrainz import (
 from ratingrelay.engine.services.musicbrainz import resolve_recording_mbid
 from ratingrelay.engine.services.plex import PlexLibrary, PlexSource, PlexTarget
 from ratingrelay.core.thresholds import effective_thresholds
-from ratingrelay.engine.refs import (
-    KNOWN_SERVICES,
-    is_target_kind,
-    parse_ref,
-    service_kind,
-)
+from ratingrelay.engine.refs import KNOWN_SERVICES, parse_ref, service_kind
 from ratingrelay.settings import get_settings
 
 # Kept as the names the CLI and the request schemas import. A *ref* is one of
@@ -46,7 +45,7 @@ from ratingrelay.settings import get_settings
 # target would give two reconcilers one field, and pairing it with Plex as a target
 # would have them undo each other (HF-182).
 SOURCE_SERVICES = KNOWN_SERVICES
-TARGET_SERVICES = tuple(kind for kind in KNOWN_SERVICES if is_target_kind(kind))
+TARGET_SERVICES = KNOWN_SERVICES
 
 
 def relay_identity(service: str, *, feedback_type: str = "love") -> str:
@@ -232,6 +231,16 @@ async def target_for_service(
             mappings,
             resolve_recording_mbid,
             _score(relay),
+            cache=mbid_cache(db),
+            service=service,
+        )
+    if kind == "hyperfix":
+        return HyperfixTarget(
+            HyperfixClient(await hyperfix_credentials(db, service)),
+            mappings,
+            resolve_recording_mbid,
+            await plex_threshold(db, relay),
+            relay,
             cache=mbid_cache(db),
             service=service,
         )

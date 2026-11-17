@@ -6,30 +6,21 @@ network behaviour.
 """
 
 from dataclasses import dataclass
-from typing import Callable, Awaitable, Optional
+from typing import Optional
 
 from liblistenbrainz import ListenBrainz
 
 from ratingrelay.engine import http_timeouts
 from ratingrelay.engine.credentials import ListenBrainzCredentials
 from ratingrelay.engine.plan import Existing, WritePlan
-from ratingrelay.engine.services import MappedTarget
-from ratingrelay.engine.services.musicbrainz import Resolution
-from ratingrelay.engine.store import MappingStore, MbidCache, NullMbidCache, SyncedTrack
+from ratingrelay.engine.services.musicbrainz import MbidTarget, Resolver
+from ratingrelay.engine.store import MappingStore, MbidCache, SyncedTrack
 from ratingrelay.engine.thread import run_sync
-from ratingrelay.engine.types import (
-    Intent,
-    IntentKind,
-    OutcomeStatus,
-    Reason,
-    Track,
-)
+from ratingrelay.engine.types import Intent, IntentKind, Track
 
 http_timeouts.install()
 
 PAGE_SIZE = 100
-
-Resolver = Callable[[Optional[str], str, str], Awaitable[Resolution]]
 
 
 def _to_track(item: dict) -> Track:
@@ -96,7 +87,7 @@ class ListenBrainzSource:
         return await self.client.feedback(self.score)
 
 
-class ListenBrainzTarget(MappedTarget):
+class ListenBrainzTarget(MbidTarget):
     """Submits feedback for a resolved recording MBID."""
 
     KIND = "listenbrainz"
@@ -111,12 +102,9 @@ class ListenBrainzTarget(MappedTarget):
         *,
         service: str = KIND,
     ):
-        super().__init__(mappings)
-        self.service = service
+        super().__init__(mappings, resolve, cache, service=service)
         self._client = client
-        self._resolve = resolve
         self._score = score
-        self._cache = cache or NullMbidCache()
         self._feedback: Optional[dict[str, int]] = None
 
     async def feedback(self) -> dict[str, int]:
@@ -130,51 +118,19 @@ class ListenBrainzTarget(MappedTarget):
             self._feedback = feedback
         return self._feedback
 
-    async def resolution(self, track: Track) -> Resolution:
-        """The recording this track is, or the ones it was nearly.
-
-        Order is authority: what the source said, then what a human decided,
-        then what we resolved before, then the network. What we resolved before
-        (the recorded MBID and the cache, both keyed by the *source* track) sits
-        below the mapping on purpose — it answered for the unmapped name, so
-        where a mapping exists it is not consulted at all; a cache that
-        outranked a user's correction would make the correction stop working.
-        """
-        artist, title, mapped_mbid = await self.mapped(track)
-        if track.recording_mbid:
-            return Resolution(track.recording_mbid)
-        if mapped_mbid:
-            return Resolution(mapped_mbid)
-        if await self.has_mapping(track):
-            return await self._resolve(track.track_mbid, artist, title)
-        if track.known_recording_mbid:
-            return Resolution(track.known_recording_mbid)
-        cached = await self._cache.get(track.key)
-        if cached:
-            return Resolution(cached)
-        return await self._resolve(track.track_mbid, artist, title)
-
     async def plan(self, track: Track) -> WritePlan:
         resolution = await self.resolution(track)
         mbid = resolution.mbid
         if not mbid:
-            return WritePlan(
-                track,
-                self.service,
-                OutcomeStatus.UNMATCHED,
-                Reason.NO_RECORDING_MBID,
-                "No MusicBrainz recording ID found",
-                matches=resolution.proposals,
-            )
+            return self.unmatched(track, resolution)
 
         score = self._score
-        cache = self._cache
 
         async def commit() -> None:
             await self._client.submit(score, mbid)
             # After the write, never before: a dry run does not reach here, and
             # a failed submit must not teach the cache an answer no run kept.
-            await cache.put(track.key, track.artist, track.title, mbid)
+            await self.remembered(track, mbid)
 
         kind = IntentKind.LOVE if score > 0 else IntentKind.HATE
         held = (await self.feedback()).get(mbid)
@@ -193,27 +149,6 @@ class ListenBrainzTarget(MappedTarget):
             ),
             commit=commit,
         )
-
-    @staticmethod
-    def _recorded_mbid(record: SyncedTrack) -> str:
-        """The recording we gave feedback on, or ``ValueError`` if unrecorded.
-
-        Feedback is keyed by recording MBID, so a row written before
-        ``target_key`` existed is still undoable when it recorded the MBID.
-        """
-        mbid = record.target_key or record.recording_mbid
-        if not mbid:
-            raise ValueError("no recorded recording MBID")
-        return mbid
-
-    @staticmethod
-    def undoable(record: SyncedTrack) -> None:
-        """Raise exactly when :meth:`undo` would refuse this record.
-
-        Static so that "could we undo this?" can be answered from the record
-        alone, without building a client or touching the network.
-        """
-        ListenBrainzTarget._recorded_mbid(record)
 
     async def undo(self, record: SyncedTrack) -> None:
         """Put back the score the recording held before us: neutral, unless the

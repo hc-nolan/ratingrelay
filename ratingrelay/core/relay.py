@@ -34,6 +34,7 @@ from ratingrelay.engine.services.plex import PlexLibrary
 from ratingrelay.engine.store import ProgressSink
 from ratingrelay.engine.types import OutcomeStatus, Reason, RunReport, TrackOutcome
 from ratingrelay.schemas.relay import (
+    HyperfixToConfig,
     LastFMToConfig,
     ListenBrainzToConfig,
     PlexToConfig,
@@ -137,6 +138,8 @@ def _reset_target_config(ref: str) -> object:
         return LastFMToConfig(service="lastfm", account=parsed.account)
     if parsed.kind == "listenbrainz":
         return ListenBrainzToConfig(service="listenbrainz", account=parsed.account)
+    if parsed.kind == "hyperfix":
+        return HyperfixToConfig(service="hyperfix", account=parsed.account)
     # Never fall through to a target of some other service.
     raise ValueError(f"Unknown service to reset: {ref}")
 
@@ -249,6 +252,11 @@ async def _reset_service(
         reset = reset_lastfm
     elif kind == "listenbrainz":
         reset = reset_listenbrainz
+    elif kind == "hyperfix":
+        # No whole-library wipe here on purpose: hyperfix's feed is the complete
+        # rated set, so a wipe would clear ratings the user made in its UI, and
+        # clearing what *we* wrote is the recorded reset above.
+        raise ValueError(f"{target_svc} has no whole-service wipe; reset its records")
     else:
         # Never fall through to a wipe of some other service: this is the most
         # destructive call the tool makes, and a ref it does not know is a bug.

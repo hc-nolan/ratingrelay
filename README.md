@@ -150,19 +150,23 @@ what it wrote, so if you reconnect later it picks up where it left off.
 Disconnecting **Plex** also signs you out, because your Plex account is how you log
 in to RatingRelay. You'll be asked to confirm first.
 
-### Hyperfix as the source
+### Hyperfix as a source or a target
 
 If you keep your track ratings in [Hyperfix](https://hyperfix.hnolan.ca), its music
-module can be the source of truth instead of Plex: connect it on the same page with
-the instance's address and an API key, then make a relay **from** it. Nothing is ever
-written back to it, and it cannot be a target — Hyperfix already pushes its own album
-and track ratings to Plex, so a relay writing to Plex as well would leave two
-reconcilers undoing each other.
+module can be either end of a relay: connect it on the same page with the instance's
+address and an API key, then drag it into the relay as the **source** (its ratings go
+out to Last.fm and ListenBrainz) or as a **target** (the relay's ratings land in it).
 
 The scale lines up: Hyperfix's ratings are 0-100, and its 80/20 love and hate are the
 same 8.0/2.0 this tool reads from Plex, so the shared thresholds describe both. The
 key has no scopes — it can call the whole Hyperfix API — so make one for this tool
 and revoke it if you disconnect.
+
+One pairing is refused: a relay **from** Hyperfix **to** Plex. Hyperfix pushes its own
+album and track ratings to Plex, so both would be writing one field and each would
+treat the other's write as the user's. A Hyperfix *target* is fine — but note that
+rating a recording there makes Hyperfix push it to Plex too, so `lastfm → hyperfix`
+also reaches Plex, through Hyperfix.
 
 ## Keeping it private
 

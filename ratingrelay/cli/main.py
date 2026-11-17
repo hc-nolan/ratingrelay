@@ -29,7 +29,7 @@ from ratingrelay.cli.config import (
     RelaySpec,
     load_relays,
 )
-from ratingrelay.engine.refs import KNOWN_SERVICES, is_target_kind, parse_ref
+from ratingrelay.engine.refs import KNOWN_SERVICES, parse_ref
 
 EXIT_OK = 0
 EXIT_PARTIAL = 1
@@ -88,16 +88,6 @@ def _account_ref(value: str) -> str:
         ) from exc
 
 
-def _target_ref(value: str) -> str:
-    """``--target``: an account ref, and one that can receive a write."""
-    ref = _account_ref(value)
-    if not is_target_kind(parse_ref(ref).kind):
-        raise argparse.ArgumentTypeError(
-            f"{ref} cannot be a target — a target is one of "
-            f"{', '.join(k for k in KNOWN_SERVICES if is_target_kind(k))}"
-        )
-    return ref
-
 
 def _add_relay_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
@@ -111,7 +101,7 @@ def _add_relay_flags(parser: argparse.ArgumentParser) -> None:
         "--target",
         dest="targets",
         action="append",
-        type=_target_ref,
+        type=_account_ref,
         default=[],
         metavar="SERVICE[:ACCOUNT]",
         help="where they go; repeat for more than one (default: lastfm)",

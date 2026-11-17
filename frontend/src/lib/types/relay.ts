@@ -47,6 +47,9 @@ export interface ListenBrainzSourceConfig {
 	feedbackType: 'love' | 'hate';
 }
 
+/** A source read as loves or hates; hyperfix's 80/20 are Plex's 8.0/2.0. */
+export type HyperfixSourceConfig = ListenBrainzSourceConfig;
+
 /**
  * The Plex ratings (0–10) that count as a love and a hate, shared by every relay.
  * A locked one is pinned in the server settings and can't be changed here.

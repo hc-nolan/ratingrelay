@@ -8,13 +8,14 @@ reset that then refuses — the exact divergence this project already had once.
 
 import pytest
 
+from ratingrelay.engine.services.hyperfix import HyperfixTarget
 from ratingrelay.engine.services.lastfm import LastFmTarget
 from ratingrelay.engine.services.listenbrainz import ListenBrainzTarget
 from ratingrelay.engine.services.plex import PlexTarget
 from ratingrelay.engine.services.registry import UNDO_PRECONDITIONS
 from ratingrelay.engine.store import MemoryMappingStore, SyncedTrack
 
-TARGETS = (PlexTarget, LastFmTarget, ListenBrainzTarget)
+TARGETS = (PlexTarget, LastFmTarget, ListenBrainzTarget, HyperfixTarget)
 
 
 def test_the_queue_asks_the_question_the_targets_undo_runs():
@@ -38,6 +39,9 @@ async def test_undo_refuses_an_unaddressable_record_without_calling_out(cls):
         async def rate(self, external_id, rating):
             calls.append((external_id, rating))
 
+        async def write_rating(self, mbid, rating):
+            calls.append((mbid, rating))
+
     async def resolve(_mbid, _artist, _title):
         return None
 
@@ -46,6 +50,8 @@ async def test_undo_refuses_an_unaddressable_record_without_calling_out(cls):
         target = PlexTarget(StubLibrary(), mapping_store)
     elif cls is LastFmTarget:
         target = LastFmTarget(StubClient(), mapping_store)
+    elif cls is HyperfixTarget:
+        target = HyperfixTarget(StubLibrary(), mapping_store, resolve)
     else:
         target = ListenBrainzTarget(StubClient(), mapping_store, resolve)
 

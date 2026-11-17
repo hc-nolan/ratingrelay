@@ -28,11 +28,18 @@ targets = ["plex"]
 
 # Hyperfix as the source of truth: its music module holds the ratings, and this
 # relay mirrors them outward. A hyperfix source cannot target Plex (hyperfix
-# writes Plex itself), and nothing is ever written back into hyperfix.
+# writes Plex itself), so the targets here are the other two.
 [[relay]]
 name = "from-hyperfix"
 source = "hyperfix"
 targets = ["lastfm", "listenbrainz"]
+
+# Or hyperfix as a target: the ratings land in its music module, which stores
+# them as 0-100 and pushes them on to Plex itself.
+[[relay]]
+name = "into-hyperfix"
+source = "lastfm"
+targets = ["hyperfix"]
 
 # A second account of a service is named after the colon. Add it on the Services
 # page first; the account that was already connected keeps the bare name. A

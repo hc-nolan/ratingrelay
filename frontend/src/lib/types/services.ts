@@ -8,22 +8,6 @@
  */
 export type ServiceKind = 'plex' | 'lastfm' | 'listenbrainz' | 'hyperfix';
 
-/**
- * Kinds that hold the ratings instead of receiving them.
- *
- * A hyperfix instance is the source: it pushes its own album and track ratings to Plex,
- * so a relay writing back into it would fight that, and pairing it with Plex as a target
- * would leave two reconcilers on one field. It can never be a destination.
- */
-const SOURCE_ONLY_KINDS: ServiceKind[] = ['hyperfix'];
-
-export type TargetServiceKind = Exclude<ServiceKind, 'hyperfix'>;
-
-/** Whether an account of this kind can be a relay's destination. */
-export function canBeTarget(kind: ServiceKind): kind is TargetServiceKind {
-	return !SOURCE_ONLY_KINDS.includes(kind);
-}
-
 export interface ServiceAccountItem {
 	id: string;
 	service: ServiceKind;

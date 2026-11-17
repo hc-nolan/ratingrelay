@@ -78,7 +78,7 @@ class ResetFromConfig(BaseModel):
     """
 
     service: Literal["reset"] = "reset"
-    target_service: Literal["plex", "lastfm", "listenbrainz"] = "plex"
+    target_service: Literal["plex", "lastfm", "listenbrainz", "hyperfix"] = "plex"
     target_account: Optional[str] = None
     all: bool = False
 
@@ -124,8 +124,18 @@ class ListenBrainzToConfig(_AccountScoped):
     service: Literal["listenbrainz"]
 
 
+class HyperfixToConfig(_AccountScoped):
+    """Hyperfix as a target. It writes the relay's direction as a 0-100 rating.
+
+    hyperfix's 80/20 are 8.0/2.0 here, so both ends of a pair agree; writing back
+    into hyperfix also reaches Plex, through hyperfix's own rating push.
+    """
+
+    service: Literal["hyperfix"]
+
+
 ToConfig = Annotated[
-    Union[PlexToConfig, LastFMToConfig, ListenBrainzToConfig],
+    Union[PlexToConfig, LastFMToConfig, ListenBrainzToConfig, HyperfixToConfig],
     Field(discriminator="service"),
 ]
 

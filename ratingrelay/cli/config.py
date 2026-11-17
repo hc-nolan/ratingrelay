@@ -18,7 +18,7 @@ from pathlib import Path
 import tomllib
 from typing import Any
 
-from ratingrelay.engine.refs import KNOWN_SERVICES, is_target_kind, parse_ref
+from ratingrelay.engine.refs import KNOWN_SERVICES, parse_ref
 
 DEFAULT_CONFIG = "relays.toml"
 
@@ -54,20 +54,13 @@ class ConfigError(ValueError):
 def _read_ref(name: str, side: str, value: str) -> str:
     """Validate one source or target as an account ref, or say why not."""
     try:
-        ref = parse_ref(value)
+        return parse_ref(value).ref
     except ValueError as exc:
         raise ConfigError(
             f"{name}: {exc} (a {side} is one of "
             f"{', '.join(KNOWN_SERVICES)}, or one of those followed by "
             "':account' — e.g. lastfm:new)"
         ) from exc
-    if side == "target" and not is_target_kind(ref.kind):
-        # Hyperfix holds the ratings; nothing writes back into it.
-        raise ConfigError(
-            f"{name}: {ref.ref} cannot be a target (a target is one of "
-            f"{', '.join(k for k in KNOWN_SERVICES if is_target_kind(k))})"
-        )
-    return ref.ref
 
 
 @dataclass(frozen=True)

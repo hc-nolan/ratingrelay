@@ -53,11 +53,12 @@ def _item(mbid: str, rating: Any, artist: str = "Wire", title: str = "Field Day"
     }
 
 
-def test_the_kind_is_a_source_and_not_a_target():
+def test_the_kind_is_a_source_and_a_target():
+    """A peer service in both directions (HF-198); only the pairing rules differ."""
     assert "hyperfix" in KNOWN_SERVICES
     assert default_label("hyperfix") == "Hyperfix"
     assert "hyperfix" in SOURCE_SERVICES
-    assert "hyperfix" not in TARGET_SERVICES
+    assert "hyperfix" in TARGET_SERVICES
 
 
 @pytest.mark.anyio
@@ -142,13 +143,13 @@ def test_a_hyperfix_source_config_is_accepted():
     assert (config.service, config.feedback_type) == ("hyperfix", "hate")
 
 
-def test_a_hyperfix_target_config_is_refused():
-    from pydantic import TypeAdapter, ValidationError  # pylint: disable=import-outside-toplevel
+def test_a_hyperfix_target_config_is_accepted():
+    from pydantic import TypeAdapter  # pylint: disable=import-outside-toplevel
 
     from ratingrelay.schemas.relay import ToConfig  # pylint: disable=import-outside-toplevel
 
-    with pytest.raises(ValidationError):
-        TypeAdapter(ToConfig).validate_python({"service": "hyperfix"})
+    config = TypeAdapter(ToConfig).validate_python({"service": "hyperfix", "account": "attic"})
+    assert (config.service, config.account) == ("hyperfix", "attic")
 
 
 def _parse_source(payload: dict):
@@ -157,22 +158,20 @@ def _parse_source(payload: dict):
     return TypeAdapter(FromConfig).validate_python(payload)
 
 
-def test_a_relay_cannot_be_configured_to_write_into_hyperfix(tmp_path):
-    """A target of this kind is refused where the config is read, not mid-run."""
-    from ratingrelay.cli.config import ConfigError, load_relays  # pylint: disable=import-outside-toplevel
+def test_a_relay_can_write_into_hyperfix(tmp_path):
+    """A hyperfix target is ordinary config: the refusal is about Plex, not the kind."""
+    from ratingrelay.cli.config import load_relays  # pylint: disable=import-outside-toplevel
 
     path = tmp_path / "relays.toml"
     path.write_text('[[relay]]\nname = "back"\nsource = "lastfm"\ntargets = ["hyperfix"]\n')
-    with pytest.raises(ConfigError, match="cannot be a target"):
-        load_relays(str(path))
+    assert load_relays(str(path))[0].targets == ("hyperfix",)
 
 
-def test_the_cli_refuses_a_hyperfix_target_flag():
+def test_the_cli_accepts_a_hyperfix_target_flag():
     from ratingrelay.cli.main import build_parser  # pylint: disable=import-outside-toplevel
 
-    parser = build_parser()
-    with pytest.raises(SystemExit):
-        parser.parse_args(["relay", "--source", "lastfm", "--target", "hyperfix"])
+    args = build_parser().parse_args(["relay", "--source", "lastfm", "--target", "hyperfix"])
+    assert args.targets == ["hyperfix"]
 
 
 def test_hyperfix_is_still_accepted_as_a_source(tmp_path):

@@ -17,6 +17,8 @@ from ratingrelay.engine.refs import account_ref
 from ratingrelay.engine.services import Source, Target
 from ratingrelay.engine.types import Track
 from ratingrelay.schemas.relay import (
+    HyperfixFromConfig,
+    HyperfixToConfig,
     LastFMFromConfig,
     LastFMToConfig,
     ListenBrainzFromConfig,
@@ -50,6 +52,10 @@ async def source_for(db: AsyncSession, config: object) -> Source:
         return await source_for_service(
             db, ref_for(config), feedback_type=config.feedback_type
         )
+    if isinstance(config, HyperfixFromConfig):
+        return await source_for_service(
+            db, ref_for(config), feedback_type=config.feedback_type
+        )
     raise ValueError(f"Unknown source service: {config}")
 
 
@@ -71,6 +77,8 @@ def relay_for(config: object) -> str:
         return relay_identity(ref_for(config))
     if isinstance(config, ListenBrainzFromConfig):
         return relay_identity(ref_for(config), feedback_type=config.feedback_type)
+    if isinstance(config, HyperfixFromConfig):
+        return relay_identity(ref_for(config), feedback_type=config.feedback_type)
     raise ValueError(f"Unknown source service: {config}")
 
 
@@ -81,5 +89,7 @@ async def target_for(db: AsyncSession, config: object, relay: str = "love") -> T
     if isinstance(config, LastFMToConfig):
         return await target_for_service(db, ref_for(config), relay=relay)
     if isinstance(config, ListenBrainzToConfig):
+        return await target_for_service(db, ref_for(config), relay=relay)
+    if isinstance(config, HyperfixToConfig):
         return await target_for_service(db, ref_for(config), relay=relay)
     raise ValueError(f"Unknown target service: {config}")

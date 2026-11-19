@@ -76,7 +76,7 @@ class FakeSection:
 
     Both operators are **strict**, as a live server answers them: ``>>=8`` gives 9
     and 10, never 8. The adapter asks one step wider and applies the inclusive
-    promise locally, so an inclusive fake here would hide that (RR-21).
+    promise locally, so an inclusive fake here would hide that (RR-19).
     """
 
     def __init__(self, tracks: list[FakePlexTrack]):

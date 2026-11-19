@@ -49,7 +49,7 @@ export interface ListenBrainzSourceConfig {
 
 /**
  * A source read as loves or hates, or as each track's own rating; hyperfix's 80/20
- * are Plex's 8.0/2.0, and `rating` carries the value itself (RR-20).
+ * are Plex's 8.0/2.0, and `rating` carries the value itself (RR-18).
  */
 export interface HyperfixSourceConfig {
 	feedbackType: Direction;

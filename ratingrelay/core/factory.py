@@ -64,7 +64,7 @@ def relay_identity(service: str, *, feedback_type: str = "love") -> str:
 
     ``rating`` is its own identity on purpose: a star relay and a love relay on the
     same pair classify the same field differently, and sharing records would let one
-    undo the other's writes (RR-20).
+    undo the other's writes (RR-18).
 
     The account is deliberately not part of it: a sync record is keyed by the
     pair of refs as well, so two accounts of one kind are already told apart,

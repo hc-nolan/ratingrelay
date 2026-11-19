@@ -68,7 +68,7 @@ class SyncStore(Protocol):
         An exact relay asks this before replacing a value it has no record of: the
         value may not be the user's at all, but a write another direction of the
         same pair made — the case where somebody switches a pair from loves to
-        ratings without resetting first (RR-20).
+        ratings without resetting first (RR-18).
         """
 
     async def remember(

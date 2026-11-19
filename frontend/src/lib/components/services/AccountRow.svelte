@@ -8,6 +8,10 @@
 	 * The label is what the user named it; the ref it is stored under is shown
 	 * only when it is not the first account, because that is the string a
 	 * `relays.toml` has to name to reach it.
+	 *
+	 * An account the environment describes has no row to delete, so it offers no
+	 * Disconnect — the button would forget nothing and the service would still be
+	 * connected on the next page load.
 	 */
 	let {
 		account,
@@ -19,7 +23,7 @@
 		ondisconnect: () => void;
 	} = $props();
 
-	let detail = $derived(account.server_name ?? account.username ?? '');
+	let detail = $derived(account.server_name ?? account.username ?? account.url ?? '');
 </script>
 
 <div class="flex items-center gap-2 rounded-md border border-border px-2.5 py-1.5">
@@ -35,12 +39,21 @@
 		>
 	{/if}
 	<span class="ml-auto truncate text-xs text-muted-foreground">{detail}</span>
-	<Button
-		variant="ghost"
-		class="h-7 px-2 text-xs text-destructive"
-		onclick={ondisconnect}
-		disabled={busy}
-	>
-		Disconnect
-	</Button>
+	{#if account.managed === 'settings'}
+		<span
+			class="shrink-0 text-xs text-muted-foreground"
+			title="Set in the environment (PLEX_TOKEN, LISTENBRAINZ_TOKEN, …), which the web app cannot change."
+		>
+			from the environment
+		</span>
+	{:else}
+		<Button
+			variant="ghost"
+			class="h-7 px-2 text-xs text-destructive"
+			onclick={ondisconnect}
+			disabled={busy}
+		>
+			Disconnect
+		</Button>
+	{/if}
 </div>

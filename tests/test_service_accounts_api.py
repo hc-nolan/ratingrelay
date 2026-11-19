@@ -20,13 +20,35 @@ import ratingrelay.models.services  # noqa: F401
 import ratingrelay.models.sync  # noqa: F401
 import ratingrelay.models.thresholds  # noqa: F401
 
+from ratingrelay.core import credentials as credential_resolution
 from ratingrelay.core.session import SESSION_COOKIE
 from ratingrelay.db import get_async_session
 from ratingrelay.db.credentials import get_account, get_credential, upsert_credential
 from ratingrelay.models.services import ServiceName
 from ratingrelay.routes import lastfm, listenbrainz, plex, services
+from ratingrelay.settings import Settings
 
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
+
+# Every credential setting pinned to its empty value, as the integration suite
+# does: ``_env_file=None`` stops `.config` (which holds real tokens on a
+# developer's machine) and the explicit values stop an exported PLEX_TOKEN or
+# LISTENBRAINZ_TOKEN deciding what these tests assert. `/api/services` reads
+# settings on every call, so without this a developer's shell can change the
+# answer.
+_UNSET = {
+    "plex_token": None,
+    "plex_server_url": None,
+    "plex_music_library": "Music",
+    "lastfm_token": None,
+    "lastfm_secret": None,
+    "lastfm_username": None,
+    "lastfm_password": None,
+    "listenbrainz_token": None,
+    "listenbrainz_username": None,
+    "hyperfix_url": None,
+    "hyperfix_api_key": None,
+}
 
 
 class _FakePasswordUser:
@@ -65,6 +87,28 @@ class _FakeResource:
 
     def connect(self):
         return _FakeConnection(f"http://{self.name.lower()}.invalid:32400")
+
+
+class _FakePlexServer:
+    """The server itself, asked only for its own name."""
+
+    friendlyName = "Shelf"
+
+    def __init__(self, url, token, timeout=None):
+        self.url = url
+        self.token = token
+        self.timeout = timeout
+
+
+@pytest.fixture(autouse=True)
+def no_ambient_credentials(monkeypatch):
+    """Nothing in `.config` or the shell decides what these tests see."""
+    monkeypatch.setattr(
+        credential_resolution, "get_settings", lambda: Settings(_env_file=None, **_UNSET)
+    )
+    # The server-name memo is process-wide, on purpose; a test must not read a
+    # name another test cached.
+    monkeypatch.setattr(plex, "_server_names", {})
 
 
 @pytest.fixture
@@ -145,6 +189,99 @@ async def test_an_account_with_incomplete_credentials_is_not_configured(client, 
     body = (await client.get("/api/services")).json()
 
     assert [a["configured"] for a in body["accounts"]] == [False]
+
+
+async def test_a_service_configured_from_the_environment_is_listed(
+    client, factory, monkeypatch
+):
+    """A Key Vault deploy hands every credential in through env vars, not rows.
+
+    There is no ``serviceaccount`` row for such a service, so listing rows alone
+    left it out of the flow builder while every run resolved it happily — a
+    connected target the interface refused to offer.
+    """
+    from ratingrelay.core import credentials as credentials_core  # pylint: disable=import-outside-toplevel
+    from ratingrelay.settings import Settings  # pylint: disable=import-outside-toplevel
+
+    monkeypatch.setattr(
+        credentials_core,
+        "get_settings",
+        lambda: Settings(
+            _env_file=None,
+            listenbrainz_token="from-settings",
+            listenbrainz_username="chunned",
+            hyperfix_url="https://hyperfix.invalid",
+            hyperfix_api_key="from-settings",
+        ),
+    )
+
+    body = (await client.get("/api/services")).json()
+
+    assert [
+        (a["id"], a["service"], a["primary"], a["configured"], a["managed"])
+        for a in body["accounts"]
+    ] == [
+        ("listenbrainz", "listenbrainz", True, True, "settings"),
+        ("hyperfix", "hyperfix", True, True, "settings"),
+    ]
+    by_id = {a["id"]: a for a in body["accounts"]}
+    assert by_id["listenbrainz"]["username"] == "chunned"
+    assert by_id["hyperfix"]["url"] == "https://hyperfix.invalid"
+
+
+async def test_a_stored_account_is_not_listed_twice_because_settings_also_hold_it(
+    client, factory, monkeypatch
+):
+    """Settings win field by field; they do not create a second account.
+
+    A bare-kind row the environment fully describes is listed once, and as the
+    environment's: replacing its credential here would not take effect.
+    """
+    from ratingrelay.core import credentials as credentials_core  # pylint: disable=import-outside-toplevel
+    from ratingrelay.settings import Settings  # pylint: disable=import-outside-toplevel
+
+    monkeypatch.setattr(
+        credentials_core,
+        "get_settings",
+        lambda: Settings(
+            _env_file=None,
+            listenbrainz_token="from-settings",
+            listenbrainz_username="chunned",
+        ),
+    )
+    await _store(factory, "listenbrainz", token="row", username="chunned", label="Mine")
+
+    body = (await client.get("/api/services")).json()
+
+    assert [
+        (a["id"], a["label"], a["managed"], a["configured"]) for a in body["accounts"]
+    ] == [("listenbrainz", "Mine", "settings", True)]
+
+
+async def test_a_stored_account_the_environment_only_partly_describes_keeps_its_row(
+    client, factory, monkeypatch
+):
+    """A Plex token without a server URL is not a credential the env owns."""
+    from ratingrelay.core import credentials as credentials_core  # pylint: disable=import-outside-toplevel
+    from ratingrelay.settings import Settings  # pylint: disable=import-outside-toplevel
+
+    monkeypatch.setattr(
+        credentials_core,
+        "get_settings",
+        lambda: Settings(_env_file=None, plex_token="from-settings"),
+    )
+    await _store(
+        factory,
+        "plex",
+        token="row",
+        username="chunned",
+        plex_server_url="http://shelf.invalid:32400",
+        plex_server_name="Shelf",
+    )
+
+    body = (await client.get("/api/services")).json()
+
+    assert [(a["id"], a["managed"]) for a in body["accounts"]] == [("plex", "database")]
 
 
 # ---------------------------------------------------------------------------
@@ -339,3 +476,158 @@ async def test_an_account_name_that_would_not_parse_is_refused(client, account):
     )
 
     assert res.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Plex: a server the environment names is a server chosen
+# ---------------------------------------------------------------------------
+
+
+async def test_a_server_named_only_in_the_environment_is_reported(
+    client, factory, monkeypatch
+):
+    """PLEX_SERVER_URL says which server; asking the user to pick it again is a bug.
+
+    A deploy configured entirely from env has no row to hold a server name, so the
+    status asks the server itself rather than leaving the wizard on "pick a server"
+    forever. The name never changes, so the second page load must not ask again.
+    """
+    asked = []
+
+    def _server(url, token, timeout=None):
+        asked.append((url, token, timeout))
+        return _FakePlexServer(url, token, timeout)
+
+    monkeypatch.setattr(plex, "MyPlexAccount", _FakePlexAccount)
+    monkeypatch.setattr(plex, "PlexServer", _server)
+    monkeypatch.setattr(plex.settings, "plex_token", "from-settings")
+    monkeypatch.setattr(plex.settings, "plex_server_url", "http://shelf.invalid:32400")
+
+    body = (await client.get("/api/plex/auth/status")).json()
+    again = (await client.get("/api/plex/auth/status")).json()
+
+    assert body == {
+        "status": "connected",
+        "username": "chunned",
+        "server_name": "Shelf",
+        "server_url": "http://shelf.invalid:32400",
+    }
+    assert again["server_name"] == "Shelf"
+    # The timeout is what keeps a page load bounded: losing it is a 30 s stall.
+    assert asked == [("http://shelf.invalid:32400", "from-settings", plex._NAME_TIMEOUT)]
+
+
+async def test_a_server_the_environment_moved_past_is_named_by_the_server(
+    client, factory, monkeypatch
+):
+    """The name has to describe the server the relay reads, not the one it left."""
+    monkeypatch.setattr(plex, "MyPlexAccount", _FakePlexAccount)
+    monkeypatch.setattr(plex, "PlexServer", _FakePlexServer)
+    monkeypatch.setattr(plex.settings, "plex_token", "from-settings")
+    monkeypatch.setattr(plex.settings, "plex_server_url", "http://shelf.invalid:32400")
+    await _store(
+        factory,
+        "plex",
+        token="owner-token",
+        username="chunned",
+        plex_server_url="http://attic.invalid:32400",
+        plex_server_name="Attic",
+    )
+
+    body = (await client.get("/api/plex/auth/status")).json()
+
+    assert (body["server_name"], body["server_url"]) == (
+        "Shelf",
+        "http://shelf.invalid:32400",
+    )
+
+
+async def test_a_server_already_stored_is_not_asked_for_its_name_again(
+    client, factory, monkeypatch
+):
+    def _server(*_args, **_kwargs):
+        raise AssertionError("a stored server name is enough")
+
+    monkeypatch.setattr(plex, "MyPlexAccount", _FakePlexAccount)
+    monkeypatch.setattr(plex, "PlexServer", _server)
+    monkeypatch.setattr(plex.settings, "plex_token", None)
+    monkeypatch.setattr(plex.settings, "plex_server_url", None)
+    await _store(
+        factory,
+        "plex",
+        token="owner-token",
+        username="chunned",
+        plex_server_url="http://shelf.invalid:32400",
+        plex_server_name="Shelf",
+    )
+
+    body = (await client.get("/api/plex/auth/status")).json()
+
+    assert (body["status"], body["server_name"], body["server_url"]) == (
+        "connected",
+        "Shelf",
+        "http://shelf.invalid:32400",
+    )
+
+
+async def test_an_unreachable_server_still_reports_the_login(
+    client, factory, monkeypatch
+):
+    """A server that is down is not a bad token, and not a reason to ask again."""
+
+    def _server(*_args, **_kwargs):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(plex, "MyPlexAccount", _FakePlexAccount)
+    monkeypatch.setattr(plex, "PlexServer", _server)
+    monkeypatch.setattr(plex.settings, "plex_token", "from-settings")
+    monkeypatch.setattr(plex.settings, "plex_server_url", "http://shelf.invalid:32400")
+
+    body = (await client.get("/api/plex/auth/status")).json()
+
+    assert (body["status"], body["server_name"], body["server_url"]) == (
+        "connected",
+        None,
+        "http://shelf.invalid:32400",
+    )
+
+
+async def test_settings_never_describe_a_second_plex_server(
+    client, factory, monkeypatch
+):
+    """The env describes the first account only; a named server answers for itself."""
+    monkeypatch.setattr(plex, "MyPlexAccount", _FakePlexAccount)
+    monkeypatch.setattr(
+        plex,
+        "PlexServer",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("settings must not reach a named ref")
+        ),
+    )
+    monkeypatch.setattr(plex.settings, "plex_token", "from-settings")
+    monkeypatch.setattr(plex.settings, "plex_server_url", "http://shelf.invalid:32400")
+    await _store(
+        factory,
+        "plex",
+        token="owner-token",
+        username="chunned",
+        plex_server_url="http://shelf.invalid:32400",
+        plex_server_name="Shelf",
+    )
+    await _store(
+        factory,
+        "plex:attic",
+        token="owner-token",
+        username="chunned",
+        plex_server_url="http://attic.invalid:32400",
+        plex_server_name="Attic",
+    )
+
+    body = (
+        await client.get("/api/plex/auth/status", params={"account": "attic"})
+    ).json()
+
+    assert (body["server_name"], body["server_url"]) == (
+        "Attic",
+        "http://attic.invalid:32400",
+    )

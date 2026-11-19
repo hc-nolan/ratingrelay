@@ -59,11 +59,20 @@
 	// is how you end up with one target and no way back to the form. Pressing
 	// "Start relaying" is what moves the page on — except for a returning user,
 	// who was already set up before this page loaded.
-	let started = $state(untrack(() => plex.status === 'connected' && !!plex.server_name && musicOk));
+	// A server is chosen when we know which one: its name, or — for a deployment
+	// that names it only by address in the environment — its URL. Asking for a
+	// name there would be asking the user to pick a server nothing needs picked.
+	let serverChosen = $derived(!!plex.server_name || !!plex.server_url);
+
+	let started = $state(
+		untrack(
+			() => plex.status === 'connected' && (!!plex.server_name || !!plex.server_url) && musicOk
+		)
+	);
 
 	let step: SetupStep = $derived.by(() => {
 		if (plex.status !== 'connected') return 'plex';
-		if (!plex.server_name) return 'server-select';
+		if (!serverChosen) return 'server-select';
 		if (!musicOk || !started) return 'music-services';
 		return 'done';
 	});
@@ -217,7 +226,7 @@
 
 	const wizardSteps = $derived([
 		{ label: 'Plex', done: plex.status === 'connected', active: step === 'plex' },
-		{ label: 'Server', done: !!plex.server_name, active: step === 'server-select' },
+		{ label: 'Server', done: serverChosen, active: step === 'server-select' },
 		{ label: 'Music', done: musicOk, active: step === 'music-services' },
 		{ label: 'Ready', done: musicOk, active: step === 'done' }
 	]);
@@ -257,13 +266,16 @@
 	 * status endpoint — that is what the setup wizard waits for. A second one is
 	 * `configured`: its values are complete in the database, which `/api/services`
 	 * reports without calling anybody.
+	 *
+	 * Plex also needs a server to read, and a deploy that hands the token and the
+	 * server URL in through the environment has no row to hold a server *name*: a
+	 * complete credential is enough there.
 	 */
 	function usable(ref: string): boolean {
 		const account = accounts.find((a) => a.id === ref);
 		const kind = kindOf(ref);
 		if (kind === 'plex') {
-			const server = account?.server_name;
-			return plex.status === 'connected' && !!server;
+			return plex.status === 'connected' && (!!account?.server_name || !!account?.configured);
 		}
 		if (kind === 'lastfm') {
 			return ref === 'lastfm' ? lastfm.status === 'connected' : !!account?.configured;

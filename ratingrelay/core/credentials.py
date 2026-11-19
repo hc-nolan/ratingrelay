@@ -25,6 +25,28 @@ from ratingrelay.engine.credentials import (
 from ratingrelay.engine.refs import is_primary
 from ratingrelay.settings import get_settings
 
+# The settings that together describe one account, per kind. Kept beside the
+# resolvers below, which read the same fields in the same order: a new credential
+# field belongs in both places or the two answers disagree.
+_SETTING_FIELDS = {
+    "plex": ("plex_token", "plex_server_url"),
+    "lastfm": ("lastfm_token", "lastfm_secret", "lastfm_username", "lastfm_password"),
+    "listenbrainz": ("listenbrainz_token", "listenbrainz_username"),
+    "hyperfix": ("hyperfix_api_key", "hyperfix_url"),
+}
+
+
+def settings_describe(kind: str) -> bool:
+    """Whether the environment alone fully describes the first account of *kind*.
+
+    Only the bare kind is a ref settings can speak for. The services list asks
+    this so it can say where an account's credentials really come from: a row the
+    environment shadows still resolves from settings, and offering to replace or
+    remove it would be a button that cannot take effect.
+    """
+    settings = get_settings()
+    return all(getattr(settings, field) for field in _SETTING_FIELDS[kind])
+
 
 async def plex_credentials(db: AsyncSession, service: str = "plex") -> PlexCredentials:
     settings = get_settings()

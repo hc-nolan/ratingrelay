@@ -242,6 +242,7 @@
 
 			<div class="mt-6 space-y-2">
 				{#each services as service (service.service)}
+					{@const fromEnvironment = rows[service.service].some((a) => a.managed === 'settings')}
 					<section class="panel px-4 py-3.5">
 						<div class="flex items-center gap-3">
 							<ServiceMark service={service.service} size={26} />
@@ -467,11 +468,19 @@
 							</div>
 						{:else if statuses[service.service] === 'connected'}
 							<div class="mt-3 flex flex-wrap gap-2 border-t border-border pt-3">
-								<Button
-									variant="outline"
-									class="h-8 px-3 text-sm"
-									onclick={() => (editing = service.service)}>Replace credentials</Button
-								>
+								{#if fromEnvironment}
+									<p class="text-sm text-muted-foreground">
+										This account's credentials come from the environment, so they are changed where
+										the deployment sets them, not here. What the relay has already written is
+										untouched either way.
+									</p>
+								{:else}
+									<Button
+										variant="outline"
+										class="h-8 px-3 text-sm"
+										onclick={() => (editing = service.service)}>Replace credentials</Button
+									>
+								{/if}
 								{#if service.service !== 'hyperfix'}
 									<Button
 										variant="outline"

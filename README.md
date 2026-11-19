@@ -238,7 +238,16 @@ ratingrelay relay --source plex --target lastfm --target listenbrainz
 # Everything a config file defines, one after another.
 ratingrelay run --config relays.toml
 ratingrelay list --config relays.toml   # what would run
+
+# The only step that needs a browser, and it does not need the web app.
+ratingrelay plex-login
 ```
+
+`plex-login` prints a plex.tv link, waits for you to open it on any device, and
+stores the token and server it gets back exactly as the web sign-in does. You need
+it once — and again if you ever revoke the token or change your Plex password.
+Pass `--server NAME` when the account can see more than one server, or set
+`PLEX_SERVER_URL` and let it pick the server that address names.
 
 `--dry-run` runs the real pipeline (fetch, match, reconcile) and skips only the
 writes, so its counts are what a real run would do.
@@ -254,10 +263,17 @@ writes, so its counts are what a real run would do.
 | `--allow-mass-undo` | `relay`, `run` | this run only: undo even when most of a target's changes were withdrawn (see below) |
 | `--json` | `relay`, `run` | one machine-readable document instead of the human summary |
 | `--verbose` | `relay`, `run` | a line per track, on stderr |
+| `--server NAME` | `plex-login` | which Plex server to store; defaults to the one `PLEX_SERVER_URL` names, or the only one the account sees |
+| `--timeout SECONDS` | `plex-login` | how long to wait for the sign-in (default 120) |
 
 Credentials come from environment variables (or `.config` outside Docker), falling
 back to the ones you entered in the web app. Outside Docker, run `just migrate`
 first on a fresh checkout. The container does this when it starts.
+
+`PLEX_TOKEN` plus `PLEX_SERVER_URL` describes a whole Plex side on its own: the
+server is the one that address names, so there is no server to pick and nothing
+has to be entered in the app. `PLEX_MUSIC_LIBRARY` names the library section to
+read and defaults to `Music`, so a differently named section has to be set here.
 
 ### Config file
 

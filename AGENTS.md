@@ -176,6 +176,10 @@ These are the point of the tool. v1 got them right; keep them that way.
   for the account whose ref is the bare kind: an env var cannot name a second
   account. The ref is what sync records, mappings and job configs key on, so it is
   immutable and a removed account is soft-deleted rather than losing its row.
+  A service configured **only** from the environment has no row at all (a Docker
+  deploy fed by Key Vault), so `/api/services` synthesizes its entry from settings
+  and marks it `managed: "settings"`: list what the relay can actually resolve,
+  never only what the database happens to hold.
 - **Auth is the Plex account, not a password store**: the API needs a session
   (`core/session.py`, signed with `settings.secret` + the Plex token) once a Plex
   credential exists. Sign with the **stored** token (`owner_token(db)`), never the
@@ -186,6 +190,14 @@ These are the point of the tool. v1 got them right; keep them that way.
   A Plex PIN is redeemable only by the browser that opened it (the `relay_pin`
   cookie, `core/plex_auth.py`), and the setup callback refuses a Plex account other
   than the stored owner — keep both, or a guessed PIN id hands over the relay.
+- **A Plex server is chosen by name *or* by address.** `PLEX_TOKEN` +
+  `PLEX_SERVER_URL` is a complete Plex side (how a Key Vault deploy is wired), and
+  there is no row to hold a server name — so `plex_auth_status` asks the server for
+  its own `friendlyName` rather than leaving the wizard on "pick a server" forever.
+  `plex-login` (`cli/`, `core/plex_login.py`) is the headless way in: it prints the
+  plex.tv link, polls the PIN, and stores the same row the browser callback does.
+  Beware the precedence trap it warns about: with `PLEX_TOKEN` set, a token it just
+  stored is invisible until the variable goes.
 - **Jobs are data, not events**: progress lives in the `job` and `track_event` rows.
   The worker commits per track so the SSE stream can tail the database; there is no
   in-process registry to keep in sync. A run is stopped by `job.cancel_requested` at

@@ -645,3 +645,336 @@ def test_a_hate_relay_to_lastfm_is_refused_from_flags():
     )
     with pytest.raises(ConfigError, match="hate relay"):
         cli.spec_from_args(args)
+
+
+# ---------------------------------------------------------------------------
+# plex-login — the one browser trip a headless install needs, from the terminal
+# ---------------------------------------------------------------------------
+
+
+class _FakeConnection:
+    def __init__(self, uri, local=True, relay=False, protocol="http"):
+        self.uri = uri
+        self.local = local
+        self.relay = relay
+        self.protocol = protocol
+
+
+class _FakeResource:
+    def __init__(self, name, *connections, product="Plex Media Server"):
+        self.name = name
+        self.product = product
+        self.connections = list(connections)
+
+
+class _FakeSignInAccount:
+    """The account Plex hands back once the PIN is confirmed."""
+
+    username = "chunned"
+
+    def __init__(self, **_kwargs):
+        pass
+
+    def resources(self):
+        return [
+            _FakeResource(
+                "MS01",
+                _FakeConnection("http://relay.plex.invalid:443", local=False, relay=True),
+                _FakeConnection("http://192.168.1.10:32400"),
+            ),
+            _FakeResource("Attic", _FakeConnection("http://attic.invalid:32400")),
+            # A player is not a library: it must never be offered as a server.
+            _FakeResource(
+                "Chunned's Phone",
+                _FakeConnection("http://phone.invalid:32500"),
+                product="Plex for Android",
+            ),
+        ]
+
+
+class _FakePinLogin:
+    token = "plex-token"
+    expired = False
+
+    def __init__(self, confirmed=True, url="https://app.plex.tv/auth#?code=abc"):
+        self._confirmed = confirmed
+        self._url = url
+
+    def oauthUrl(self, **_kwargs):
+        return self._url
+
+    def checkLogin(self):
+        return self._confirmed
+
+
+def _sign_in(monkeypatch, session_factory, argv, **settings):
+    """Run ``plex-login`` against fakes, with nothing from the real environment."""
+    from ratingrelay.settings import Settings  # pylint: disable=import-outside-toplevel
+
+    monkeypatch.setattr(
+        "ratingrelay.core.plex_auth.MyPlexPinLogin", lambda **_kwargs: _FakePinLogin()
+    )
+    monkeypatch.setattr("ratingrelay.core.plex_login.MyPlexAccount", _FakeSignInAccount)
+    monkeypatch.setattr(
+        "ratingrelay.settings.get_settings",
+        lambda: Settings(_env_file=None, **settings),
+    )
+    return cli.main(["plex-login", *argv], session_factory=session_factory)
+
+
+def _plex_row(session_factory):
+    from ratingrelay.db.credentials import (  # pylint: disable=import-outside-toplevel
+        get_credential,
+    )
+
+    async def fetch():
+        async with session_factory() as db:
+            return await get_credential(db, "plex")
+
+    return asyncio.run(fetch())
+
+
+def test_plex_login_prints_a_link_and_stores_what_it_gets(monkeypatch, capsys, session_factory):
+    code = _sign_in(monkeypatch, session_factory, ["--server", "ms01"])
+
+    out = capsys.readouterr().out
+    assert code == cli.EXIT_OK
+    assert "https://app.plex.tv/auth#?code=abc" in out
+    assert "Signed in as chunned." in out
+    # Local before relay: the slow path is the last resort, not the default.
+    assert "Stored Plex: MS01 (http://192.168.1.10:32400)" in out
+
+    account = _plex_row(session_factory)
+    assert (
+        account.id,
+        account.token,
+        account.username,
+        account.plex_server_name,
+        account.plex_server_url,
+    ) == ("plex", "plex-token", "chunned", "MS01", "http://192.168.1.10:32400")
+
+
+def test_plex_login_takes_the_server_already_named_in_the_environment(
+    monkeypatch, capsys, session_factory
+):
+    """PLEX_SERVER_URL is a server choice; nothing has to be picked twice."""
+    code = _sign_in(
+        monkeypatch,
+        session_factory,
+        [],
+        plex_server_url="http://attic.invalid:32400",
+    )
+
+    assert code == cli.EXIT_OK
+    assert "Stored Plex: Attic (http://attic.invalid:32400)" in capsys.readouterr().out
+
+
+def test_plex_login_refuses_to_guess_between_servers(monkeypatch, capsys, session_factory):
+    code = _sign_in(monkeypatch, session_factory, [])
+
+    captured = capsys.readouterr()
+    assert code == cli.EXIT_FAILED
+    assert "MS01, Attic" in captured.err
+    assert "--server" in captured.err
+    assert _plex_row(session_factory) is None
+
+
+def test_plex_login_names_the_server_it_could_not_find(monkeypatch, capsys, session_factory):
+    code = _sign_in(monkeypatch, session_factory, ["--server", "Nope"])
+
+    captured = capsys.readouterr()
+    assert code == cli.EXIT_FAILED
+    assert "no Plex server named 'Nope'" in captured.err
+    assert "MS01, Attic" in captured.err
+    assert _plex_row(session_factory) is None
+
+
+def test_plex_login_gives_up_instead_of_waiting_forever(monkeypatch, capsys, session_factory):
+    """A link nobody opened is not a reason to hang a shell or a pipeline."""
+    from ratingrelay.settings import Settings  # pylint: disable=import-outside-toplevel
+
+    monkeypatch.setattr(
+        "ratingrelay.core.plex_auth.MyPlexPinLogin", lambda **_kwargs: _FakePinLogin()
+    )
+    monkeypatch.setattr(
+        "ratingrelay.settings.get_settings", lambda: Settings(_env_file=None)
+    )
+
+    def _timeout(*_args, **_kwargs):
+        raise TimeoutError("Plex sign-in did not complete within 5 seconds")
+
+    monkeypatch.setattr("ratingrelay.core.plex_login.wait_for_token", _timeout)
+
+    code = cli.main(["plex-login", "--timeout", "5"], session_factory=session_factory)
+
+    assert code == cli.EXIT_FAILED
+    assert "did not complete within 5 seconds" in capsys.readouterr().err
+    assert _plex_row(session_factory) is None
+
+
+def test_wait_for_token_polls_until_plex_confirms():
+    from ratingrelay.core import plex_login  # pylint: disable=import-outside-toplevel
+
+    class Pin:
+        token = "tok"
+        expired = False
+
+        def __init__(self):
+            self.checks = 0
+
+        def checkLogin(self):
+            self.checks += 1
+            return self.checks >= 3
+
+    elapsed = [0.0]
+
+    def clock():
+        elapsed[0] += 0.5
+        return elapsed[0]
+
+    assert plex_login.wait_for_token(Pin(), timeout=10, sleep=lambda _s: None, clock=clock) == "tok"
+
+
+def test_wait_for_token_raises_when_nothing_happens():
+    from ratingrelay.core import plex_login  # pylint: disable=import-outside-toplevel
+
+    class Pin:
+        token = None
+        expired = False
+
+        def checkLogin(self):
+            return False
+
+    elapsed = [0.0]
+
+    def clock():
+        elapsed[0] += 5.0
+        return elapsed[0]
+
+    with pytest.raises(TimeoutError, match="within 3 seconds"):
+        plex_login.wait_for_token(Pin(), timeout=3, sleep=lambda _s: None, clock=clock)
+
+
+def test_plex_login_never_prints_the_token(monkeypatch, capsys, session_factory):
+    """The token goes to the database, and nowhere near a scrollback or a log."""
+    _sign_in(monkeypatch, session_factory, ["--server", "ms01"])
+
+    captured = capsys.readouterr()
+    assert "plex-token" not in captured.out + captured.err
+
+
+def test_plex_login_warns_when_a_settings_token_still_wins(
+    monkeypatch, capsys, session_factory
+):
+    code = _sign_in(
+        monkeypatch, session_factory, ["--server", "ms01"], plex_token="from-settings"
+    )
+
+    assert code == cli.EXIT_OK
+    assert "PLEX_TOKEN" in capsys.readouterr().err
+
+
+def test_plex_login_warns_when_the_environment_names_a_different_server(
+    monkeypatch, capsys, session_factory
+):
+    """`--server Attic` is what was asked for; PLEX_SERVER_URL is what runs use."""
+    code = _sign_in(
+        monkeypatch,
+        session_factory,
+        ["--server", "Attic"],
+        plex_server_url="http://shelf.invalid:32400",
+    )
+
+    captured = capsys.readouterr()
+    assert code == cli.EXIT_OK
+    assert "Stored Plex: Attic (http://attic.invalid:32400)" in captured.out
+    assert "PLEX_SERVER_URL" in captured.err
+    assert "still wins" in captured.err
+
+
+def test_plex_login_says_nothing_when_the_environment_agrees(
+    monkeypatch, capsys, session_factory
+):
+    _sign_in(
+        monkeypatch,
+        session_factory,
+        [],
+        plex_server_url="http://attic.invalid:32400",
+    )
+
+    assert capsys.readouterr().err == ""
+
+
+def test_plex_login_will_not_hand_the_relay_to_another_plex_account(
+    monkeypatch, capsys, session_factory
+):
+    """The link is a bearer credential; the callback refuses a stranger, so must we."""
+    from ratingrelay.db.credentials import (  # pylint: disable=import-outside-toplevel
+        upsert_credential,
+    )
+
+    async def seed():
+        async with session_factory() as db:
+            await upsert_credential(
+                db, "plex", token="owner-token", username="owner", plex_server_name="MS01"
+            )
+
+    asyncio.run(seed())
+
+    code = _sign_in(monkeypatch, session_factory, ["--server", "ms01"])
+
+    captured = capsys.readouterr()
+    assert code == cli.EXIT_FAILED
+    assert "belongs to Plex account 'owner'" in captured.err
+    # Nothing was overwritten, so the relay still has its owner.
+    assert _plex_row(session_factory).token == "owner-token"
+
+
+def test_plex_login_refills_a_slot_that_was_disconnected(
+    monkeypatch, capsys, session_factory
+):
+    """Bare refs are slots: disconnect then sign in again is a reconnect."""
+    from ratingrelay.db.credentials import (  # pylint: disable=import-outside-toplevel
+        delete_credential,
+        upsert_credential,
+    )
+
+    async def seed_and_disconnect():
+        async with session_factory() as db:
+            await upsert_credential(
+                db, "plex", token="stale", username="chunned", plex_server_name="MS01"
+            )
+            await delete_credential(db, "plex")
+
+    asyncio.run(seed_and_disconnect())
+
+    code = _sign_in(monkeypatch, session_factory, ["--server", "ms01"])
+
+    assert code == cli.EXIT_OK
+    account = _plex_row(session_factory)
+    assert (account.token, account.plex_server_name) == ("plex-token", "MS01")
+
+
+def test_wait_for_token_reports_a_refused_pin():
+    """A PIN Plex has expired is a refusal, not a slow human."""
+    from ratingrelay.core import plex_login  # pylint: disable=import-outside-toplevel
+
+    class Pin:
+        token = None
+        expired = True
+
+        def checkLogin(self):
+            return False
+
+    with pytest.raises(plex_login.SignInExpired, match="expired or refused"):
+        plex_login.wait_for_token(Pin(), timeout=10, sleep=lambda _s: None, clock=lambda: 0.0)
+
+
+def test_a_player_is_not_offered_as_a_server():
+    from ratingrelay.core import plex_login  # pylint: disable=import-outside-toplevel
+
+    with patch("ratingrelay.core.plex_login.MyPlexAccount", _FakeSignInAccount):
+        username, choices = plex_login.account_servers("plex-token")
+
+    assert username == "chunned"
+    assert [choice.name for choice in choices] == ["MS01", "Attic"]

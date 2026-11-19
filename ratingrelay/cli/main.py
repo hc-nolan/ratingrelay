@@ -3,6 +3,7 @@
     ratingrelay relay --source plex --target lastfm --dry-run
     ratingrelay run --config relays.toml
     ratingrelay list --config relays.toml
+    ratingrelay plex-login
 
 Everything below the marshalling is :mod:`ratingrelay.engine` — the same fetch,
 match, reconcile and write the web app runs, so a headless run and a job in the
@@ -74,6 +75,27 @@ def build_parser() -> argparse.ArgumentParser:
 
     listing = subparsers.add_parser("list", help="print the relays in a config file")
     listing.add_argument("--config", default=DEFAULT_CONFIG, help="config file to read")
+
+    login = subparsers.add_parser(
+        "plex-login",
+        help="sign in to Plex from this terminal",
+        description="Sign in to Plex without the web app: open the printed link on "
+        "any device, and the token and server it returns are stored exactly as "
+        "the browser sign-in stores them.",
+    )
+    login.add_argument(
+        "--server",
+        metavar="NAME",
+        help="the Plex server to use (default: the one PLEX_SERVER_URL names, "
+        "or the only one the account sees)",
+    )
+    login.add_argument(
+        "--timeout",
+        type=int,
+        default=120,
+        metavar="SECONDS",
+        help="how long to wait for the sign-in (default: 120)",
+    )
     return parser
 
 
@@ -222,6 +244,154 @@ def _check_database() -> None:
         )
 
 
+class PlexLoginError(Exception):
+    """A ``plex-login`` that could not finish, with a sentence for the terminal."""
+
+
+def _sign_in(server: Optional[str], timeout: int, out: TextIO):
+    """Print the link, wait for the click, and return what Plex handed back.
+
+    The one thing a headless install cannot do for itself is the browser: Plex
+    only hands a token to a signed-in human. Everything after that click is
+    automatic.
+    """
+    from ratingrelay.core import plex_login  # pylint: disable=import-outside-toplevel
+    from ratingrelay.settings import get_settings  # pylint: disable=import-outside-toplevel
+
+    settings = get_settings()
+    try:
+        pin_login, url = plex_login.begin()
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        raise PlexLoginError(f"could not start a Plex sign-in: {exc}") from exc
+
+    print("Open this on any device and sign in to Plex:", file=out)
+    print(f"  {url}", file=out, flush=True)
+    print("Waiting for the sign-in (Ctrl-C to cancel)…", file=out, flush=True)
+
+    try:
+        token = plex_login.wait_for_token(pin_login, timeout=timeout)
+        username, choices = plex_login.account_servers(token)
+        # A server already named in the environment wins over asking, exactly as
+        # the credential precedence does everywhere else.
+        chosen = plex_login.choose(
+            choices,
+            name=server,
+            url=str(settings.plex_server_url or "") or None,
+        )
+    except (plex_login.SignInExpired, TimeoutError, ValueError) as exc:
+        raise PlexLoginError(str(exc)) from exc
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        raise PlexLoginError(f"Plex sign-in failed: {exc}") from exc
+    return token, username, chosen
+
+
+def _stored_owner(session_factory=None) -> Optional[str]:
+    """The Plex username this relay already belongs to, if it has one."""
+    from ratingrelay.db.credentials import (  # pylint: disable=import-outside-toplevel
+        get_credential,
+    )
+
+    if session_factory is None:
+        session_factory = _session_factory()
+
+    async def fetch() -> Optional[str]:
+        async with session_factory() as db:
+            account = await get_credential(db, "plex")
+            return account.username if account else None
+
+    return asyncio.run(fetch())
+
+
+def _store_plex_account(token, username, chosen, session_factory=None) -> None:
+    """Store the account the sign-in produced, as the web callback would."""
+    from ratingrelay.db.credentials import (  # pylint: disable=import-outside-toplevel
+        upsert_credential,
+    )
+
+    # The same refusal the browser callback makes: the PIN link is a bearer
+    # credential for this relay's identity, and whoever opens it first would
+    # otherwise become the owner. One user, one library (AGENTS.md).
+    owner = _stored_owner(session_factory)
+    if owner and username and owner.casefold() != username.casefold():
+        raise PlexLoginError(
+            f"this relay belongs to Plex account {owner!r} and you signed in as "
+            f"{username!r}; connect as the owner, or disconnect Plex first to "
+            "hand the relay over"
+        )
+
+    if session_factory is None:
+        session_factory = _session_factory()
+
+    async def store() -> None:
+        async with session_factory() as db:
+            await upsert_credential(
+                db,
+                "plex",
+                token=token,
+                username=username,
+                plex_server_url=chosen.url,
+                plex_server_name=chosen.name,
+            )
+
+    try:
+        asyncio.run(store())
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        raise PlexLoginError(
+            f"signed in as {username}, but could not store it: {exc}"
+        ) from exc
+
+
+def _warn_if_settings_win(chosen, err: TextIO) -> None:
+    """Say what would make a fresh sign-in look like it was ignored.
+
+    Settings describe the first account completely, including the server, and
+    they win — so both halves of that precedence are worth a sentence here.
+    """
+    from urllib.parse import urlparse  # pylint: disable=import-outside-toplevel
+
+    from ratingrelay.settings import get_settings  # pylint: disable=import-outside-toplevel
+
+    settings = get_settings()
+    if settings.plex_token:
+        print(
+            f"{PROGRAM}: PLEX_TOKEN is set in the environment and still wins; "
+            "remove it to use the account just stored.",
+            file=err,
+        )
+    if not settings.plex_server_url:
+        return
+    configured = str(settings.plex_server_url)
+    if urlparse(configured).hostname != urlparse(chosen.url).hostname:
+        print(
+            f"{PROGRAM}: PLEX_SERVER_URL is {configured} and still wins; remove it "
+            f"to relay to {chosen.name} ({chosen.url}).",
+            file=err,
+        )
+
+
+def _plex_login(args, out: TextIO, err: TextIO, session_factory=None) -> int:
+    """Sign in to Plex from the terminal, and store what the browser would have."""
+    if args.timeout < 1:
+        print(f"{PROGRAM}: --timeout must be at least 1 second", file=err)
+        return EXIT_FAILED
+
+    try:
+        token, username, chosen = _sign_in(args.server, args.timeout, out)
+        _store_plex_account(token, username, chosen, session_factory)
+    except PlexLoginError as exc:
+        print(f"{PROGRAM}: {exc}", file=err)
+        return EXIT_FAILED
+    except KeyboardInterrupt:
+        # Waiting on a link is an interactive wait; leaving means leaving.
+        print(f"{PROGRAM}: Plex sign-in cancelled", file=err)
+        return EXIT_FAILED
+
+    print(f"Signed in as {username}.", file=out)
+    print(f"Stored Plex: {chosen.name} ({chosen.url})", file=out)
+    _warn_if_settings_win(chosen, err)
+    return EXIT_OK
+
+
 async def _run_specs(
     specs: Sequence[RelaySpec],
     console: "Console",
@@ -283,6 +453,17 @@ def _print_listing(specs: Sequence[RelaySpec], out: TextIO) -> int:
     return EXIT_OK
 
 
+def _plex_login_command(args, out: TextIO, err: TextIO, session_factory=None) -> int:
+    """``plex-login``: needs the database it writes the account into."""
+    try:
+        if session_factory is None:
+            _check_database()
+    except ConfigError as exc:
+        print(f"{PROGRAM}: {exc}", file=err)
+        return EXIT_FAILED
+    return _plex_login(args, out, err, session_factory)
+
+
 def main(
     argv: Optional[Sequence[str]] = None, session_factory=None
 ) -> int:
@@ -306,6 +487,9 @@ def main(
         return EXIT_FAILED
 
     out, err = sys.stdout, sys.stderr
+    if args.command == "plex-login":
+        return _plex_login_command(args, out, err, session_factory)
+
     try:
         if args.command == "list":
             return _print_listing(load_relays(args.config), out)
@@ -319,11 +503,8 @@ def main(
                 args.allow_mass_undo,
                 args.reapply_target_drift,
             )
-    except ConfigError as exc:
-        print(f"{PROGRAM}: {exc}", file=err)
-        return EXIT_FAILED
-
-    try:
+        # Same bucket as a bad config file: a missing database is something the
+        # checkpoint can fix, not a run that went wrong.
         if session_factory is None:
             _check_database()
     except ConfigError as exc:

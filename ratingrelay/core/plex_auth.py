@@ -87,6 +87,27 @@ def _owns(nonce: str, candidate: str | None) -> bool:
     return bool(nonce) and bool(candidate) and hmac.compare_digest(nonce, candidate)
 
 
+def new_pin_login() -> MyPlexPinLogin:
+    """A PIN login as our app, not as plexapi.
+
+    plexapi calls itself "PlexAPI" in every request header, and Plex uses that
+    to name the client in the sign-in prompt: "PlexAPI would like to sign into
+    your account". The account owner is holding our app, so it says our name.
+    The client identifier is left alone — changing it would show up as a second
+    device in their Plex account.
+
+    One constructor for every way in: the browser's popup and the terminal's
+    ``plex-login`` must not look like two different applications to Plex.
+    """
+    return MyPlexPinLogin(
+        oauth=True,
+        headers={"X-Plex-Product": "RatingRelay"},
+        # A sign-in is waited on, not hung on: one poll must not outlive the
+        # deadline the caller set (plexapi would otherwise allow 30 s a check).
+        requestTimeout=10,
+    )
+
+
 def create_session(forward_url: str, nonce: str = "") -> tuple[MyPlexPinLogin, str]:
     """
     Create a new MyPlexPinLogin OAuth session, store it under *nonce*, and
@@ -94,15 +115,7 @@ def create_session(forward_url: str, nonce: str = "") -> tuple[MyPlexPinLogin, s
     be redeemed.  oauthUrl() must be called here because it triggers the
     PIN fetch (_getCode) that populates _id — calling .pin before that raises.
     """
-    pin_login = MyPlexPinLogin(
-        oauth=True,
-        # plexapi calls itself "PlexAPI" in every request header, and Plex uses
-        # that to name the client in the sign-in prompt: "PlexAPI would like to
-        # sign into your account". The account owner is holding our app, so it
-        # says our name. The client identifier is left alone — changing it
-        # would show up as a second device in their Plex account.
-        headers={"X-Plex-Product": "RatingRelay"},
-    )
+    pin_login = new_pin_login()
     oauth_url = pin_login.oauthUrl(forwardUrl=forward_url)
     # plexapi exposes the PIN id only as ``_id``; it is the key Plex redirects back with.
     pin_id = int(pin_login._id)  # pylint: disable=protected-access

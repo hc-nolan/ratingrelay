@@ -1,5 +1,6 @@
 import asyncio
 from typing import Callable, Optional, TypeVar
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
@@ -104,6 +105,43 @@ async def _get_token(db: AsyncSession) -> str | None:
     return settings.plex_token or (cred.token if cred else None)
 
 
+def _host(url: str | None) -> str | None:
+    """The machine a Plex URL points at, for comparing two ways of naming it."""
+    return urlparse(url).hostname if url else None
+
+
+# The server's own name never changes, so one short request settles it. Long
+# enough for a slow LAN host, short enough not to hold a page load hostage.
+_NAME_TIMEOUT = 5
+
+# {url: friendly name}. The wizard polls the status endpoint every couple of
+# seconds and both pages read it on load, so asking the server each time would be
+# a per-page-load network call for an answer that cannot change. Keyed by address:
+# a different server is a different entry, and the URL comes from a setting.
+_server_names: dict[str, str] = {}
+
+
+async def _server_name(url: str, token: str) -> Optional[str]:
+    """The Plex server's friendly name, for an install that names it by address.
+
+    A deployment configured entirely from the environment has no row to hold a
+    server name, but every run still reads the server its URL names. Asking the
+    server keeps the interface from demanding a choice nobody needs to make. An
+    unreachable server is not a broken login, so this returns None rather than
+    failing the status — and nothing is cached in that case, so a server that
+    comes back is picked up on the next page load.
+    """
+    if url in _server_names:
+        return _server_names[url]
+    try:
+        server = await run_sync(lambda: PlexServer(url, token, timeout=_NAME_TIMEOUT))
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.warning("Could not read the Plex server name at %s: %s", url, exc)
+        return None
+    _server_names[url] = server.friendlyName
+    return server.friendlyName
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -123,24 +161,43 @@ async def plex_auth_status(
     """
     ref = account_ref("plex", account)
     cred = await get_credential(db, ref)
-    token = (settings.plex_token if is_primary(ref) else None) or (
+    primary = is_primary(ref)
+    token = (settings.plex_token if primary else None) or (
         cred.token if cred else None
     )
+    # Settings describe the first account's server as well as its token, and they
+    # win: reporting only the row's server left an env-configured install looking
+    # like a login with no server ever chosen.
+    configured_url = (
+        str(settings.plex_server_url).rstrip("/")
+        if primary and settings.plex_server_url
+        else None
+    )
+    server_url = configured_url or (cred.plex_server_url if cred else None)
 
     if not token:
         return PlexStatusResponse(status="needs-auth")
 
     try:
         plex_account = await run_sync(lambda: MyPlexAccount(token=token))
-        return PlexStatusResponse(
-            status="connected",
-            username=plex_account.username,
-            server_name=cred.plex_server_name if cred else None,
-            server_url=cred.plex_server_url if cred else None,
-        )
     except Exception as exc:
         logger.error("Plex token validation failed: %s", exc)
         return PlexStatusResponse(status="needs-auth")
+
+    server_name = cred.plex_server_name if cred else None
+    if configured_url:
+        # The name has to describe the server the relay will actually read. When
+        # the environment names a different one than the row does, the row's name
+        # is a lie: ask the server, and fall back only if it cannot answer.
+        row_url = cred.plex_server_url if cred else None
+        if not server_name or _host(row_url) != _host(configured_url):
+            server_name = await _server_name(configured_url, token) or server_name
+    return PlexStatusResponse(
+        status="connected",
+        username=plex_account.username,
+        server_name=server_name,
+        server_url=server_url,
+    )
 
 
 @router.delete("/auth", response_model=PlexStatusResponse)

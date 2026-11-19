@@ -476,3 +476,158 @@ async def test_an_account_name_that_would_not_parse_is_refused(client, account):
     )
 
     assert res.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Plex: a server the environment names is a server chosen
+# ---------------------------------------------------------------------------
+
+
+async def test_a_server_named_only_in_the_environment_is_reported(
+    client, factory, monkeypatch
+):
+    """PLEX_SERVER_URL says which server; asking the user to pick it again is a bug.
+
+    A deploy configured entirely from env has no row to hold a server name, so the
+    status asks the server itself rather than leaving the wizard on "pick a server"
+    forever. The name never changes, so the second page load must not ask again.
+    """
+    asked = []
+
+    def _server(url, token, timeout=None):
+        asked.append((url, token, timeout))
+        return _FakePlexServer(url, token, timeout)
+
+    monkeypatch.setattr(plex, "MyPlexAccount", _FakePlexAccount)
+    monkeypatch.setattr(plex, "PlexServer", _server)
+    monkeypatch.setattr(plex.settings, "plex_token", "from-settings")
+    monkeypatch.setattr(plex.settings, "plex_server_url", "http://shelf.invalid:32400")
+
+    body = (await client.get("/api/plex/auth/status")).json()
+    again = (await client.get("/api/plex/auth/status")).json()
+
+    assert body == {
+        "status": "connected",
+        "username": "chunned",
+        "server_name": "Shelf",
+        "server_url": "http://shelf.invalid:32400",
+    }
+    assert again["server_name"] == "Shelf"
+    # The timeout is what keeps a page load bounded: losing it is a 30 s stall.
+    assert asked == [("http://shelf.invalid:32400", "from-settings", plex._NAME_TIMEOUT)]
+
+
+async def test_a_server_the_environment_moved_past_is_named_by_the_server(
+    client, factory, monkeypatch
+):
+    """The name has to describe the server the relay reads, not the one it left."""
+    monkeypatch.setattr(plex, "MyPlexAccount", _FakePlexAccount)
+    monkeypatch.setattr(plex, "PlexServer", _FakePlexServer)
+    monkeypatch.setattr(plex.settings, "plex_token", "from-settings")
+    monkeypatch.setattr(plex.settings, "plex_server_url", "http://shelf.invalid:32400")
+    await _store(
+        factory,
+        "plex",
+        token="owner-token",
+        username="chunned",
+        plex_server_url="http://attic.invalid:32400",
+        plex_server_name="Attic",
+    )
+
+    body = (await client.get("/api/plex/auth/status")).json()
+
+    assert (body["server_name"], body["server_url"]) == (
+        "Shelf",
+        "http://shelf.invalid:32400",
+    )
+
+
+async def test_a_server_already_stored_is_not_asked_for_its_name_again(
+    client, factory, monkeypatch
+):
+    def _server(*_args, **_kwargs):
+        raise AssertionError("a stored server name is enough")
+
+    monkeypatch.setattr(plex, "MyPlexAccount", _FakePlexAccount)
+    monkeypatch.setattr(plex, "PlexServer", _server)
+    monkeypatch.setattr(plex.settings, "plex_token", None)
+    monkeypatch.setattr(plex.settings, "plex_server_url", None)
+    await _store(
+        factory,
+        "plex",
+        token="owner-token",
+        username="chunned",
+        plex_server_url="http://shelf.invalid:32400",
+        plex_server_name="Shelf",
+    )
+
+    body = (await client.get("/api/plex/auth/status")).json()
+
+    assert (body["status"], body["server_name"], body["server_url"]) == (
+        "connected",
+        "Shelf",
+        "http://shelf.invalid:32400",
+    )
+
+
+async def test_an_unreachable_server_still_reports_the_login(
+    client, factory, monkeypatch
+):
+    """A server that is down is not a bad token, and not a reason to ask again."""
+
+    def _server(*_args, **_kwargs):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(plex, "MyPlexAccount", _FakePlexAccount)
+    monkeypatch.setattr(plex, "PlexServer", _server)
+    monkeypatch.setattr(plex.settings, "plex_token", "from-settings")
+    monkeypatch.setattr(plex.settings, "plex_server_url", "http://shelf.invalid:32400")
+
+    body = (await client.get("/api/plex/auth/status")).json()
+
+    assert (body["status"], body["server_name"], body["server_url"]) == (
+        "connected",
+        None,
+        "http://shelf.invalid:32400",
+    )
+
+
+async def test_settings_never_describe_a_second_plex_server(
+    client, factory, monkeypatch
+):
+    """The env describes the first account only; a named server answers for itself."""
+    monkeypatch.setattr(plex, "MyPlexAccount", _FakePlexAccount)
+    monkeypatch.setattr(
+        plex,
+        "PlexServer",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("settings must not reach a named ref")
+        ),
+    )
+    monkeypatch.setattr(plex.settings, "plex_token", "from-settings")
+    monkeypatch.setattr(plex.settings, "plex_server_url", "http://shelf.invalid:32400")
+    await _store(
+        factory,
+        "plex",
+        token="owner-token",
+        username="chunned",
+        plex_server_url="http://shelf.invalid:32400",
+        plex_server_name="Shelf",
+    )
+    await _store(
+        factory,
+        "plex:attic",
+        token="owner-token",
+        username="chunned",
+        plex_server_url="http://attic.invalid:32400",
+        plex_server_name="Attic",
+    )
+
+    body = (
+        await client.get("/api/plex/auth/status", params={"account": "attic"})
+    ).json()
+
+    assert (body["server_name"], body["server_url"]) == (
+        "Attic",
+        "http://attic.invalid:32400",
+    )

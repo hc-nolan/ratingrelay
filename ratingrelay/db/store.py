@@ -97,6 +97,15 @@ class SqlSyncStore:
         )
         return {row.normalized_key: _synced(row) for row in result.scalars().all()}
 
+    async def known_keys(self, source_service: str, target_service: str) -> set[str]:
+        """Every key recorded on the pair, whichever relay wrote it (see the port)."""
+        result = await self._db.execute(
+            select(SyncRecord.normalized_key)
+            .where(SyncRecord.source_service == source_service)
+            .where(SyncRecord.target_service == target_service)
+        )
+        return set(result.scalars().all())
+
     async def remember(
         self, source_service: str, target_service: str, synced: SyncedTrack
     ) -> None:

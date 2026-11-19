@@ -317,3 +317,36 @@ def test_a_service_without_stars_cannot_be_asked_for_a_rating_relay():
 
     with pytest.raises(ValidationError):
         ListenBrainzFromConfig(service="listenbrainz", feedback_type="rating")
+
+
+class _OtherDirectionWrote(MemorySyncStore):
+    """A store whose records came from another direction of the same pair."""
+
+    async def load(self, source_service: str, target_service: str):  # noqa: ARG002
+        return {}
+
+    async def known_keys(self, source_service: str, target_service: str):  # noqa: ARG002
+        return {"wire||field day"}
+
+
+async def test_a_value_another_direction_of_the_pair_wrote_is_adopted():
+    """Switching loves to ratings must not need a reset first.
+
+    The 80s in the target came from this tool's love relay, not from the user, so the
+    exact relay replaces them. Without ``known_keys`` every one of them would look like
+    a user's own rating and never be corrected.
+    """
+    from ratingrelay.engine import pipeline  # pylint: disable=import-outside-toplevel
+
+    fake = FakeHyperfix({"rec-Field Day": 85})
+    target = _run_target(fake)
+
+    report = await pipeline.run_tracks(
+        [Track("Wire", "Field Day", rating=10.0)],
+        [target],
+        source_service="plex",
+        sync_store=_OtherDirectionWrote(),
+    )
+
+    assert report.outcomes[0].status is OutcomeStatus.WRITTEN
+    assert fake.ratings == {"rec-Field Day": 100}

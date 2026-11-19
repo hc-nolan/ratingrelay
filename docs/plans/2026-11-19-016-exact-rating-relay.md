@@ -29,6 +29,11 @@ ListenBrainz. A track rated 3 stars is invisible to both directions.
    every source (Plex's `userRating`, hyperfix's feed ÷ 10). In `rating` mode a
    target ignores its configured threshold and writes `track.rating`.
 
+   Switching a pair from loves to ratings therefore needs no reset: `SyncStore.known_keys`
+   answers "has this tool written this key on this pair, under *any* relay", so the 80s a
+   love relay left behind are recognised as ours and replaced with the real values. A
+   value with no record anywhere is the user's, and is left alone.
+
 3. **"Already holds it" becomes equality.** A love relay holds when the target is
    `>= threshold` and a hate relay when `<= threshold` (that band is what makes a
    user's own 5-star copy survive a love relay writing 8). With exact values the

@@ -237,3 +237,16 @@ async def test_a_dry_run_store_prefers_the_claimed_row(db):
     preview = await SqlSyncStore(db, "love", read_only=True).load("plex", "lastfm")
 
     assert preview[TRACK_KEY].intent == "love"
+
+
+async def test_known_keys_spans_relays_while_a_load_does_not(db):
+    """An exact relay asks this to tell its own pair's writes from the user's."""
+    await SqlSyncStore(db, "love").remember(
+        "plex", "hyperfix", SyncedTrack(key=TRACK_KEY, intent="love", rating=8.0)
+    )
+
+    # Scoped to another relay: it has no records of its own...
+    assert await SqlSyncStore(db, "rating").load("plex", "hyperfix") == {}
+    # ...but the pair has been written to, so the value is not the user's.
+    assert await SqlSyncStore(db, "rating").known_keys("plex", "hyperfix") == {TRACK_KEY}
+    assert await SqlSyncStore(db, "rating").known_keys("plex", "lastfm") == set()

@@ -84,17 +84,22 @@ def _repoints(plan: WritePlan, record: Optional[SyncedTrack], target: Target) ->
     return True
 
 
-async def _apply(
+async def _apply(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     track: Track,
     target: Target,
     *,
     synced: dict[str, SyncedTrack],
     sync_store: SyncStore,
     source_service: str,
+    known: frozenset[str],
     dry_run: bool,
     reapply_drift: bool,
 ) -> TrackOutcome:
-    """Decide and (unless dry run) perform the write for one track on one target."""
+    """Decide and (unless dry run) perform the write for one track on one target.
+
+    *known* is every key this tool has written on the pair under **any** relay: an
+    exact relay uses it to tell a value it wrote from one the user set.
+    """
     record = synced.get(track.key)
     try:
         plan: WritePlan = await attempt(
@@ -113,7 +118,16 @@ async def _apply(
     # written again. So does one a user's mapping has moved to another target key.
     repoint = _repoints(plan, record, target)
     drift = _drifted(plan, record, repoint)
-    settled = _settled(plan, record, repoint, target, reapply_drift=reapply_drift, drift=drift)
+    settled = _settled(
+        plan,
+        track,
+        record,
+        repoint,
+        target,
+        reapply_drift=reapply_drift,
+        drift=drift,
+        known=known,
+    )
     if settled is not None:
         return settled
 
@@ -189,14 +203,16 @@ def _drifted(plan: WritePlan, record: Optional[SyncedTrack], repoint: bool) -> b
     return plan.existing.occupied is False and not plan.existing.holds
 
 
-def _settled(  # pylint: disable=too-many-arguments
+def _settled(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     plan: WritePlan,
+    track: Track,
     record: Optional[SyncedTrack],
     repoint: bool,
     target: Target,
     *,
     reapply_drift: bool,
     drift: bool,
+    known: frozenset[str],
 ) -> Optional[TrackOutcome]:
     """The outcome of a plan that needs no write, or ``None`` if it does."""
     if (
@@ -209,7 +225,13 @@ def _settled(  # pylint: disable=too-many-arguments
         return plan.to_outcome(OutcomeStatus.SKIPPED, Reason.ALREADY_SYNCED, None)
     if plan.status is not OutcomeStatus.WRITTEN:
         return plan.to_outcome()
-    if record is None and (plan.existing.holds or plan.existing.never_adopt):
+    # ``never_adopt`` is the exact relay's answer: the target holds a value here,
+    # and a threshold band does not make it ours. Unless this tool wrote it under
+    # another direction of the same pair, it is somebody else's.
+    if record is None and (
+        plan.existing.holds
+        or (plan.existing.never_adopt and track.key not in known)
+    ):
         # The user's own state, not ours: recording it would let a withdrawal
         # undo it (contract §3). Same answer in a dry run.
         held = "this" if plan.existing.holds else "a value we did not write"
@@ -351,7 +373,7 @@ async def _reconcile(  # pylint: disable=too-many-arguments
     return outcomes
 
 
-async def run_tracks(  # pylint: disable=too-many-arguments
+async def run_tracks(  # pylint: disable=too-many-arguments,too-many-locals
     tracks: Sequence[Track],
     targets: Sequence[Target],
     *,
@@ -377,6 +399,7 @@ async def run_tracks(  # pylint: disable=too-many-arguments
 
     for target in targets:
         synced = await sync_store.load(source_service, target.service)
+        known = frozenset(await sync_store.known_keys(source_service, target.service))
         for track in tracks:
             outcome = await _apply(
                 track,
@@ -384,6 +407,7 @@ async def run_tracks(  # pylint: disable=too-many-arguments
                 synced=synced,
                 sync_store=sync_store,
                 source_service=source_service,
+                known=known,
                 dry_run=dry_run,
                 reapply_drift=reapply_drift,
             )

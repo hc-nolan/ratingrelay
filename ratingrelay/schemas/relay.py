@@ -29,10 +29,14 @@ class _AccountScoped(BaseModel):
 
 class PlexFromConfig(_AccountScoped):
     """Plex as a source. The ratings that count as a love or a hate are the
-    shared love/hate thresholds (settings or the UI), not per relay."""
+    shared love/hate thresholds (settings or the UI), not per relay.
+
+    ``rating`` is the third direction: every rated track, each with its own value
+    (RR-20). It reads no threshold, so the love/hate pair does not apply to it.
+    """
 
     service: Literal["plex"]
-    feedback_type: Literal["love", "hate"] = "love"
+    feedback_type: Literal["love", "hate", "rating"] = "love"
 
     @model_validator(mode="before")
     @classmethod
@@ -52,11 +56,12 @@ class HyperfixFromConfig(_AccountScoped):
     """Hyperfix as a source: the ratings feed, filtered to this relay's direction.
 
     hyperfix's 0-100 ratings share the love/hate thresholds with Plex (80/20 is
-    8.0/2.0), so both ends of a pair read the same numbers.
+    8.0/2.0), so both ends of a pair read the same numbers. ``rating`` carries each
+    track's own value instead.
     """
 
     service: Literal["hyperfix"]
-    feedback_type: Literal["love", "hate"] = "love"
+    feedback_type: Literal["love", "hate", "rating"] = "love"
 
 
 class LastFMFromConfig(_AccountScoped):
@@ -106,7 +111,8 @@ FromConfig = Annotated[
 
 
 class PlexToConfig(_AccountScoped):
-    """Plex as a target. It writes the threshold for the relay's direction."""
+    """Plex as a target. It writes the threshold for a love/hate relay, or the
+    track's own rating for a ``rating`` one."""
 
     service: Literal["plex"]
 
@@ -127,8 +133,10 @@ class ListenBrainzToConfig(_AccountScoped):
 class HyperfixToConfig(_AccountScoped):
     """Hyperfix as a target. It writes the relay's direction as a 0-100 rating.
 
-    hyperfix's 80/20 are 8.0/2.0 here, so both ends of a pair agree; writing back
-    into hyperfix also reaches Plex, through hyperfix's own rating push.
+    hyperfix's 80/20 are 8.0/2.0 here, so both ends of a pair agree; a ``rating``
+    relay writes the track's own value, scaled by ten. Writing into hyperfix does
+    not reach Plex: a rating that came from a relay is not echoed back to the
+    service it came from (HF-236).
     """
 
     service: Literal["hyperfix"]

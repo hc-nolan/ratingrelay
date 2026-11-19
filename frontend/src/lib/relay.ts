@@ -9,8 +9,11 @@ export const serviceLabels: Record<string, string> = {
 
 export function summarizeSource(cfg: Record<string, unknown>): string {
 	const svc = cfg.service as string;
-	if (svc === 'plex') return `Plex ${cfg.feedback_type}d`;
 	if (svc === 'lastfm') return 'Last.fm loved';
+	// "loved"/"hated" for the threshold directions; a rating relay reads the values
+	// themselves (RR-20), and "ratingd" is not a word.
+	if (cfg.feedback_type === 'rating') return `${serviceLabels[svc] ?? svc} ratings`;
+	if (svc === 'plex') return `Plex ${cfg.feedback_type}d`;
 	if (svc === 'listenbrainz') return `ListenBrainz ${cfg.feedback_type}d`;
 	if (svc === 'hyperfix') return `Hyperfix ${cfg.feedback_type}d`;
 	if (svc === 'reset') {

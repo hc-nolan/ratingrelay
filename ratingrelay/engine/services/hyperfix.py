@@ -30,7 +30,7 @@ from urllib.parse import quote
 import httpx
 
 from ratingrelay.engine.credentials import HyperfixCredentials
-from ratingrelay.engine.plan import Existing, WritePlan
+from ratingrelay.engine.plan import Existing, WritePlan, missing_rating
 from ratingrelay.engine.services.musicbrainz import MbidTarget, Resolver
 from ratingrelay.engine.store import MappingStore, MbidCache, SyncedTrack
 from ratingrelay.engine.types import (
@@ -296,10 +296,18 @@ class HyperfixTarget(MbidTarget):
             self._current = await self._client.hundredths()
         return self._current
 
-    def holds(self, current: Optional[int]) -> bool:
-        """Whether a recording rated *current* already holds this target's intent."""
+    def holds(self, current: Optional[int], intent: Optional[float] = None) -> bool:
+        """Whether a recording rated *current* already holds this target's intent.
+
+        *intent* is the value this plan would write; it only matters in ``rating``
+        mode. The comparison is made on hyperfix's own scale, so 85 and 8.5 are the
+        same answer and a value the UI stored that Plex cannot hold is compared as
+        the round trip would write it.
+        """
         if current is None:
             return False
+        if self._direction == "rating":
+            return current == _hundreds(self._rating if intent is None else intent)
         rating = _rating(current)
         if self._direction == "hate":
             return rating <= self._rating
@@ -312,7 +320,9 @@ class HyperfixTarget(MbidTarget):
             return self.unmatched(track, resolution)
 
         current = (await self.current()).get(mbid)
-        rating = self._rating
+        rating = track.rating if self._direction == "rating" else self._rating
+        if rating is None:
+            return missing_rating(track, self.service)
         wrote = _hundreds(rating)
         client = self._client
 
@@ -334,9 +344,12 @@ class HyperfixTarget(MbidTarget):
             target_key=mbid,
             mapped=await self.has_mapping(track),
             existing=Existing(
-                holds=self.holds(current),
+                holds=self.holds(current, rating),
                 prior=None if current is None else str(current),
                 occupied=current is not None,
+                # A rating we have no record of is the user's, even a different one:
+                # exact mode has no band that would make the two the same intent.
+                never_adopt=self._direction == "rating" and current is not None,
             ),
             commit=commit,
         )

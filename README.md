@@ -88,11 +88,14 @@ Press **Start relaying** when you're done.
 
 The main page reads from top to bottom:
 
-- **From**: where your ratings come from. For Plex and ListenBrainz, choose loves or
-  hates.
+- **From**: where your ratings come from, and what to read. Plex, Hyperfix and
+  ListenBrainz offer loves or hates; Plex and Hyperfix also offer **every rating**,
+  which relays each track's own value instead of a threshold (see
+  [Every rating](#every-rating)).
 - **To**: switch on one or more destinations. Each one writes what *From* reads:
   loves become loves, hates become hates. Plex receives the love (or hate) rating.
-  Last.fm only has loves, so it isn't offered for a hate relay.
+  Last.fm only has loves, so it isn't offered for a hate relay; Last.fm and
+  ListenBrainz have no stars, so neither is offered for every-rating relay.
 - **Trigger**: run it **once**, or repeat it every hour, every few hours, daily or
   weekly. Tick **Dry run** to preview the run without changing anything.
 
@@ -123,6 +126,28 @@ A track already rated on the right side of the threshold is left alone: a love
 relay doesn't touch a track you rated 4 or 5 stars, and a hate relay doesn't touch
 one you rated 1 star. Raising the love threshold means some tracks no longer count,
 so the next run takes those loves back.
+
+### Every rating
+
+Loves and hates throw the number away: a 3-star track is neither, and a love is
+written as the threshold rather than as the 5 stars you gave it. Plex and Hyperfix
+both hold a real star rating (0–5 in half steps), so choosing **every rating** as
+the direction relays the value itself, in both directions and with nothing lost —
+Plex's 0–10 and Hyperfix's 0–100 are the same scale times ten.
+
+In that mode no threshold applies. Every rated track is read (half a star is the
+floor), and a destination holds the number it was given or is written again when
+the number changes. Two rules keep it safe:
+
+- A rating RatingRelay did not write is never replaced. The first run fills tracks
+  the destination has no rating for and leaves the ones it does, so your own
+  Hyperfix rating survives.
+- Clearing a rating in the source is a withdrawal: the track drops out of the read,
+  and the write RatingRelay made for it is undone — never a rating you set.
+
+Use one direction per pair. A loves relay and an every-rating relay on the same
+pair disagree about what the same rating means, and each one compares against its
+own record, so they settle at whichever ran first.
 
 ### History
 
@@ -256,7 +281,7 @@ writes, so its counts are what a real run would do.
 | ---- | ------- | ------------ |
 | `--source SERVICE` | `relay` | where ratings come from: `plex`, `lastfm`, `listenbrainz` (default `plex`) |
 | `--target SERVICE` | `relay` | where they go; repeat for more than one (default `lastfm`) |
-| `--feedback-type love\|hate` | `relay` | relay loves or hates (default `love`); for Plex, see [Rating thresholds](#rating-thresholds) |
+| `--feedback-type love\|hate\|rating` | `relay` | relay loves or hates (default `love`), or every star rating; see [Rating thresholds](#rating-thresholds) and [Every rating](#every-rating) |
 | `--config PATH` | `run`, `list` | relay definitions to read (default `relays.toml`) |
 | `--only NAME` | `run` | run just the named relay; repeatable |
 | `--dry-run` | `relay`, `run` | fetch, match and reconcile for real; write nothing |

@@ -130,10 +130,12 @@ def _add_relay_flags(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--feedback-type",
-        choices=("love", "hate"),
+        choices=("love", "hate", "rating"),
         default="love",
-        help="relay loves or hates (default: love). Plex reads and writes the "
-        "love/hate thresholds set in the web app or LOVE_THRESHOLD / HATE_THRESHOLD",
+        help="relay loves, hates or every star rating (default: love). Plex reads "
+        "and writes the love/hate thresholds set in the web app or LOVE_THRESHOLD "
+        "/ HATE_THRESHOLD; 'rating' carries each track's own value and needs a "
+        "target that has stars (Plex, hyperfix)",
     )
     _add_run_flags(parser)
 

@@ -25,6 +25,22 @@ from ratingrelay.engine.types import (
 Commit = Callable[[], Awaitable[None]]
 
 
+def missing_rating(track: Track, service: str) -> "WritePlan":
+    """What an exact relay answers when handed a track with no value to carry.
+
+    A ``rating`` relay writes the track's own number, so a track without one has
+    nothing to say — a skip, not a write of "no rating" (which would clear a value
+    the source never mentioned). Both star targets answer it the same way.
+    """
+    return WritePlan(
+        track,
+        service,
+        OutcomeStatus.SKIPPED,
+        Reason.MISSING_METADATA,
+        "the source gave no rating to relay",
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Existing:
     """What the target held for this track before the plan was made."""
@@ -42,6 +58,13 @@ class Existing:
     # "the target did not say", and is read as occupied: a plan that forgets to
     # fill this in must never cause a write on every run.
     occupied: Optional[bool] = None
+    # The target holds a value here that this plan would replace, and no record of
+    # ours exists for it: the pipeline reports it as the user's and writes nothing.
+    # Only exact relays set this — a love relay writing 8 over the user's 4-star
+    # copy is converging, not overwriting, because a threshold band says both are
+    # the same intent. A ``rating`` relay has no band, so any value it did not write
+    # is somebody else's decision (RR-20).
+    never_adopt: bool = False
 
 
 @dataclass(frozen=True, slots=True)

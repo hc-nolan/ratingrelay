@@ -209,13 +209,14 @@ def _settled(  # pylint: disable=too-many-arguments
         return plan.to_outcome(OutcomeStatus.SKIPPED, Reason.ALREADY_SYNCED, None)
     if plan.status is not OutcomeStatus.WRITTEN:
         return plan.to_outcome()
-    if record is None and plan.existing.holds:
+    if record is None and (plan.existing.holds or plan.existing.never_adopt):
         # The user's own state, not ours: recording it would let a withdrawal
         # undo it (contract §3). Same answer in a dry run.
+        held = "this" if plan.existing.holds else "a value we did not write"
         return plan.to_outcome(
             OutcomeStatus.SKIPPED,
             Reason.ALREADY_ON_TARGET,
-            f"{target.service} already holds this",
+            f"{target.service} already holds {held}",
         )
     if not plan.actionable:
         return plan.to_outcome(

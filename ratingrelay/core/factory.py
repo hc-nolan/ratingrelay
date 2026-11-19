@@ -36,6 +36,11 @@ from ratingrelay.engine.services.musicbrainz import resolve_recording_mbid
 from ratingrelay.engine.services.plex import PlexLibrary, PlexSource, PlexTarget
 from ratingrelay.core.thresholds import effective_thresholds
 from ratingrelay.engine.refs import KNOWN_SERVICES, parse_ref, service_kind
+from ratingrelay.engine.types import (
+    DEFAULT_LOVE_RATING,
+    HYPERFIX_RATING_FLOOR,
+    PLEX_RATING_FLOOR,
+)
 from ratingrelay.settings import get_settings
 
 # Kept as the names the CLI and the request schemas import. A *ref* is one of
@@ -51,10 +56,15 @@ TARGET_SERVICES = KNOWN_SERVICES
 def relay_identity(service: str, *, feedback_type: str = "love") -> str:
     """Which relay a source config is, for keeping its sync records apart.
 
-    The identity is the direction the source reads — ``love`` or ``hate`` — and
-    nothing finer. Two relays on one pair that read opposite directions must not
-    reconcile against each other's writes; one relay whose threshold moved must,
-    because a track that no longer passes is a withdrawal to undo.
+    The identity is the direction the source reads — ``love``, ``hate`` or
+    ``rating`` — and nothing finer. Two relays on one pair that read opposite
+    directions must not reconcile against each other's writes; one relay whose
+    threshold moved must, because a track that no longer passes is a withdrawal to
+    undo.
+
+    ``rating`` is its own identity on purpose: a star relay and a love relay on the
+    same pair classify the same field differently, and sharing records would let one
+    undo the other's writes (RR-20).
 
     The account is deliberately not part of it: a sync record is keyed by the
     pair of refs as well, so two accounts of one kind are already told apart,
@@ -64,6 +74,8 @@ def relay_identity(service: str, *, feedback_type: str = "love") -> str:
     if kind == "lastfm":
         return "love"
     if kind in ("plex", "listenbrainz", "hyperfix"):
+        if feedback_type == "rating":
+            return "rating"
         return "love" if feedback_type == "love" else "hate"
     raise ValueError(f"Unknown source service: {service}")
 
@@ -71,6 +83,9 @@ def relay_identity(service: str, *, feedback_type: str = "love") -> str:
 # Targets that can only record a love. Writing a hate relay to one would love the
 # hated tracks, so that pairing is refused before anything is fetched.
 LOVE_ONLY_TARGETS = ("lastfm",)
+# Targets with no star scale at all: a ``rating`` relay would have to invent the
+# meaning of a number they cannot hold.
+NO_RATING_TARGETS = ("lastfm", "listenbrainz")
 
 
 def unsupported_target(relay: str, target: str) -> Optional[str]:
@@ -81,6 +96,8 @@ def unsupported_target(relay: str, target: str) -> Optional[str]:
     """
     if relay == "hate" and service_kind(target) in LOVE_ONLY_TARGETS:
         return f"{target} has no hate to write; a hate relay cannot target it"
+    if relay == "rating" and service_kind(target) in NO_RATING_TARGETS:
+        return f"{target} has no star rating to write; a rating relay cannot target it"
     return None
 
 
@@ -156,12 +173,23 @@ async def source_for_service(
 
     *feedback_type* is the direction to read, for every source that has one:
     Plex loves are rated at least the love threshold, hates at most the hate
-    threshold (:func:`plex_threshold`).
+    threshold (:func:`plex_threshold`), and a ``rating`` relay reads every rated
+    track and carries its own value. Last.fm and ListenBrainz have no star scale,
+    so neither can be the source of one.
     """
     kind = service_kind(service)
+    rating_mode = feedback_type == "rating"
+    if rating_mode and kind in NO_RATING_TARGETS:
+        raise ValueError(f"{service} has no star rating to read; a rating relay cannot use it")
     if kind == "plex":
         library = PlexLibrary(await plex_credentials(db, service))
         relay = relay_identity(service, feedback_type=feedback_type)
+        if rating_mode:
+            # "Rated at all": half a star is Plex's smallest rating, and the server
+            # filters on it, so an unrated track never reaches the run.
+            return PlexSource(
+                library, PLEX_RATING_FLOOR, "gte", service=service
+            )
         comparison = "gte" if relay == "love" else "lte"
         return PlexSource(
             library, await plex_threshold(db, relay), comparison, service=service
@@ -177,12 +205,14 @@ async def source_for_service(
         # Same shared thresholds as Plex: hyperfix's 80/20 love/hate *is* 8.0/2.0
         # here, so a relay reads back what hyperfix holds.
         relay = relay_identity(service, feedback_type=feedback_type)
+        client = HyperfixClient(await hyperfix_credentials(db, service))
+        if rating_mode:
+            # hyperfix maps a stored 0 to 0.1 on this scale, so "at least 0.1" is
+            # the same statement Plex's half star is.
+            return HyperfixSource(client, HYPERFIX_RATING_FLOOR, "gte", service=service)
         comparison = "gte" if relay == "love" else "lte"
         return HyperfixSource(
-            HyperfixClient(await hyperfix_credentials(db, service)),
-            await plex_threshold(db, relay),
-            comparison,
-            service=service,
+            client, await plex_threshold(db, relay), comparison, service=service
         )
     raise ValueError(f"Unknown source service: {service}")
 
@@ -197,8 +227,9 @@ async def target_for_service(
     """Build a target from a ref, wired to the mappings store and MBID cache.
 
     *relay* is the run's :func:`relay_identity`. A Plex target writes that
-    direction's threshold (:func:`plex_threshold`), and needs the direction to
-    know whether a copy already rated above (love) or below (hate) it holds it.
+    direction's threshold (:func:`plex_threshold`), or the track's own rating in
+    ``rating`` mode, and needs the direction to know whether a copy already rated
+    above (love), below (hate) or at (rating) exactly it holds it.
     A ListenBrainz target writes that direction's feedback: there is no separate
     target direction, so a target can never write the opposite of its source.
 
@@ -217,7 +248,7 @@ async def target_for_service(
         return PlexTarget(
             library,
             mappings,
-            await plex_threshold(db, relay),
+            DEFAULT_LOVE_RATING if relay == "rating" else await plex_threshold(db, relay),
             relay,
             service=service,
         )
@@ -239,7 +270,7 @@ async def target_for_service(
             HyperfixClient(await hyperfix_credentials(db, service)),
             mappings,
             resolve_recording_mbid,
-            await plex_threshold(db, relay),
+            DEFAULT_LOVE_RATING if relay == "rating" else await plex_threshold(db, relay),
             relay,
             cache=mbid_cache(db),
             service=service,

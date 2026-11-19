@@ -212,9 +212,13 @@ These are the point of the tool. v1 got them right; keep them that way.
 - **Network calls go through `engine/retry.attempt`**: three tries, doubling
   backoff, `OSError` only — connection trouble and timeouts, which is what
   `requests` raises, are retried; a `ValueError` refusal is a decision and never is.
-  Retrying is safe because every call the engine makes is idempotent. A failed
-  fetch or a target that cannot be planned fails the run or the track; it never
-  silently becomes a skip.
+  A target that answers "no" is the same kind of decision: a service adapter
+  raises `engine.types.TargetRefused` for a 4xx it will not recover from (hyperfix
+  answering 404 for a recording it does not hold), and the pipeline reports
+  `Reason.TARGET_REFUSED` instead of the generic `WRITE_FAILED`, so a run says
+  what happened rather than calling a refusal a failure. Retrying is safe because
+  every call the engine makes is idempotent. A failed fetch or a target that cannot
+  be planned fails the run or the track; it never silently becomes a skip.
 - **Every network call has a deadline.** plexapi and pylast set their own;
   liblistenbrainz and musicbrainzngs set none and would wait on a silent server
   forever (RR-11), so `engine/http_timeouts.install()` gives them one. A new

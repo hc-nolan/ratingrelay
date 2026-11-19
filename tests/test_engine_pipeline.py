@@ -25,7 +25,7 @@ from ratingrelay.engine.services.listenbrainz import ListenBrainzTarget
 from ratingrelay.engine.services.musicbrainz import Resolution
 from ratingrelay.engine.services.plex import PlexTarget
 from ratingrelay.engine.store import NullProgress
-from ratingrelay.engine.types import RunReport, TargetReport
+from ratingrelay.engine.types import RunReport, TargetRefused, TargetReport
 
 
 class FakePlexLibrary:
@@ -41,6 +41,10 @@ class FakePlexLibrary:
 
     async def rate(self, external_id: str, rating: Optional[float]) -> None:
         if self._fail_with is not None:
+            # An exception instance is raised as-is, so a test can make a target
+            # refuse (`TargetRefused`) rather than merely break.
+            if isinstance(self._fail_with, BaseException):
+                raise self._fail_with
             raise RuntimeError(self._fail_with)
         self.writes.append((external_id, rating))
 
@@ -448,3 +452,21 @@ def test_one_failure_among_many_converged_tracks_is_partial():
         targets=(TargetReport(target="lastfm", written=0, skipped=0, unmatched=0, failed=1, reverted=0),),
     )
     assert nothing.status == "failed"
+
+
+async def test_a_target_that_refuses_is_not_a_write_failure():
+    """A refusal is final: typed apart from transport trouble, and not recorded."""
+    target, _ = _plex_target(
+        [Candidate("Artist", "Song", external_id="1")], fail_with=TargetRefused("not here")
+    )
+    store = MemorySyncStore()
+
+    report = await pipeline.run_tracks(
+        [Track("Artist", "Song")], [target], source_service="plex", sync_store=store
+    )
+
+    outcome = report.outcomes[0]
+    assert outcome.status is OutcomeStatus.FAILED
+    assert outcome.reason is Reason.TARGET_REFUSED
+    assert outcome.detail == "not here"
+    assert store.records == {}

@@ -29,6 +29,7 @@ from ratingrelay.engine.types import (
     OutcomeStatus,
     Reason,
     RunReport,
+    TargetRefused,
     TargetReport,
     Track,
     TrackOutcome,
@@ -133,6 +134,13 @@ async def _apply(
         await attempt(
             plan.commit, f"{target.service} write for '{track.title}'"
         )
+    # A refusal is a decision: this track fails, the run carries on, and no retry
+    # is coming — the detail says what the target would not do.
+    except TargetRefused as exc:
+        logger.warning(
+            "%s refused the write for '%s': %s", target.service, track.title, exc
+        )
+        return plan.to_outcome(OutcomeStatus.FAILED, Reason.TARGET_REFUSED, str(exc))
     # One failed write must not stop the run.
     except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         logger.error("Write to %s failed for '%s': %s", target.service, track.title, exc)
@@ -262,6 +270,11 @@ async def _undo(
     except ValueError as exc:  # the record changed under us; same promise
         return TrackOutcome(
             track, target.service, OutcomeStatus.SKIPPED, Reason.UNRECORDED_TARGET, str(exc)
+        )
+    except TargetRefused as exc:
+        logger.warning("%s refused the undo for '%s': %s", target.service, record.key, exc)
+        return TrackOutcome(
+            track, target.service, OutcomeStatus.FAILED, Reason.TARGET_REFUSED, str(exc)
         )
     # One failed undo must not stop the run.
     except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught

@@ -33,12 +33,21 @@ from ratingrelay.engine.credentials import HyperfixCredentials
 from ratingrelay.engine.plan import Existing, WritePlan
 from ratingrelay.engine.services.musicbrainz import MbidTarget, Resolver
 from ratingrelay.engine.store import MappingStore, MbidCache, SyncedTrack
-from ratingrelay.engine.types import DEFAULT_LOVE_RATING, Intent, IntentKind, Track
+from ratingrelay.engine.types import (
+    DEFAULT_LOVE_RATING,
+    Intent,
+    IntentKind,
+    TargetRefused,
+    Track,
+)
 from ratingrelay.settings import logger
 
 FEED_PATH = "/api/music/ratings"
 RECORDING_PATH = "/api/music/recordings/{mbid}"
 PAGE_SIZE = 500
+# Every write here comes from the bridge, and hyperfix records that: a rating it did
+# not get from the user is not diary history, and must not be pushed back to Plex.
+SOURCE = "relay"
 # A zero rating is real here and "unrated" there, so it is sent just above nothing.
 ZERO_RATING = 0.1
 REQUEST_TIMEOUT = 30.0
@@ -101,10 +110,35 @@ class HyperfixClient:
             raise HyperfixError("hyperfix answered with an unexpected shape")
         return body
 
-    async def write_rating(self, mbid: str, rating: Optional[int]) -> None:
-        """Set one recording's rating (0-100), or clear it with ``None``."""
+    async def write_rating(
+        self,
+        mbid: str,
+        rating: Optional[int],
+        *,
+        title: Optional[str] = None,
+        artist: Optional[str] = None,
+    ) -> None:
+        """Set one recording's rating (0-100), or clear it with ``None``.
+
+        *title* and *artist* travel with it because hyperfix may not hold the recording
+        yet: with a title it creates one, which is what makes a whole library writable
+        rather than only the albums it happens to know (HF-236). Without them an unknown
+        recording is still a 404, and this raises :class:`TargetRefused` for it — a
+        decision, not an outage. ``source=relay`` says the rating came from here, so
+        hyperfix does not count it as the user's own and does not push it back to Plex.
+        """
         path = RECORDING_PATH.format(mbid=quote(mbid, safe=""))
-        response = await self._request("PATCH", path, json={"rating": rating})
+        body: dict[str, Any] = {"rating": rating, "source": SOURCE}
+        if title:
+            body["title"] = title
+        if artist:
+            body["artist"] = artist
+        response = await self._request("PATCH", path, json=body)
+        if response.status_code == 404:
+            raise TargetRefused(
+                f"hyperfix does not hold recording {mbid} and did not create it "
+                "(it needs a version that creates a recording on write)"
+            )
         if response.status_code not in (200, 204):
             raise HyperfixError(f"hyperfix answered {response.status_code} for {path}")
 
@@ -283,7 +317,11 @@ class HyperfixTarget(MbidTarget):
         client = self._client
 
         async def commit() -> None:
-            await client.write_rating(mbid, wrote)
+            # The identity travels with the rating: hyperfix creates the recording when
+            # it has never seen it, which is most of a library (HF-236).
+            await client.write_rating(
+                mbid, wrote, title=track.title, artist=track.artist
+            )
             # After the write, never before: a dry run does not reach here, and a
             # failed write must not teach the cache an answer no run kept.
             await self.remembered(track, mbid)

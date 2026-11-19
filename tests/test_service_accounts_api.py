@@ -20,13 +20,35 @@ import ratingrelay.models.services  # noqa: F401
 import ratingrelay.models.sync  # noqa: F401
 import ratingrelay.models.thresholds  # noqa: F401
 
+from ratingrelay.core import credentials as credential_resolution
 from ratingrelay.core.session import SESSION_COOKIE
 from ratingrelay.db import get_async_session
 from ratingrelay.db.credentials import get_account, get_credential, upsert_credential
 from ratingrelay.models.services import ServiceName
 from ratingrelay.routes import lastfm, listenbrainz, plex, services
+from ratingrelay.settings import Settings
 
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
+
+# Every credential setting pinned to its empty value, as the integration suite
+# does: ``_env_file=None`` stops `.config` (which holds real tokens on a
+# developer's machine) and the explicit values stop an exported PLEX_TOKEN or
+# LISTENBRAINZ_TOKEN deciding what these tests assert. `/api/services` reads
+# settings on every call, so without this a developer's shell can change the
+# answer.
+_UNSET = {
+    "plex_token": None,
+    "plex_server_url": None,
+    "plex_music_library": "Music",
+    "lastfm_token": None,
+    "lastfm_secret": None,
+    "lastfm_username": None,
+    "lastfm_password": None,
+    "listenbrainz_token": None,
+    "listenbrainz_username": None,
+    "hyperfix_url": None,
+    "hyperfix_api_key": None,
+}
 
 
 class _FakePasswordUser:
@@ -65,6 +87,28 @@ class _FakeResource:
 
     def connect(self):
         return _FakeConnection(f"http://{self.name.lower()}.invalid:32400")
+
+
+class _FakePlexServer:
+    """The server itself, asked only for its own name."""
+
+    friendlyName = "Shelf"
+
+    def __init__(self, url, token, timeout=None):
+        self.url = url
+        self.token = token
+        self.timeout = timeout
+
+
+@pytest.fixture(autouse=True)
+def no_ambient_credentials(monkeypatch):
+    """Nothing in `.config` or the shell decides what these tests see."""
+    monkeypatch.setattr(
+        credential_resolution, "get_settings", lambda: Settings(_env_file=None, **_UNSET)
+    )
+    # The server-name memo is process-wide, on purpose; a test must not read a
+    # name another test cached.
+    monkeypatch.setattr(plex, "_server_names", {})
 
 
 @pytest.fixture
@@ -145,6 +189,99 @@ async def test_an_account_with_incomplete_credentials_is_not_configured(client, 
     body = (await client.get("/api/services")).json()
 
     assert [a["configured"] for a in body["accounts"]] == [False]
+
+
+async def test_a_service_configured_from_the_environment_is_listed(
+    client, factory, monkeypatch
+):
+    """A Key Vault deploy hands every credential in through env vars, not rows.
+
+    There is no ``serviceaccount`` row for such a service, so listing rows alone
+    left it out of the flow builder while every run resolved it happily — a
+    connected target the interface refused to offer.
+    """
+    from ratingrelay.core import credentials as credentials_core  # pylint: disable=import-outside-toplevel
+    from ratingrelay.settings import Settings  # pylint: disable=import-outside-toplevel
+
+    monkeypatch.setattr(
+        credentials_core,
+        "get_settings",
+        lambda: Settings(
+            _env_file=None,
+            listenbrainz_token="from-settings",
+            listenbrainz_username="chunned",
+            hyperfix_url="https://hyperfix.invalid",
+            hyperfix_api_key="from-settings",
+        ),
+    )
+
+    body = (await client.get("/api/services")).json()
+
+    assert [
+        (a["id"], a["service"], a["primary"], a["configured"], a["managed"])
+        for a in body["accounts"]
+    ] == [
+        ("listenbrainz", "listenbrainz", True, True, "settings"),
+        ("hyperfix", "hyperfix", True, True, "settings"),
+    ]
+    by_id = {a["id"]: a for a in body["accounts"]}
+    assert by_id["listenbrainz"]["username"] == "chunned"
+    assert by_id["hyperfix"]["url"] == "https://hyperfix.invalid"
+
+
+async def test_a_stored_account_is_not_listed_twice_because_settings_also_hold_it(
+    client, factory, monkeypatch
+):
+    """Settings win field by field; they do not create a second account.
+
+    A bare-kind row the environment fully describes is listed once, and as the
+    environment's: replacing its credential here would not take effect.
+    """
+    from ratingrelay.core import credentials as credentials_core  # pylint: disable=import-outside-toplevel
+    from ratingrelay.settings import Settings  # pylint: disable=import-outside-toplevel
+
+    monkeypatch.setattr(
+        credentials_core,
+        "get_settings",
+        lambda: Settings(
+            _env_file=None,
+            listenbrainz_token="from-settings",
+            listenbrainz_username="chunned",
+        ),
+    )
+    await _store(factory, "listenbrainz", token="row", username="chunned", label="Mine")
+
+    body = (await client.get("/api/services")).json()
+
+    assert [
+        (a["id"], a["label"], a["managed"], a["configured"]) for a in body["accounts"]
+    ] == [("listenbrainz", "Mine", "settings", True)]
+
+
+async def test_a_stored_account_the_environment_only_partly_describes_keeps_its_row(
+    client, factory, monkeypatch
+):
+    """A Plex token without a server URL is not a credential the env owns."""
+    from ratingrelay.core import credentials as credentials_core  # pylint: disable=import-outside-toplevel
+    from ratingrelay.settings import Settings  # pylint: disable=import-outside-toplevel
+
+    monkeypatch.setattr(
+        credentials_core,
+        "get_settings",
+        lambda: Settings(_env_file=None, plex_token="from-settings"),
+    )
+    await _store(
+        factory,
+        "plex",
+        token="row",
+        username="chunned",
+        plex_server_url="http://shelf.invalid:32400",
+        plex_server_name="Shelf",
+    )
+
+    body = (await client.get("/api/services")).json()
+
+    assert [(a["id"], a["managed"]) for a in body["accounts"]] == [("plex", "database")]
 
 
 # ---------------------------------------------------------------------------

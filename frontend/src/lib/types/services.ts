@@ -18,6 +18,14 @@ export interface ServiceAccountItem {
 	configured: boolean;
 	username?: string | null;
 	server_name?: string | null;
+	/** The address of a remote service (hyperfix) or a Plex server's URL. */
+	url?: string | null;
+	/**
+	 * `settings` means the environment alone describes this account — a deploy
+	 * that passes every credential in through env vars. There is no row, so the
+	 * web app can neither replace nor disconnect it: it says so instead.
+	 */
+	managed: 'database' | 'settings';
 }
 
 export interface ServicesResponse {

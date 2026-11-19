@@ -50,6 +50,15 @@ class ServiceAccountItem(BaseModel):
     configured: bool
     username: Optional[str] = None
     server_name: Optional[str] = None
+    # Where the account's credentials really come from. ``settings`` means the
+    # environment describes them fully — a deploy that hands every credential in
+    # through env vars (Key Vault) — whether or not a row also exists: settings
+    # win, so the web app can neither change nor remove the account, and says so
+    # rather than offering a button that would do nothing.
+    managed: Literal["database", "settings"] = "database"
+    # The address a remote service is reached at (hyperfix), or a Plex server's
+    # URL. Cosmetic here: the page shows it beside the label.
+    url: Optional[str] = None
 
 
 class ServicesResponse(BaseModel):

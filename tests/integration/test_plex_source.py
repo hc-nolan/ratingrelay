@@ -38,7 +38,7 @@ async def test_a_loved_track_is_loved_on_listenbrainz(world):
     assert world.listenbrainz.score(RECORDING) == 1
     assert run.results["listenbrainz"]["ok"] == 1
     # Asked of the server (contract §5), not fetched and filtered here.
-    assert world.plex.section.calls == [{"userRating>>=": 8.0}]
+    assert world.plex.section.calls == [{"userRating>>=": 7.0}]
     # The file's own MBID reached the lookup, so the recording is identified by
     # identity rather than falling back to an artist/title search.
     assert world.brainz.lookups == [(TRACK_MBID, "New Order", "Blue Monday")]

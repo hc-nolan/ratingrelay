@@ -350,3 +350,55 @@ async def test_a_value_another_direction_of_the_pair_wrote_is_adopted():
 
     assert report.outcomes[0].status is OutcomeStatus.WRITTEN
     assert fake.ratings == {"rec-Field Day": 100}
+
+
+# ---------------------------------------------------------------------------
+# A floor: "every rating" does not have to mean the whole library
+# ---------------------------------------------------------------------------
+
+
+async def test_a_plex_rating_source_reads_from_the_floor_it_is_given(monkeypatch):
+    from ratingrelay.core import factory  # pylint: disable=import-outside-toplevel
+
+    asked: list[tuple[float, str]] = []
+
+    class Library:
+        def __init__(self, *_):
+            pass
+
+        async def rated(self, threshold, comparison):
+            asked.append((threshold, comparison))
+            return []
+
+    async def no_credentials(_db, _service="plex"):
+        return None
+
+    monkeypatch.setattr(factory, "plex_credentials", no_credentials)
+    monkeypatch.setattr(factory, "PlexLibrary", Library)
+
+    source = await factory.source_for_service(
+        None, "plex", feedback_type="rating", min_rating=7.0
+    )
+    await source.fetch()
+
+    assert asked == [(7.0, "gte")]
+
+    # Unset is still "rated at all", which is half a star.
+    other = await factory.source_for_service(None, "plex", feedback_type="rating")
+    await other.fetch()
+    assert asked[-1] == (1.0, "gte")
+
+
+def test_the_floor_is_validated_by_the_schema_and_the_cli():
+    from pydantic import ValidationError  # pylint: disable=import-outside-toplevel
+
+    from ratingrelay.cli.config import ConfigError, RelaySpec  # pylint: disable=import-outside-toplevel
+    from ratingrelay.schemas.relay import PlexFromConfig  # pylint: disable=import-outside-toplevel
+
+    assert (
+        PlexFromConfig(service="plex", feedback_type="rating", min_rating=7).min_rating == 7.0
+    )
+    with pytest.raises(ValidationError, match="out of 10"):
+        PlexFromConfig(service="plex", feedback_type="rating", min_rating=11)
+    with pytest.raises(ConfigError, match="out of 10"):
+        RelaySpec(source="plex", targets=("hyperfix",), feedback_type="rating", min_rating=0)

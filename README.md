@@ -136,8 +136,11 @@ the direction relays the value itself, in both directions and with nothing lost 
 Plex's 0–10 and Hyperfix's 0–100 are the same scale times ten.
 
 In that mode no threshold applies. Every rated track is read (half a star is the
-floor), and a destination holds the number it was given or is written again when
-the number changes. Two rules keep it safe:
+default floor), and a destination holds the number it was given or is written again
+when the number changes. The **Rating** box sets a higher floor when the whole
+library is not worth relaying — "at least 3.5 stars" reads 1,477 tracks instead of
+34,583 — and the CLI takes the same number as `--min-rating 7` (out of 10). Two
+rules keep it safe:
 
 - A rating RatingRelay did not write is never replaced. The first run fills tracks
   the destination has no rating for and leaves the ones it does, so your own
@@ -284,6 +287,7 @@ writes, so its counts are what a real run would do.
 | `--source SERVICE` | `relay` | where ratings come from: `plex`, `lastfm`, `listenbrainz` (default `plex`) |
 | `--target SERVICE` | `relay` | where they go; repeat for more than one (default `lastfm`) |
 | `--feedback-type love\|hate\|rating` | `relay` | relay loves or hates (default `love`), or every star rating; see [Rating thresholds](#rating-thresholds) and [Every rating](#every-rating) |
+| `--min-rating N` | `relay` | for `rating`: the lowest rating to read, out of 10 (7 is 3.5 stars). Default: every rated track |
 | `--config PATH` | `run`, `list` | relay definitions to read (default `relays.toml`) |
 | `--only NAME` | `run` | run just the named relay; repeatable |
 | `--dry-run` | `relay`, `run` | fetch, match and reconcile for real; write nothing |

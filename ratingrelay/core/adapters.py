@@ -44,7 +44,10 @@ async def source_for(db: AsyncSession, config: object) -> Source:
     """Build the source described by a request config."""
     if isinstance(config, PlexFromConfig):
         return await source_for_service(
-            db, ref_for(config), feedback_type=config.feedback_type
+            db,
+            ref_for(config),
+            feedback_type=config.feedback_type,
+            min_rating=config.min_rating,
         )
     if isinstance(config, LastFMFromConfig):
         return await source_for_service(db, ref_for(config))
@@ -54,7 +57,10 @@ async def source_for(db: AsyncSession, config: object) -> Source:
         )
     if isinstance(config, HyperfixFromConfig):
         return await source_for_service(
-            db, ref_for(config), feedback_type=config.feedback_type
+            db,
+            ref_for(config),
+            feedback_type=config.feedback_type,
+            min_rating=config.min_rating,
         )
     raise ValueError(f"Unknown source service: {config}")
 

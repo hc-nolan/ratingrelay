@@ -242,6 +242,8 @@
 	let plexSourceConfig = $state<PlexSourceConfig>({ feedbackType: 'love' });
 	let lbzSourceConfig = $state<ListenBrainzSourceConfig>({ feedbackType: 'love' });
 	let hfxSourceConfig = $state<HyperfixSourceConfig>({ feedbackType: 'love' });
+	/** A rating relay's floor, out of 10 (7 is 3.5 stars); null reads every rated track. */
+	let minRating = $state<number | null>(null);
 
 	/** Which target accounts are switched on, by ref. */
 	let allocated = $state<string[]>([]);
@@ -392,9 +394,16 @@
 		}
 
 		const kind = kindOf(selectedSource);
+		// Only a rating relay reads a floor, and only when it is not "any rating".
+		const floor =
+			relayDirection === 'rating' && minRating !== null ? { min_rating: minRating } : {};
 		const source =
 			kind === 'plex'
-				? { ...accountPayload(selectedSource), feedback_type: plexSourceConfig.feedbackType }
+				? {
+						...accountPayload(selectedSource),
+						feedback_type: plexSourceConfig.feedbackType,
+						...floor
+					}
 				: kind === 'listenbrainz'
 					? {
 							...accountPayload(selectedSource),
@@ -403,7 +412,8 @@
 					: kind === 'hyperfix'
 						? {
 								...accountPayload(selectedSource),
-								feedback_type: hfxSourceConfig.feedbackType
+								feedback_type: hfxSourceConfig.feedbackType,
+								...floor
 							}
 						: { ...accountPayload(selectedSource) };
 
@@ -553,6 +563,7 @@
 						<RatingNode
 							config={directionConfig}
 							bind:thresholds
+							bind:minRating
 							modes={['plex', 'hyperfix'].includes(kindOf(selectedSource))
 								? ['love', 'hate', 'rating']
 								: ['love', 'hate']}

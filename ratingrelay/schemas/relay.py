@@ -37,6 +37,16 @@ class PlexFromConfig(_AccountScoped):
 
     service: Literal["plex"]
     feedback_type: Literal["love", "hate", "rating"] = "love"
+    # Only a ``rating`` relay reads one, and only to decide what counts as rated
+    # enough to relay: `7` is 3.5 stars. Unset means every rated track.
+    min_rating: Optional[float] = None
+
+    @field_validator("min_rating")
+    @classmethod
+    def _in_range(cls, value: Optional[float]) -> Optional[float]:
+        if value is not None and not 0 < value <= 10:
+            raise ValueError("min_rating is a Plex rating out of 10")
+        return value
 
     @model_validator(mode="before")
     @classmethod
@@ -62,6 +72,14 @@ class HyperfixFromConfig(_AccountScoped):
 
     service: Literal["hyperfix"]
     feedback_type: Literal["love", "hate", "rating"] = "love"
+    min_rating: Optional[float] = None
+
+    @field_validator("min_rating")
+    @classmethod
+    def _in_range(cls, value: Optional[float]) -> Optional[float]:
+        if value is not None and not 0 < value <= 10:
+            raise ValueError("min_rating is a rating out of 10")
+        return value
 
 
 class LastFMFromConfig(_AccountScoped):

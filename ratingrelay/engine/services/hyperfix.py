@@ -37,6 +37,8 @@ from ratingrelay.engine.types import (
     DEFAULT_LOVE_RATING,
     Intent,
     IntentKind,
+    OutcomeStatus,
+    Reason,
     TargetRefused,
     Track,
 )
@@ -314,6 +316,18 @@ class HyperfixTarget(MbidTarget):
         return rating >= self._rating
 
     async def plan(self, track: Track) -> WritePlan:
+        if not track.title.strip():
+            # A Plex track with no title can be neither matched by name nor created
+            # in hyperfix, which keys a new recording on the title it is given. It is
+            # a defect in the source, so it is skipped rather than failed — a
+            # recurring run should not report `partial` about the same track forever.
+            return WritePlan(
+                track,
+                self.service,
+                OutcomeStatus.SKIPPED,
+                Reason.MISSING_METADATA,
+                "the track has no title to relay",
+            )
         resolution = await self.resolution(track)
         mbid = resolution.mbid
         if not mbid:

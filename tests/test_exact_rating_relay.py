@@ -402,3 +402,18 @@ def test_the_floor_is_validated_by_the_schema_and_the_cli():
         PlexFromConfig(service="plex", feedback_type="rating", min_rating=11)
     with pytest.raises(ConfigError, match="out of 10"):
         RelaySpec(source="plex", targets=("hyperfix",), feedback_type="rating", min_rating=0)
+
+
+async def test_a_track_with_no_title_is_skipped_not_refused():
+    """A Plex entry with no title cannot be matched or created, so it is the source's
+    defect, not a refusal: a recurring run should not report `partial` every hour."""
+    fake = FakeHyperfix()
+    target = HyperfixTarget(
+        fake.client(), MemoryMappingStore(), _resolver_by_title(), direction="rating"
+    )
+
+    plan = await target.plan(Track("Earl Sweatshirt", "", rating=8.0))
+
+    assert plan.status is OutcomeStatus.SKIPPED
+    assert plan.reason is Reason.MISSING_METADATA
+    assert fake.requests == []

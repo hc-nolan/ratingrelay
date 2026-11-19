@@ -119,6 +119,21 @@ class Reason(str, Enum):
     # it back. Only a relay that asked for it (``reapply_target_drift``) can
     # report this; every other run leaves the target's own edits alone.
     TARGET_DRIFT = "target_drift"
+    # The target understood the request and would not do it — it does not hold
+    # this track and cannot create it. Distinct from ``write_failed``, which is
+    # a transport or server problem that a later run may survive.
+    TARGET_REFUSED = "target_refused"
+
+
+class TargetRefused(Exception):
+    """A target said no to this write, and the answer will not change on a retry.
+
+    Raised by a service adapter when the target answered with a refusal (a 404
+    for a record it does not hold, a 4xx for a request it rejects) rather than
+    with trouble reaching it. The pipeline turns it into
+    :attr:`Reason.TARGET_REFUSED` and never retries it: retrying a decision is
+    how a run burns its deadline on an answer that was final.
+    """
 
 
 @dataclass(frozen=True, slots=True)

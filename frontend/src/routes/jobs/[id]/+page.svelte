@@ -97,6 +97,7 @@
 		missing_metadata: 'missing artist or title',
 		not_configured: 'service not configured',
 		write_failed: 'write failed',
+		target_refused: 'the target would not take it',
 		unrecorded_target: 'no recorded write',
 		mass_undo_refused: 'mass undo refused',
 		target_drift: 'written again — the target had dropped it'

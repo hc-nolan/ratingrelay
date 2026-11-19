@@ -13,6 +13,7 @@ import httpx
 import pytest
 
 from ratingrelay.engine import MemoryMappingStore, OutcomeStatus, Reason, Track
+from ratingrelay.engine.types import TargetRefused
 from ratingrelay.engine.credentials import HyperfixCredentials
 from ratingrelay.engine.services.hyperfix import HyperfixTarget
 from ratingrelay.engine.services.musicbrainz import Resolution
@@ -106,7 +107,14 @@ async def test_a_love_is_written_as_hyperfix_hundredths():
 
     await plan.commit()
     assert fake.ratings == {"rec-1": 80}
-    assert fake.writes() == [("/api/music/recordings/rec-1", b'{"rating":80}')]
+    # The identity travels with the rating so hyperfix can create what it lacks, and
+    # `source: relay` keeps a bridged rating out of the user's diary (HF-236).
+    assert fake.writes() == [
+        (
+            "/api/music/recordings/rec-1",
+            b'{"rating":80,"source":"relay","title":"Field Day","artist":"Wire"}',
+        )
+    ]
 
 
 @pytest.mark.anyio
@@ -417,3 +425,43 @@ def test_a_reset_can_name_hyperfix():
 
     config = ResetFromConfig(target_service="hyperfix", target_account="attic")
     assert (config.target_service, config.target_account) == ("hyperfix", "attic")
+
+
+async def test_a_recording_hyperfix_does_not_hold_is_a_refusal():
+    """A 404 here is a decision, not an outage: typed, not retried, said in words."""
+    fake = FakeHyperfix()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        fake.requests.append((request.method, request.url.path, request.content or None))
+        if request.url.path == "/api/music/ratings":
+            return httpx.Response(200, json={"items": [], "next_cursor": None})
+        return httpx.Response(404, json={"detail": "no recording"})
+
+    from ratingrelay.engine.services.hyperfix import (  # pylint: disable=import-outside-toplevel
+        HyperfixClient,
+    )
+
+    client = HyperfixClient(
+        CREDS,
+        http=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    with pytest.raises(TargetRefused, match="does not hold recording rec-1"):
+        await client.write_rating("rec-1", 80, title="Field Day", artist="Wire")
+
+
+async def test_a_write_carries_the_identity_and_the_source():
+    fake = FakeHyperfix()
+    target = _target(fake, resolve=_resolver("rec-1"))
+
+    plan = await target.plan(Track("Wire", "Field Day"))
+    await plan.commit()
+
+    (path, body), = fake.writes()
+    assert path == "/api/music/recordings/rec-1"
+    assert json.loads(body) == {
+        "rating": 80,
+        "source": "relay",
+        "title": "Field Day",
+        "artist": "Wire",
+    }

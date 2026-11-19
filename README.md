@@ -10,6 +10,15 @@ later, and the relay changes it back.
 It's self-hosted and built for one person and one music library. You run it on your
 own machine or home server, and your credentials stay there.
 
+> [!WARNING]
+> **Last.fm support is frozen.** From 1 December 2026, Last.fm API keys require a
+> paid [Last.fm Pro](https://www.last.fm/pro) subscription
+> ([announcement](https://support.last.fm/t/api-keys-will-require-pro-from-1st-december/121030)).
+> The Last.fm integration stays in RatingRelay, but it will no longer get fixes or
+> new features, because it can no longer be tested. If you have Pro, it should
+> keep working until Last.fm changes something; if it breaks, it stays broken.
+> Plex and ListenBrainz are unaffected and fully supported.
+
 ![The relay page: Plex as the source, Last.fm and ListenBrainz as destinations](docs/screenshots/relay.png)
 
 ## What it does
@@ -65,7 +74,9 @@ The first time you open the app, it walks you through three steps:
    ratings.
 3. **Connect your music services.** Add Last.fm, ListenBrainz or both:
    - *Last.fm:* an [API key and secret](https://www.last.fm/api/account/create),
-     plus your username and password.
+     plus your username and password. From 1 December 2026 the API key needs
+     Last.fm Pro, and Last.fm support is no longer maintained (see the note at the
+     top of this page).
    - *ListenBrainz:* your username and the user token from your
      [settings page](https://listenbrainz.org/settings/).
 

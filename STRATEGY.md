@@ -32,7 +32,9 @@ _Why it serves the approach:_ The user is trusting RatingRelay to be a faithful 
 
 ### Service integrations
 
-Depth and correctness of Plex, Last.fm, and ListenBrainz support; potential new services.
+Depth and correctness of Plex and ListenBrainz support; potential new services.
+Last.fm is frozen as of December 2026 (its API now requires a paid Pro subscription,
+so it cannot be tested): it stays in the product, unmaintained, and gets no new work.
 
 _Why it serves the approach:_ User control is meaningless without reliable support for the services they actually use.
 

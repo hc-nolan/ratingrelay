@@ -60,6 +60,8 @@ plex_music_library = "Music"
 
 # --- Last.fm -----------------------------------------------------------
 # API credentials: https://www.last.fm/api/account/create
+# From 2026-12-01 Last.fm API keys require Last.fm Pro. Last.fm support is
+# frozen (no fixes or features) because it can no longer be tested.
 # lastfm_token = ""      # API key
 # lastfm_secret = ""
 # lastfm_username = ""

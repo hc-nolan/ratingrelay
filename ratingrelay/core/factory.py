@@ -168,6 +168,7 @@ async def source_for_service(
     service: str,
     *,
     feedback_type: str = "love",
+    min_rating: Optional[float] = None,
 ) -> Source:
     """Build a source from a ref (``plex``, ``listenbrainz:old``).
 
@@ -188,7 +189,7 @@ async def source_for_service(
             # "Rated at all": half a star is Plex's smallest rating, and the server
             # filters on it, so an unrated track never reaches the run.
             return PlexSource(
-                library, PLEX_RATING_FLOOR, "gte", service=service
+                library, min_rating or PLEX_RATING_FLOOR, "gte", service=service
             )
         comparison = "gte" if relay == "love" else "lte"
         return PlexSource(
@@ -209,7 +210,9 @@ async def source_for_service(
         if rating_mode:
             # hyperfix maps a stored 0 to 0.1 on this scale, so "at least 0.1" is
             # the same statement Plex's half star is.
-            return HyperfixSource(client, HYPERFIX_RATING_FLOOR, "gte", service=service)
+            return HyperfixSource(
+                client, min_rating or HYPERFIX_RATING_FLOOR, "gte", service=service
+            )
         comparison = "gte" if relay == "love" else "lte"
         return HyperfixSource(
             client, await plex_threshold(db, relay), comparison, service=service

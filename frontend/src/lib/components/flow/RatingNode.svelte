@@ -9,6 +9,7 @@
 	let {
 		config,
 		thresholds = $bindable(),
+		minRating = $bindable(null),
 		plexInvolved,
 		modes = ['love', 'hate']
 	}: {
@@ -18,6 +19,8 @@
 		thresholds: PlexThresholds | null;
 		/** Plex is the source or a destination, so its threshold matters to this relay. */
 		plexInvolved: boolean;
+		/** A rating relay's floor, out of 10 (7 is 3.5 stars); null reads every rated track. */
+		minRating?: number | null;
 		/** Directions this source can read. A star source adds `rating` (RR-20). */
 		modes?: Direction[];
 	} = $props();
@@ -96,9 +99,22 @@
 		aria-hidden={!(exact || (plexInvolved && thresholds))}
 	>
 		{#if exact}
-			<span class="text-sm text-muted-foreground">
-				Each track's own rating, exactly as it is — no threshold decides anything.
-			</span>
+			<span class="text-sm text-muted-foreground">Every track's own rating, at least</span>
+			<StarRating
+				value={minRating ?? 1}
+				label="Lowest rating to relay"
+				allowed={(r) => r > 1}
+				onpick={(r) => (minRating = r)}
+			/>
+			{#if minRating !== null && minRating > 1}
+				<button
+					type="button"
+					class="rounded px-2 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+					onclick={() => (minRating = null)}
+				>
+					any rating
+				</button>
+			{/if}
 		{:else if plexInvolved && thresholds}
 			{@const current = thresholds}
 			{@const locked = band === 'love' ? current.love_locked : current.hate_locked}

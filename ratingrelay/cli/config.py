@@ -16,7 +16,7 @@ be worse than a crash.
 from dataclasses import dataclass
 from pathlib import Path
 import tomllib
-from typing import Any
+from typing import Any, Optional
 
 from ratingrelay.engine.refs import KNOWN_SERVICES, parse_ref
 
@@ -35,6 +35,7 @@ _KNOWN_KEYS = {
     "targets",
     "dry_run",
     "feedback_type",
+    "min_rating",
     "reapply_target_drift",
 }
 
@@ -79,6 +80,9 @@ class RelaySpec:
     # feedback a ListenBrainz target writes. The Plex ratings that mean love and
     # hate are the shared thresholds (web app, or pinned in settings).
     feedback_type: str = "love"
+    # A ``rating`` relay relays every rated track; this says what "rated" means,
+    # on the 0-10 scale (``7`` is 3.5 stars). Below it, a track is not read.
+    min_rating: Optional[float] = None
     # Write again what the target has since dropped, for this relay only. A
     # policy rather than a one-run override, so unlike ``allow_mass_undo`` it
     # may be set in the file (see ``engine.pipeline._drifted`` for what counts).
@@ -106,6 +110,8 @@ class RelaySpec:
             raise ConfigError(
                 f"{self.name}: feedback_type must be one of {', '.join(FEEDBACK_TYPES)}"
             )
+        if self.min_rating is not None and not 0 < self.min_rating <= 10:
+            raise ConfigError(f"{self.name}: min_rating is a rating out of 10")
         # Lazy, like ``relay`` below: parsing a config must not need settings.
         from ratingrelay.core.factory import (  # pylint: disable=import-outside-toplevel
             unsupported_target,
@@ -162,8 +168,19 @@ def _relay_from_table(table: dict[str, Any], position: int) -> RelaySpec:
         targets=tuple(targets),
         dry_run=bool(table.get("dry_run", False)),
         feedback_type=table.get("feedback_type", "love"),
+        min_rating=_optional_float(table, "min_rating", "@relay"),
         reapply_target_drift=_a_bool(label, table, "reapply_target_drift"),
     )
+
+
+def _optional_float(table: dict[str, Any], key: str, label: str) -> Optional[float]:
+    """A number that may be absent, and must not be a string that looks like one."""
+    value = table.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise ConfigError(f"{label}: {key} must be a number")
+    return float(value)
 
 
 def _a_bool(label: str, table: dict[str, Any], key: str) -> bool:

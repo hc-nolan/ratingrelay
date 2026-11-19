@@ -14,6 +14,7 @@ targets = ["lastfm", "listenbrainz"]
 # target writes them. "rating" reads no threshold: it carries each track's own
 # value, which needs a target that has stars (Plex or hyperfix).
 feedback_type = "love"      # love, hate or rating
+# min_rating = 7            # for rating: the lowest to relay, out of 10 (7 is 3.5 stars)
 # dry_run = true            # fetch, match and reconcile, but write nothing
 # reapply_target_drift = true
 #   Write again what this relay's targets have since dropped (an un-loved

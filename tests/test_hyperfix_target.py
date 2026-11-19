@@ -251,7 +251,9 @@ def test_the_api_protocol_dispatches_a_hyperfix_source(monkeypatch):
 
     seen: list[tuple[str, str]] = []
 
-    async def fake_source_for_service(db, service, *, feedback_type="love"):  # noqa: ARG001
+    async def fake_source_for_service(  # pylint: disable=unused-argument
+        db, service, *, feedback_type="love", min_rating=None
+    ):
         seen.append((service, feedback_type))
         return object()
 

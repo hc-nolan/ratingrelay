@@ -99,6 +99,17 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _rating_out_of_ten(value: str) -> float:
+    """argparse type for a --min-rating: a number in (0, 10]."""
+    try:
+        rating = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"{value!r} is not a number") from exc
+    if not 0 < rating <= 10:
+        raise argparse.ArgumentTypeError("a rating is out of 10, above 0")
+    return rating
+
+
 def _account_ref(value: str) -> str:
     """argparse type for a source or target: ``service`` or ``service:account``."""
     try:
@@ -136,6 +147,14 @@ def _add_relay_flags(parser: argparse.ArgumentParser) -> None:
         "and writes the love/hate thresholds set in the web app or LOVE_THRESHOLD "
         "/ HATE_THRESHOLD; 'rating' carries each track's own value and needs a "
         "target that has stars (Plex, hyperfix)",
+    )
+    parser.add_argument(
+        "--min-rating",
+        type=_rating_out_of_ten,
+        default=None,
+        metavar="RATING",
+        help="for a rating relay, the lowest rating to read, out of 10 (7 is 3.5 "
+        "stars). Default: every rated track",
     )
     _add_run_flags(parser)
 
@@ -177,6 +196,7 @@ def spec_from_args(args: argparse.Namespace) -> RelaySpec:
         reapply_target_drift=getattr(args, "reapply_target_drift", False),
         allow_mass_undo=args.allow_mass_undo,
         feedback_type=args.feedback_type,
+        min_rating=getattr(args, "min_rating", None),
     )
 
 
@@ -203,7 +223,10 @@ async def run_relay(
 
     async with session_factory() as db:
         source = await source_for_service(
-            db, spec.source, feedback_type=spec.feedback_type
+            db,
+            spec.source,
+            feedback_type=spec.feedback_type,
+            min_rating=spec.min_rating,
         )
         targets = [
             await target_for_service(db, name, relay=spec.relay)

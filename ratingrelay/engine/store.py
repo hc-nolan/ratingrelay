@@ -62,6 +62,15 @@ class SyncStore(Protocol):
     async def load(self, source_service: str, target_service: str) -> dict[str, SyncedTrack]:
         """Return the recorded writes, keyed by normalized track key."""
 
+    async def known_keys(self, source_service: str, target_service: str) -> set[str]:
+        """Every key this tool has written on the pair, **under any relay**.
+
+        An exact relay asks this before replacing a value it has no record of: the
+        value may not be the user's at all, but a write another direction of the
+        same pair made — the case where somebody switches a pair from loves to
+        ratings without resetting first (RR-20).
+        """
+
     async def remember(
         self, source_service: str, target_service: str, synced: SyncedTrack
     ) -> None:
@@ -136,6 +145,9 @@ class MemorySyncStore:
 
     async def load(self, source_service: str, target_service: str) -> dict[str, SyncedTrack]:
         return dict(self.records.get((source_service, target_service), {}))
+
+    async def known_keys(self, source_service: str, target_service: str) -> set[str]:
+        return set(self.records.get((source_service, target_service), {}))
 
     async def remember(
         self, source_service: str, target_service: str, synced: SyncedTrack

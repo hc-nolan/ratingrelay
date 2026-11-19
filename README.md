@@ -141,7 +141,9 @@ the number changes. Two rules keep it safe:
 
 - A rating RatingRelay did not write is never replaced. The first run fills tracks
   the destination has no rating for and leaves the ones it does, so your own
-  Hyperfix rating survives.
+  Hyperfix rating survives. A value an earlier relay of this tool wrote *on the
+  same pair* does not count as yours, so switching a pair from loves to ratings
+  replaces the thresholds it left behind with the real numbers.
 - Clearing a rating in the source is a withdrawal: the track drops out of the read,
   and the write RatingRelay made for it is undone — never a rating you set.
 

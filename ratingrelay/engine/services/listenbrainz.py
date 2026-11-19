@@ -24,7 +24,10 @@ PAGE_SIZE = 100
 
 
 def _to_track(item: dict) -> Track:
-    metadata = item.get("track_metadata", {})
+    # ``track_metadata`` is present but null for feedback the server cannot
+    # resolve any more, and a null is not a mapping: reading through it aborted
+    # a whole run (RR-20).
+    metadata = item.get("track_metadata") or {}
     return Track(
         artist=metadata.get("artist_name", ""),
         title=metadata.get("track_name", ""),

@@ -32,6 +32,8 @@ from ratingrelay.settings import logger
 
 # Plex's own rating comparison operators, as its filter syntax spells them.
 _RATING_OPERATORS = {"gte": "userRating>>=", "lte": "userRating<<="}
+# One rating step, which is half a star: Plex's ``userRating`` is an integer 1-10.
+_RATING_STEP = 1.0
 
 
 def _plex_mbid(plex_track) -> Optional[str]:
@@ -131,10 +133,18 @@ class PlexLibrary:
         Plex applies the comparison server-side (``userRating>>=``); the local
         check after it is a guard, not the filter, in case a server ignores an
         operator we did not expect it to know.
+
+        **The server's operators are strict.** ``userRating>>=8`` returns tracks
+        rated 9 and 10, not 8 and up, and ``<<=2`` returns 1 only — measured against
+        a live server, where both ``>>=`` and ``>>`` answer the same set. So the
+        server is asked one step *wider* than the promise and the local guard below
+        keeps the exact one. Without it every read is half a star too high: a love
+        relay at 8 moved 4.5- and 5-star tracks and skipped every four-star one.
         """
         operator = _RATING_OPERATORS[comparison]
+        asked = threshold - _RATING_STEP if comparison == "gte" else threshold + _RATING_STEP
         try:
-            tracks = await self.search(**{operator: threshold})
+            tracks = await self.search(**{operator: max(0.0, asked)})
         except (BadRequest, NotFound) as exc:  # an unknown operator must not fail the run
             logger.warning(
                 "Plex rejected the %s filter (%s); falling back to a local filter",

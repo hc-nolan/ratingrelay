@@ -113,7 +113,7 @@ async def test_an_unrated_copy_is_not_hated(world):
     )
 
     assert run.tracks_fetched == 1
-    assert world.plex.section.calls == [{"userRating<<=": 2.0}]
+    assert world.plex.section.calls == [{"userRating<<=": 3.0}]
 
 
 async def test_a_run_with_nothing_rated_writes_nothing(world):

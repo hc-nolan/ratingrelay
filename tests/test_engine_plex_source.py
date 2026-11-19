@@ -43,10 +43,14 @@ class FakeSection:
             return list(self._tracks)
         (field_name, value), = filters.items()
         rating = float(value)
+        # Strict, as a live Plex answers: ``>>=8`` returns 9 and 10, never 8, and
+        # ``<<=2`` returns 1 only. The adapter asks one step wider and keeps the
+        # inclusive promise itself, so a fake that "helpfully" compared inclusively
+        # would hide exactly the bug that behaviour caused (RR-21).
         if field_name == "userRating>>=":
-            return [t for t in self._tracks if (t.userRating or 0) >= rating]
+            return [t for t in self._tracks if (t.userRating or 0) > rating]
         if field_name == "userRating<<=":
-            return [t for t in self._tracks if 0 < (t.userRating or 0) <= rating]
+            return [t for t in self._tracks if 0 < (t.userRating or 0) < rating]
         raise AssertionError(f"unexpected filter {field_name}")
 
 
@@ -70,7 +74,31 @@ async def test_rated_asks_plex_for_the_comparison():
 
     assert [track.title for track in rated] == ["High", "Top"]
     # One server-side query; the whole library was never fetched.
-    assert section.calls == [{"userRating>>=": 8.0}]
+    assert section.calls == [{"userRating>>=": 7.0}]
+
+
+async def test_the_threshold_itself_is_included_even_though_plex_is_strict():
+    """A love relay at 8 must take a 4-star (8.0) track, not start at 9.
+
+    The server answers ``>>=8`` with 9s and 10s only, so the adapter asks for 7
+    and keeps the inclusive comparison itself. Slipping back to asking for 8 costs
+    every four-star track in the library (1,117 of them on the live one, RR-21).
+    """
+    section = FakeSection([FakePlexTrack("Boundary", 8.0), FakePlexTrack("Above", 9.0)])
+
+    rated = await _library(section).rated(8.0, "gte")
+
+    assert [track.title for track in rated] == ["Boundary", "Above"]
+    assert section.calls == [{"userRating>>=": 7.0}]
+
+
+async def test_a_hate_threshold_includes_its_own_boundary():
+    section = FakeSection([FakePlexTrack("Boundary", 2.0), FakePlexTrack("Below", 1.0)])
+
+    rated = await _library(section).rated(2.0, "lte")
+
+    assert sorted(track.title for track in rated) == ["Below", "Boundary"]
+    assert section.calls == [{"userRating<<=": 3.0}]
 
 
 async def test_rated_uses_the_lower_bound_operator_for_lte():
@@ -85,14 +113,14 @@ async def test_rated_uses_the_lower_bound_operator_for_lte():
     rated = await _library(section).rated(4.0, "lte")
 
     assert [track.title for track in rated] == ["Disliked"]
-    assert section.calls == [{"userRating<<=": 4.0}]
+    assert section.calls == [{"userRating<<=": 5.0}]
 
 
 async def test_rated_never_includes_unrated_tracks():
     """Unrated counts as 0, so "rate below 4" must not sweep up the library."""
     section = FakeSection([FakePlexTrack("Unrated", None)])
     # The server returns it anyway, as a server that ignores the operator might.
-    assert section.searchTracks(**{"userRating<<=": 4.0}) == []
+    assert section.searchTracks(**{"userRating<<=": 5.0}) == []
     section = FakeSection([FakePlexTrack("Unrated", None)])
 
     rated = await _library(section).rated(4.0, "lte")
@@ -106,7 +134,7 @@ async def test_rated_falls_back_to_a_local_filter_when_plex_rejects_it(caplog):
     rated = await _library(section).rated(8.0, "gte")
 
     assert [track.title for track in rated] == ["High"]
-    assert section.calls == [{"userRating>>=": 8.0}, {}]
+    assert section.calls == [{"userRating>>=": 7.0}, {}]
     assert "falling back to a local filter" in caplog.text
 
 
@@ -186,4 +214,4 @@ async def test_a_dropped_connection_is_not_mistaken_for_a_rejected_filter():
 
     with pytest.raises(ConnectionResetError):
         await _library(section).rated(8.0, "gte")
-    assert section.calls == [{"userRating>>=": 8.0}]
+    assert section.calls == [{"userRating>>=": 7.0}]

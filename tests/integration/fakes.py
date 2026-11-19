@@ -73,6 +73,10 @@ class FakeSection:
     ``userRating<<=`` deliberately includes unrated copies (their stored rating
     is 0). Plex does the same, and the adapter's local guard is what drops them
     — which means that guard is under test rather than bypassed.
+
+    Both operators are **strict**, as a live server answers them: ``>>=8`` gives 9
+    and 10, never 8. The adapter asks one step wider and applies the inclusive
+    promise locally, so an inclusive fake here would hide that (RR-21).
     """
 
     def __init__(self, tracks: list[FakePlexTrack]):
@@ -86,9 +90,9 @@ class FakeSection:
         (operator, value), = filters.items()
         rating = float(value)
         if operator == "userRating>>=":
-            return [track for track in self.tracks if (track.userRating or 0) >= rating]
+            return [track for track in self.tracks if (track.userRating or 0) > rating]
         if operator == "userRating<<=":
-            return [track for track in self.tracks if (track.userRating or 0) <= rating]
+            return [track for track in self.tracks if (track.userRating or 0) < rating]
         # Not BadRequest: the adapter catches that and falls back to fetching the
         # whole library, which would hide a broken filter behind identical
         # results. An unexpected filter is a bug in the adapter, so say so.

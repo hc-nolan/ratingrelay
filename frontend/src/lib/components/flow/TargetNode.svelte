@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { starLabel } from '$lib/relay';
-	import type { TargetOption } from '$lib/types/relay';
+	import type { Direction, TargetOption } from '$lib/types/relay';
 	import { markFor } from '$lib/types/relay';
 	import { cn } from '$lib/utils';
 	import ServiceMark from './ServiceMark.svelte';
@@ -20,8 +20,8 @@
 		onremove: () => void;
 		/** What a Plex destination writes: the threshold for the relay's direction (null: unknown). */
 		plexWrite?: { rating: number | null };
-		/** The relay's direction, which a ListenBrainz target writes. */
-		direction?: 'love' | 'hate';
+		/** The relay's direction, which every target writes in its own terms. */
+		direction?: Direction;
 	} = $props();
 </script>
 
@@ -86,7 +86,10 @@
 
 	<div class="flex min-h-6 items-center pl-[34px]">
 		{#if allocated}
-			{#if option.id === 'plex' && plexWrite}
+			{#if direction === 'rating' && (option.id.startsWith('plex') || option.id.startsWith('hyperfix'))}
+				<!-- Every rated track, in the number it already has. -->
+				<span class="text-sm text-muted-foreground">Each track's own rating</span>
+			{:else if option.id === 'plex' && plexWrite}
 				<span class="text-sm text-muted-foreground">
 					{plexWrite.rating === null
 						? 'Rate at the threshold'

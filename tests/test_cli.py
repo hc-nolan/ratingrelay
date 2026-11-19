@@ -186,6 +186,17 @@ def test_the_direction_reaches_the_spec():
     assert spec.relay == "hate"
 
 
+def test_the_rating_direction_reaches_the_spec():
+    """A star relay is its own identity, so its records cannot collide."""
+    args = cli.build_parser().parse_args(
+        ["relay", "--feedback-type", "rating", "--target", "hyperfix"]
+    )
+    spec = cli.spec_from_args(args)
+
+    assert spec.feedback_type == "rating"
+    assert spec.relay == "rating"
+
+
 @pytest.mark.parametrize("flag", ["--rating-threshold", "--comparison", "--plex-rating"])
 def test_the_per_relay_plex_ratings_are_gone(flag):
     """The Plex ratings are the shared love/hate thresholds now."""
@@ -266,9 +277,11 @@ def test_a_relay_needs_a_target():
         RelaySpec(source="plex", targets=())
 
 
-def test_the_direction_is_love_or_hate():
+def test_the_direction_is_love_hate_or_rating():
     with pytest.raises(ConfigError, match="feedback_type"):
         RelaySpec(feedback_type="meh")
+
+    assert RelaySpec(source="plex", targets=("hyperfix",), feedback_type="rating").relay == "rating"
 
 
 # ---------------------------------------------------------------------------

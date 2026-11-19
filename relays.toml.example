@@ -8,10 +8,12 @@
 name = "nightly"
 source = "plex"
 targets = ["lastfm", "listenbrainz"]
-# Loves or hates. The Plex ratings that count as each are the love/hate
-# thresholds set in the web app (or pinned by LOVE_THRESHOLD / HATE_THRESHOLD),
-# shared by every relay: a Plex source reads them and a Plex target writes them.
-feedback_type = "love"      # love or hate
+# Loves, hates, or every rating. The Plex ratings that count as each are the
+# love/hate thresholds set in the web app (or pinned by LOVE_THRESHOLD /
+# HATE_THRESHOLD), shared by every relay: a Plex source reads them and a Plex
+# target writes them. "rating" reads no threshold: it carries each track's own
+# value, which needs a target that has stars (Plex or hyperfix).
+feedback_type = "love"      # love, hate or rating
 # dry_run = true            # fetch, match and reconcile, but write nothing
 # reapply_target_drift = true
 #   Write again what this relay's targets have since dropped (an un-loved

@@ -15,7 +15,7 @@ from plexapi.server import PlexServer
 
 from ratingrelay.engine.credentials import PlexCredentials
 from ratingrelay.engine.matching import MatchStatus, match_track
-from ratingrelay.engine.plan import Existing, WritePlan
+from ratingrelay.engine.plan import Existing, WritePlan, missing_rating
 from ratingrelay.engine.services import MappedTarget
 from ratingrelay.engine.store import MappingStore, SyncedTrack
 from ratingrelay.engine.thread import run_sync
@@ -203,6 +203,10 @@ class PlexTarget(MappedTarget):
     already on the right side is the user's and is left untouched — a love
     relay writing 10 must not bump a 4-star track the user chose, and one
     writing 8 must not lower a 5-star one.
+
+    A ``rating`` relay is exact: the number written is the track's own, and a copy
+    holds it only at that value. The band collapses to a point, which is the honest
+    answer — there is no "at least" when the value is the point.
     """
 
     # The service this class speaks to, whatever account it is pointed at.
@@ -222,8 +226,26 @@ class PlexTarget(MappedTarget):
         self._rating = rating
         self._direction = direction
 
-    def holds(self, current: Optional[float]) -> bool:
-        """Whether a copy rated *current* already holds this target's intent."""
+    @property
+    def exact(self) -> bool:
+        """Whether this relay carries the track's own rating instead of a threshold."""
+        return self._direction == "rating"
+
+    def wanted(self, track: Track) -> Optional[float]:
+        """The rating to write for *track*, or ``None`` if it has none to relay."""
+        return track.rating if self.exact else self._rating
+
+    def holds(self, current: Optional[float], intent: Optional[float] = None) -> bool:
+        """Whether a copy rated *current* already holds this target's intent.
+
+        *intent* is the value this plan would write; it only matters in ``rating``
+        mode, where the number is the track's own. Without it the configured
+        threshold stands in, so a caller that only asks "is this copy ours?" still
+        gets an answer.
+        """
+        if self.exact:
+            wanted = self._rating if intent is None else intent
+            return _same_rating(current, wanted)
         if self._direction == "hate":
             return current is not None and 0 < current <= self._rating
         return current is not None and current >= self._rating
@@ -253,11 +275,13 @@ class PlexTarget(MappedTarget):
                 matches=outcome.candidates,
             )
 
-        rating = self._rating
+        rating = self.wanted(track)
+        if rating is None:
+            return missing_rating(track, self.service)
         external_ids = [match.external_id for match in outcome.matches]
         target_key = json.dumps(external_ids)
         prior = {match.external_id: match.rating for match in outcome.matches}
-        to_write = [key for key in external_ids if not self.holds(prior[key])]
+        to_write = [key for key in external_ids if not self.holds(prior[key], rating)]
         # A copy rated *something* is a copy a person chose for: only a track
         # with no rated copy at all is one whose write was simply removed.
         occupied = any(_rated(prior[key]) for key in external_ids)
@@ -274,7 +298,12 @@ class PlexTarget(MappedTarget):
             target_key=target_key,
             mapped=await self.has_mapping(track),
             existing=Existing(
-                holds=not to_write, prior=json.dumps(prior), occupied=occupied
+                holds=not to_write,
+                prior=json.dumps(prior),
+                occupied=occupied,
+                # A copy already rated is a copy somebody chose for. With no record
+                # of ours, writing the source's value over it would erase that.
+                never_adopt=self.exact and occupied,
             ),
             commit=commit,
         )

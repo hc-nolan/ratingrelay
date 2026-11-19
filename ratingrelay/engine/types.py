@@ -7,7 +7,7 @@ adapters above it can translate them into their own representations.
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
+from typing import Literal, Optional
 
 from ratingrelay.engine.normalize import track_key
 
@@ -19,6 +19,17 @@ from ratingrelay.engine.normalize import track_key
 # user rated at the threshold up to 5 stars.
 DEFAULT_LOVE_RATING = 8.0
 DEFAULT_HATE_RATING = 2.0
+
+# A relay reads one of three directions. ``love`` and ``hate`` classify a track by
+# the thresholds above and write the threshold; ``rating`` carries the track's own
+# value, which is what two services that both have a star scale can do (RR-20).
+Mode = Literal["love", "hate", "rating"]
+
+# The smallest rating each service holds, which is the floor a ``rating`` relay reads
+# at: "rated at all". Plex's is half a star out of five (1 of 10); hyperfix maps a 0
+# to 0.1 on this scale, so its own floor is the same statement.
+PLEX_RATING_FLOOR = 1.0
+HYPERFIX_RATING_FLOOR = 0.1
 
 
 @dataclass(frozen=True, slots=True)

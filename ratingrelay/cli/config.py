@@ -26,7 +26,8 @@ DEFAULT_CONFIG = "relays.toml"
 # ``:account`` for a second one (``lastfm:new``). The bare kind is the account
 # that already exists, so a file written before accounts existed still means what
 # it meant. See ``ratingrelay.engine.refs``.
-FEEDBACK_TYPES = ("love", "hate")
+# What a relay reads: a threshold band on either side, or each track's own value.
+FEEDBACK_TYPES = ("love", "hate", "rating")
 
 _KNOWN_KEYS = {
     "name",
@@ -43,7 +44,7 @@ _KNOWN_KEYS = {
 _MOVED_KEYS = {
     "rating_threshold": "set the love/hate thresholds in the web app or settings",
     "plex_rating": "a Plex target writes the shared love/hate thresholds",
-    "comparison": 'use feedback_type = "love" or "hate"',
+    "comparison": 'use feedback_type = "love", "hate" or "rating"',
 }
 
 

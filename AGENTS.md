@@ -106,7 +106,8 @@ These are the point of the tool. v1 got them right; keep them that way.
 1. **Identity is the MusicBrainz recording MBID.** Plex track MBIDs are resolved
    through MusicBrainz and cached. A track without an MBID is unmatched, not guessed.
 2. **Reconcile every run, don't append.** Each run compares the source's current
-   loves/hates to what we previously wrote to each target, and converges the target.
+   loves/hates — or, in `rating` mode, its current star ratings — to what we
+   previously wrote to each target, and converges the target.
    A rating that changed re-propagates; a love that was withdrawn gets un-loved.
    A target's *own* edits are not policed: an unchanged intent is `already_synced`,
    so a track someone un-loved on the target stays that way. A relay that names
@@ -116,8 +117,13 @@ These are the point of the tool. v1 got them right; keep them that way.
 3. **Only undo our own writes.** Never clear a target rating this tool did not create.
    Reset is an explicit, narrow action — never a whole-service wipe by default.
    Sync records are keyed by source, target **and relay** (the direction the source
-   reads, `relay_identity` in `core/factory.py`), so a love relay and a hate relay
-   on one pair never reconcile against each other. A reconcile that would undo most
+   reads — `love`, `hate` or `rating`, `relay_identity` in `core/factory.py`), so a
+   love relay and a hate relay on one pair never reconcile against each other.
+   A `rating` relay (`docs/plans/2026-11-19-016-exact-rating-relay.md`) writes the
+   track's own value and compares by equality; it never replaces a value it has no
+   record of (`Existing.never_adopt`), so a star rating the user made in Hyperfix
+   survives the first run. Last.fm and ListenBrainz have no star scale and are
+   refused for it by kind (`unsupported_target`), not only in the UI. A reconcile that would undo most
    of a target (`pipeline.is_mass_undo`) is refused unless that one run allows it
    (`--allow-mass-undo`, `allow_mass_undo` on a non-recurring job); never make the
    override persistent.

@@ -303,8 +303,8 @@
 		allocated = on ? [...allocated, ref] : allocated.filter((r) => r !== ref);
 	}
 
-	/** Loves or hates: what the source reads, so what a Plex target writes. Mirrors relay_identity. */
-	let relayDirection = $derived<'love' | 'hate'>(
+	/** Loves, hates or every rating: what the source reads, so what a target writes. Mirrors relay_identity. */
+	let relayDirection = $derived<'love' | 'hate' | 'rating'>(
 		kindOf(selectedSource) === 'plex'
 			? plexSourceConfig.feedbackType
 			: kindOf(selectedSource) === 'listenbrainz'
@@ -315,14 +315,18 @@
 	);
 
 	/**
-	 * Targets the flow may offer: connected, never the source itself, and never
-	 * Last.fm for a hate relay (it has no hate, so it would love them). Mirrors
-	 * unsupported_target.
+	 * Targets the flow may offer: connected, never the source itself, never Last.fm
+	 * for a hate relay (it has no hate, so it would love them), and neither
+	 * Last.fm nor ListenBrainz for a rating relay (neither has a star scale).
+	 * Mirrors unsupported_target.
 	 */
 	const availableTargets = $derived(
 		targetCatalog.filter((t) => {
 			if (t.id === selectedSource) return false;
-			if (kindOf(t.id) === 'lastfm' && relayDirection === 'hate') return false;
+			const kind = kindOf(t.id);
+			if (kind === 'lastfm' && relayDirection === 'hate') return false;
+			if (relayDirection === 'rating' && (kind === 'lastfm' || kind === 'listenbrainz'))
+				return false;
 			return true;
 		})
 	);
@@ -549,6 +553,9 @@
 						<RatingNode
 							config={directionConfig}
 							bind:thresholds
+							modes={['plex', 'hyperfix'].includes(kindOf(selectedSource))
+								? ['love', 'hate', 'rating']
+								: ['love', 'hate']}
 							plexInvolved={kindOf(selectedSource) === 'plex' ||
 								allocated.some((ref) => kindOf(ref) === 'plex')}
 						/>
@@ -574,7 +581,9 @@
 										allocated={isAllocated(target.id)}
 										onadd={() => setAllocated(target.id, true)}
 										onremove={() => setAllocated(target.id, false)}
-										plexWrite={kindOf(target.id) === 'plex' ? plexWrite : undefined}
+										plexWrite={kindOf(target.id) === 'plex' && relayDirection !== 'rating'
+											? plexWrite
+											: undefined}
 										direction={relayDirection}
 									/>
 								{/each}

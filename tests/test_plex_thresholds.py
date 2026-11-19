@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from ratingrelay.core import factory
 from ratingrelay.routes import relay as relay_routes
 from ratingrelay.db.thresholds import save_thresholds
+from ratingrelay.engine.types import Track
 from ratingrelay.schemas.relay import ThresholdsUpdate
 from ratingrelay.settings import Settings
 
@@ -247,3 +248,58 @@ async def test_an_older_listenbrainz_target_direction_is_ignored(client):
 
     assert resp.status_code == 201
     assert resp.json()["targets_config"] == [{"service": "listenbrainz"}]
+
+
+# ---------------------------------------------------------------------------
+# ``rating`` mode: the track's own value, not a threshold (RR-20)
+# ---------------------------------------------------------------------------
+
+
+async def test_a_rating_source_reads_every_rated_track(monkeypatch, session):
+    monkeypatch.setattr(factory, "plex_credentials", _no_credentials)
+    monkeypatch.setattr(factory, "PlexLibrary", _Library)
+    source = await factory.source_for_service(session, "plex", feedback_type="rating")
+    await source.fetch()
+
+    # Half a star is Plex's floor, so the server-side filter is "rated at all".
+    assert source.library.asked == [(1.0, "gte")]
+
+
+async def test_a_rating_target_carries_the_tracks_own_value(thresholds, session):
+    target = await factory.target_for_service(
+        session, "plex", plex_library=_Library(), relay="rating"
+    )
+
+    assert target.wanted(Track("Wire", "Field Day", rating=8.5)) == 8.5
+    assert target.holds(8.5, 8.5)
+    assert not target.holds(8.5, 9.0)
+    # A love relay on the same pair still writes its threshold.
+    love = await factory.target_for_service(
+        session, "plex", plex_library=_Library(), relay="love"
+    )
+    assert love.wanted(Track("Wire", "Field Day", rating=8.5)) == love._rating
+
+
+def test_a_rating_relay_is_its_own_identity():
+    assert factory.relay_identity("plex", feedback_type="rating") == "rating"
+    assert factory.relay_identity("hyperfix", feedback_type="rating") == "rating"
+
+
+@pytest.mark.parametrize("target", ["lastfm", "listenbrainz"])
+def test_a_rating_relay_cannot_target_services_without_stars(target):
+    assert factory.unsupported_target("rating", target)
+    assert factory.unsupported_target("love", target) is None
+    assert factory.unsupported_target("rating", "plex") is None
+    assert factory.unsupported_target("rating", "hyperfix") is None
+
+
+@pytest.mark.parametrize("target", ["lastfm", "listenbrainz"])
+async def test_a_rating_target_is_refused_before_anything_is_fetched(target):
+    with pytest.raises(ValueError, match="no star rating"):
+        await factory.target_for_service(None, target, relay="rating")
+
+
+@pytest.mark.parametrize("source", ["lastfm", "listenbrainz"])
+async def test_services_without_stars_cannot_be_read_as_ratings(source):
+    with pytest.raises(ValueError, match="no star rating"):
+        await factory.source_for_service(None, source, feedback_type="rating")

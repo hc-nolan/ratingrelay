@@ -7,6 +7,13 @@ here may assume another service (including Hyperfix) exists.
 `STRATEGY.md` holds the product framing (problem, personas, metrics, workstreams).
 Read it before proposing features; read this file before touching code.
 
+**Last.fm is frozen (from 2026-12-01).** Last.fm API keys now require a paid Pro
+subscription, and the maintainer does not have one, so the integration can no longer
+be tested against the real service. Keep the existing Last.fm code and its fake-client
+tests green, and keep it working through shared refactors, but do not add Last.fm
+features, do not "fix" Last.fm behaviour that can't be reproduced, and do not remove
+it without being asked. New capabilities target Plex and ListenBrainz.
+
 ## Dev environment
 
 Host-based, no containers. `uv` for Python, `pnpm` for the frontend, `just` to run things.

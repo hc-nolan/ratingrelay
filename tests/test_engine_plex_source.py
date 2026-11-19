@@ -46,7 +46,7 @@ class FakeSection:
         # Strict, as a live Plex answers: ``>>=8`` returns 9 and 10, never 8, and
         # ``<<=2`` returns 1 only. The adapter asks one step wider and keeps the
         # inclusive promise itself, so a fake that "helpfully" compared inclusively
-        # would hide exactly the bug that behaviour caused (RR-21).
+        # would hide exactly the bug that behaviour caused (RR-19).
         if field_name == "userRating>>=":
             return [t for t in self._tracks if (t.userRating or 0) > rating]
         if field_name == "userRating<<=":
@@ -82,7 +82,7 @@ async def test_the_threshold_itself_is_included_even_though_plex_is_strict():
 
     The server answers ``>>=8`` with 9s and 10s only, so the adapter asks for 7
     and keeps the inclusive comparison itself. Slipping back to asking for 8 costs
-    every four-star track in the library (1,117 of them on the live one, RR-21).
+    every four-star track in the library (1,117 of them on the live one, RR-19).
     """
     section = FakeSection([FakePlexTrack("Boundary", 8.0), FakePlexTrack("Above", 9.0)])
 

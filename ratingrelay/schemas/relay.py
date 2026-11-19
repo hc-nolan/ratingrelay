@@ -32,7 +32,7 @@ class PlexFromConfig(_AccountScoped):
     shared love/hate thresholds (settings or the UI), not per relay.
 
     ``rating`` is the third direction: every rated track, each with its own value
-    (RR-20). It reads no threshold, so the love/hate pair does not apply to it.
+    (RR-18). It reads no threshold, so the love/hate pair does not apply to it.
     """
 
     service: Literal["plex"]

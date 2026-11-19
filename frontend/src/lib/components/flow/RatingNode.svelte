@@ -21,7 +21,7 @@
 		plexInvolved: boolean;
 		/** A rating relay's floor, out of 10 (7 is 3.5 stars); null reads every rated track. */
 		minRating?: number | null;
-		/** Directions this source can read. A star source adds `rating` (RR-20). */
+		/** Directions this source can read. A star source adds `rating` (RR-18). */
 		modes?: Direction[];
 	} = $props();
 

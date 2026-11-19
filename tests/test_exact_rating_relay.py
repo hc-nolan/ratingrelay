@@ -1,4 +1,4 @@
-"""A relay whose intent is the track's own rating (``rating`` mode, RR-20).
+"""A relay whose intent is the track's own rating (``rating`` mode, RR-18).
 
 Love and hate relays classify a track against a threshold and write the threshold.
 A ``rating`` relay carries the value: Plex's 0-10 half-steps, hyperfix's 0-100

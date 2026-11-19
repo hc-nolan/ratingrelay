@@ -22,7 +22,7 @@ DEFAULT_HATE_RATING = 2.0
 
 # A relay reads one of three directions. ``love`` and ``hate`` classify a track by
 # the thresholds above and write the threshold; ``rating`` carries the track's own
-# value, which is what two services that both have a star scale can do (RR-20).
+# value, which is what two services that both have a star scale can do (RR-18).
 Mode = Literal["love", "hate", "rating"]
 
 # The smallest rating each service holds, which is the floor a ``rating`` relay reads

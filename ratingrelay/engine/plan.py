@@ -63,7 +63,7 @@ class Existing:
     # Only exact relays set this — a love relay writing 8 over the user's 4-star
     # copy is converging, not overwriting, because a threshold band says both are
     # the same intent. A ``rating`` relay has no band, so any value it did not write
-    # is somebody else's decision (RR-20).
+    # is somebody else's decision (RR-18).
     never_adopt: bool = False
 
 

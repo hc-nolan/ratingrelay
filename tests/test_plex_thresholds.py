@@ -251,7 +251,7 @@ async def test_an_older_listenbrainz_target_direction_is_ignored(client):
 
 
 # ---------------------------------------------------------------------------
-# ``rating`` mode: the track's own value, not a threshold (RR-20)
+# ``rating`` mode: the track's own value, not a threshold (RR-18)
 # ---------------------------------------------------------------------------
 
 

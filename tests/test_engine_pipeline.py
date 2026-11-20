@@ -24,7 +24,7 @@ from ratingrelay.engine.services.lastfm import LastFmTarget
 from ratingrelay.engine.services.listenbrainz import ListenBrainzTarget
 from ratingrelay.engine.services.musicbrainz import Resolution
 from ratingrelay.engine.services.plex import PlexTarget
-from ratingrelay.engine.store import NullProgress
+from ratingrelay.engine.store import NullProgress, SyncedTrack
 from ratingrelay.engine.types import RunReport, TargetRefused, TargetReport
 
 
@@ -470,3 +470,137 @@ async def test_a_target_that_refuses_is_not_a_write_failure():
     assert outcome.reason is Reason.TARGET_REFUSED
     assert outcome.detail == "not here"
     assert store.records == {}
+
+
+# ---------------------------------------------------------------------------
+# Two fetched rows, one recording: write once (RR-17)
+# ---------------------------------------------------------------------------
+
+
+async def test_a_library_copy_is_written_once_not_once_per_row():
+    """A library that holds a track twice is one recording, so one write.
+
+    The record the run keeps in memory was never updated after a write, so the
+    second row sharing the key looked unwritten and went out again — 357 writes
+    for 217 recordings on a live run, and a count that overstated the work.
+    """
+    client = FakeListenBrainzClient()
+    target = ListenBrainzTarget(client, MemoryMappingStore(), await _resolver("rec-1"))
+    store = MemorySyncStore()
+    tracks = [
+        Track("Artist", "Song", external_id="101"),
+        Track("Artist", "Song", external_id="202"),
+    ]
+
+    report = await pipeline.run_tracks(
+        tracks, [target], source_service="plex", sync_store=store
+    )
+
+    assert client.submissions == [(1, "rec-1")]
+    written, repeated = report.outcomes
+    assert written.status is OutcomeStatus.WRITTEN
+    assert repeated.status is OutcomeStatus.SKIPPED
+    assert repeated.reason is Reason.ALREADY_SYNCED
+    assert report.targets[0].written == 1
+
+
+async def test_a_dry_run_counts_a_library_copy_the_way_a_real_run_does():
+    """Contract §4: the dry run is the authority on what a real run would do.
+
+    Only a real write used to make the second copy of a track look settled, so the
+    dry run promised one write more than the real run made.
+    """
+    client = FakeListenBrainzClient()
+    target = ListenBrainzTarget(client, MemoryMappingStore(), await _resolver("rec-1"))
+    tracks = [Track("Artist", "Song"), Track("Artist", "Song")]
+
+    report = await pipeline.run_tracks(
+        tracks, [target], source_service="plex", sync_store=MemorySyncStore(), dry_run=True
+    )
+
+    assert client.submissions == []
+    assert [o.status for o in report.outcomes] == [
+        OutcomeStatus.WRITTEN,
+        OutcomeStatus.SKIPPED,
+    ]
+
+
+async def test_two_recordings_under_one_key_are_both_written():
+    """The identity is the recording, not the key: two recordings both get a write.
+
+    A studio and a live version can share ``artist||title`` and still be different
+    recordings, which a source that names its own MBIDs (ListenBrainz feedback,
+    hyperfix) can hand us in one run. The sync store holds one record per key, so
+    it can only name one of them — writing both is what keeps the other from
+    silently never being rated, and every write here is idempotent.
+    """
+    client = FakeListenBrainzClient()
+    target = ListenBrainzTarget(client, MemoryMappingStore(), await _resolver("rec-1"))
+    store = MemorySyncStore()
+    tracks = [
+        Track("Artist", "Song", recording_mbid="rec-studio"),
+        Track("Artist", "Song", recording_mbid="rec-live"),
+    ]
+
+    report = await pipeline.run_tracks(
+        tracks, [target], source_service="plex", sync_store=store
+    )
+
+    assert client.submissions == [(1, "rec-studio"), (1, "rec-live")]
+    assert [o.status for o in report.outcomes] == [OutcomeStatus.WRITTEN] * 2
+    # The record can only name one of them: the last write, as before.
+    assert store.records[("plex", "listenbrainz")]["artist||song"].recording_mbid == (
+        "rec-live"
+    )
+
+
+async def test_a_record_from_an_earlier_run_settles_a_shared_key():
+    """The collision guard is about *this* run's writes, not about the record.
+
+    A record from an earlier run whose key now names two recordings must still
+    settle: treating it as a collision would rewrite both rows on every run.
+    """
+    client = FakeListenBrainzClient()
+    target = ListenBrainzTarget(client, MemoryMappingStore(), await _resolver("rec-1"))
+    store = MemorySyncStore()
+    await store.remember(
+        "plex",
+        "listenbrainz",
+        SyncedTrack(
+            key="artist||song", recording_mbid="rec-studio", intent="love", rating=None
+        ),
+    )
+    tracks = [
+        Track("Artist", "Song", recording_mbid="rec-studio"),
+        Track("Artist", "Song", recording_mbid="rec-live"),
+    ]
+
+    report = await pipeline.run_tracks(
+        tracks, [target], source_service="plex", sync_store=store
+    )
+
+    assert client.submissions == []
+    assert [o.reason for o in report.outcomes] == [Reason.ALREADY_SYNCED] * 2
+
+
+async def test_a_duplicate_row_is_not_target_drift():
+    """A relay that reapplies drift must not read its own fresh write as dropped.
+
+    Every target plans against the listing it cached before the run, so the second
+    row of a track looks absent to it — and an ordinary drift relay re-wrote the
+    recording it had just written (RR-17 survived in that configuration).
+    """
+    client = FakeListenBrainzClient()
+    target = ListenBrainzTarget(client, MemoryMappingStore(), await _resolver("rec-1"))
+    tracks = [Track("Artist", "Song"), Track("Artist", "Song")]
+
+    report = await pipeline.run_tracks(
+        tracks,
+        [target],
+        source_service="plex",
+        sync_store=MemorySyncStore(),
+        reapply_drift=True,
+    )
+
+    assert client.submissions == [(1, "rec-1")]
+    assert [o.reason for o in report.outcomes] == [None, Reason.ALREADY_SYNCED]

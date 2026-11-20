@@ -113,7 +113,13 @@ These are the point of the tool. v1 got them right; keep them that way.
    so a track someone un-loved on the target stays that way. A relay that names
    `reapply_target_drift` opts out of that, and only for a write the target has
    *dropped* — a replacement the user chose is never overwritten (same rule as
-   undo, below).
+   undo, below). A library that holds one recording twice (two copies, two rows
+   sharing `artist||title`) is one recording: the run keeps its own map of what it
+   wrote, so the second row is `already_synced` and not a second write — and the
+   dry run has to agree, which is why it updates that map too (RR-17). Two
+   *different* recordings under one key are both written in the run that writes
+   them; the record can only name one, so a run that settles the pair settles it
+   against that one.
 3. **Only undo our own writes.** Never clear a target rating this tool did not create.
    Reset is an explicit, narrow action — never a whole-service wipe by default.
    Sync records are keyed by source, target **and relay** (the direction the source

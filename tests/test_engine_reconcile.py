@@ -409,6 +409,31 @@ async def test_withdrawing_a_minority_is_an_ordinary_reconcile():
     assert Reason.MASS_UNDO_REFUSED not in {o.reason for o in report.outcomes}
 
 
+async def test_writing_new_tracks_does_not_raise_the_mass_undo_bar():
+    """The ratio is about what the run takes back, against what the target held.
+
+    A run that also writes a pile of new keys must not make a mass undo of the old
+    ones legal by growing the denominator. A dry run, which writes nothing at all,
+    has to answer the same as the real run that follows it.
+    """
+    target, client = _lastfm_target()
+    store, loved = await _loved(14)
+    kept = loved[:4]  # 10 of 14 withdrawn: a mass undo at 14 records
+    fresh = [Track("Artist", f"Fresh {n}") for n in range(20)]
+
+    for dry_run in (True, False):
+        report = await pipeline.run_tracks(
+            kept + fresh,
+            [target],
+            source_service="plex",
+            sync_store=store,
+            dry_run=dry_run,
+        )
+        refused = [o for o in report.outcomes if o.reason is Reason.MASS_UNDO_REFUSED]
+        assert len(refused) == 10
+        assert client.unloves == []
+
+
 def test_a_small_library_is_never_a_mass_undo():
     assert not pipeline.is_mass_undo(pipeline.MASS_UNDO_MIN - 1, pipeline.MASS_UNDO_MIN - 1)
     assert pipeline.is_mass_undo(pipeline.MASS_UNDO_MIN, pipeline.MASS_UNDO_MIN)

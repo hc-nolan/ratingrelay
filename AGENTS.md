@@ -239,6 +239,18 @@ These are the point of the tool. v1 got them right; keep them that way.
   in library code. Errors surfaced to the UI must come from typed results, not from
   string-matching log text.
 - **Timestamps** are UTC in storage; presentation is local via `settings.timezone`.
+- **Polling is cheap enough that there is no webhook path, and these are the numbers**
+  (measured against the live library, 34,727 rated tracks): Plex's own filter answers
+  1,477 tracks (≥4★) in **0.8 s**, 34,583 tracks (≥1★) in **15.5 s**, and the whole rated
+  set in 16.6 s — the read is ~0.5 ms/track and never the problem. A warm
+  `plex → listenbrainz` dry run of those 1,477 took **99 s** end to end (67 ms/track:
+  1,126 to write, 322 already there, 29 unmatched). Cost scales with tracks *planned*,
+  and the one-time MusicBrainz cost is shared between relays (`trackmbid` is keyed by
+  track, not by relay). A *trigger* webhook only pays once one run approaches its own
+  period — roughly 10–20k tracks at 67 ms; below that it buys latency by adding a second
+  write path beside the reconciler, which is the drift the dry-run rule exists to stop.
+  A webhook that merely pulls the next scheduled run forward is fine and cheap, if
+  latency ever matters.
 
 ## Testing
 

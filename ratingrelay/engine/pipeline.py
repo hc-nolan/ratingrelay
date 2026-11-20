@@ -84,11 +84,12 @@ def _repoints(plan: WritePlan, record: Optional[SyncedTrack], target: Target) ->
     return True
 
 
-async def _apply(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+async def _apply(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     track: Track,
     target: Target,
     *,
     synced: dict[str, SyncedTrack],
+    written_here: set[str],
     sync_store: SyncStore,
     source_service: str,
     known: frozenset[str],
@@ -96,6 +97,9 @@ async def _apply(  # pylint: disable=too-many-arguments,too-many-positional-argu
     reapply_drift: bool,
 ) -> TrackOutcome:
     """Decide and (unless dry run) perform the write for one track on one target.
+
+    *synced* is updated in place as the run writes, so a library that hands us the
+    same track twice in one run is the same track twice (see ``written_here``).
 
     *known* is every key this tool has written on the pair under **any** relay: an
     exact relay uses it to tell a value it wrote from one the user set.
@@ -113,11 +117,15 @@ async def _apply(  # pylint: disable=too-many-arguments,too-many-positional-argu
             track, target.service, OutcomeStatus.FAILED, Reason.WRITE_FAILED, str(exc)
         )
 
+    record = _fresh_record_for_another_recording(
+        plan, record, this_run=track.key in written_here
+    )
+
     # The same intent this target already holds is what "already synced" means
     # now: a changed rating or a withdrawn love is a different intent, and gets
     # written again. So does one a user's mapping has moved to another target key.
     repoint = _repoints(plan, record, target)
-    drift = _drifted(plan, record, repoint)
+    drift = _drifted(plan, record, repoint, this_run=track.key in written_here)
     settled = _settled(
         plan,
         track,
@@ -132,7 +140,24 @@ async def _apply(  # pylint: disable=too-many-arguments,too-many-positional-argu
         return settled
 
     outcome = plan.to_outcome(reason=Reason.TARGET_DRIFT if drift else None)
+    written = SyncedTrack(
+        key=track.key,
+        recording_mbid=plan.recording_mbid,
+        intent=_intent_key(plan),
+        rating=plan.intent.rating if plan.intent else None,
+        target_key=plan.target_key,
+        # The first write's prior is what the user had; a later re-write of
+        # our own state must not replace it with what we wrote. A re-point
+        # moves to another target key, whose prior is the plan's.
+        prior=plan.existing.prior if record is None or repoint else record.prior,
+    )
     if dry_run:
+        # A dry run must take the same decisions a real one would, and "this
+        # recording is already written" is one of them: the fetched list can hold
+        # the same track twice (RR-17), and only a real write used to make the
+        # second copy look settled.
+        synced[track.key] = written
+        written_here.add(track.key)
         return outcome
 
     try:
@@ -160,25 +185,22 @@ async def _apply(  # pylint: disable=too-many-arguments,too-many-positional-argu
         logger.error("Write to %s failed for '%s': %s", target.service, track.title, exc)
         return plan.to_outcome(OutcomeStatus.FAILED, Reason.WRITE_FAILED, str(exc))
 
-    await sync_store.remember(
-        source_service,
-        target.service,
-        SyncedTrack(
-            key=track.key,
-            recording_mbid=plan.recording_mbid,
-            intent=_intent_key(plan),
-            rating=plan.intent.rating if plan.intent else None,
-            target_key=plan.target_key,
-            # The first write's prior is what the user had; a later re-write of
-            # our own state must not replace it with what we wrote. A re-point
-            # moves to another target key, whose prior is the plan's.
-            prior=plan.existing.prior if record is None or repoint else record.prior,
-        ),
-    )
+    await sync_store.remember(source_service, target.service, written)
+    # The store is not re-read inside a run, so the run's own map has to carry
+    # what it just wrote: without this, a duplicate row re-wrote the recording it
+    # had written a moment earlier and the report counted it as new work (RR-17).
+    synced[track.key] = written
+    written_here.add(track.key)
     return outcome
 
 
-def _drifted(plan: WritePlan, record: Optional[SyncedTrack], repoint: bool) -> bool:
+def _drifted(
+    plan: WritePlan,
+    record: Optional[SyncedTrack],
+    repoint: bool,
+    *,
+    this_run: bool = False,
+) -> bool:
     """Whether the target has dropped a write this record says we made.
 
     A dropped write is the only thing a relay with ``reapply_target_drift`` puts
@@ -188,13 +210,18 @@ def _drifted(plan: WritePlan, record: Optional[SyncedTrack], repoint: bool) -> b
     the plan's: a changed or withdrawn source intent is a rewrite or an undo, not
     drift.
 
+    *this_run* is a record this run wrote: the target cannot have dropped it yet,
+    and every target plans against a listing it cached before our own write — so
+    reading that stale view as drift rewrote every duplicate row of a track
+    (RR-17) on a ``reapply_target_drift`` relay.
+
     The target keys are deliberately not compared. Where the target's own copies
     moved (a Plex match that now covers a different subset), re-writing is still
     the right answer and the record follows the write, exactly as it does on any
     other rewrite; the check that stops a *mapping* from moving a write is
     ``_repoints``, which needs ``plan.mapped``.
     """
-    if repoint or record is None or plan.intent is None:
+    if repoint or record is None or plan.intent is None or this_run:
         return False
     if record.intent != plan.intent.key or plan.status is not OutcomeStatus.WRITTEN:
         return False
@@ -246,6 +273,33 @@ def _settled(  # pylint: disable=too-many-arguments,too-many-positional-argument
             Reason.WRITE_FAILED,
             f"{target.service} produced no write for this track",
         )
+    return None
+
+
+def _fresh_record_for_another_recording(
+    plan: WritePlan, record: Optional[SyncedTrack], *, this_run: bool
+) -> Optional[SyncedTrack]:
+    """Drop a record that names a *different* recording than this plan targets.
+
+    Two recordings can share one ``artist||title`` (a studio and a live version),
+    and the key is what the store holds — so it can only name one of them. When
+    this run already wrote one of them, the record says nothing about the other:
+    treating it as settled would silently leave that recording unrated, so the
+    second one is written too and the collision is logged rather than hidden.
+    """
+    if not this_run or record is None:
+        return record
+    if not record.recording_mbid or not plan.recording_mbid:
+        return record
+    if record.recording_mbid == plan.recording_mbid:
+        return record
+    logger.warning(
+        "Two recordings share the key '%s': %s and %s. Writing both; the record "
+        "can only name one, so this pair is rewritten on every run.",
+        record.key,
+        record.recording_mbid,
+        plan.recording_mbid,
+    )
     return None
 
 
@@ -327,6 +381,7 @@ async def _reconcile(  # pylint: disable=too-many-arguments
     target: Target,
     *,
     synced: dict[str, SyncedTrack],
+    recorded: int,
     seen: set[str],
     sync_store: SyncStore,
     source_service: str,
@@ -338,15 +393,20 @@ async def _reconcile(  # pylint: disable=too-many-arguments
     Only rows we recorded are considered, and inside them only rows that say
     what was written — that is the whole of "only undo our own writes".
 
+    *recorded* is how many writes the target held when the run started: the
+    denominator of the mass-undo ratio, so a run that writes a lot of new keys
+    does not quietly raise the bar for undoing the old ones (and a dry run, whose
+    writes never happened, counts the same as the real run that follows it).
+
     A mass undo (see :func:`is_mass_undo`) is refused as a whole: every record
     it would have undone fails with ``MASS_UNDO_REFUSED`` and stays recorded,
     so the run is partial and the next run asks again. Dry run refuses the same
     way, because it promises what a real run would do.
     """
     withdrawn = [record for key, record in synced.items() if key not in seen]
-    if not allow_mass_undo and is_mass_undo(len(withdrawn), len(synced)):
+    if not allow_mass_undo and is_mass_undo(len(withdrawn), recorded):
         # Each entry point says how to allow it; the engine says only what.
-        detail = f"would undo {len(withdrawn)} of {len(synced)} recorded writes"
+        detail = f"would undo {len(withdrawn)} of {recorded} recorded writes"
         logger.warning("Refusing mass undo on %s: %s", target.service, detail)
         return [
             TrackOutcome(
@@ -400,11 +460,18 @@ async def run_tracks(  # pylint: disable=too-many-arguments,too-many-locals
     for target in targets:
         synced = await sync_store.load(source_service, target.service)
         known = frozenset(await sync_store.known_keys(source_service, target.service))
+        # The target's records as the run found them: the mass-undo ratio is
+        # about what this run takes back, not about how much it also wrote.
+        recorded = len(synced)
+        # Keys this run wrote, as opposed to keys an earlier run recorded: the
+        # difference matters when one key names two recordings.
+        written_here: set[str] = set()
         for track in tracks:
             outcome = await _apply(
                 track,
                 target,
                 synced=synced,
+                written_here=written_here,
                 sync_store=sync_store,
                 source_service=source_service,
                 known=known,
@@ -417,6 +484,7 @@ async def run_tracks(  # pylint: disable=too-many-arguments,too-many-locals
         for outcome in await _reconcile(
             target,
             synced=synced,
+            recorded=recorded,
             seen=seen,
             sync_store=sync_store,
             source_service=source_service,
